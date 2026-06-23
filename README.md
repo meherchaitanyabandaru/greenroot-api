@@ -1,351 +1,57 @@
 # GreenRoot API
 
-GreenRoot API is the core backend platform responsible for authentication, dispatch management, trip tracking, GPS updates, delivery verification, notifications, and audit logging.
+Go + PostgreSQL REST API for the GreenRoot farmer/nursery platform.
 
----
+## Run Locally
 
-## Overview
-
-The API serves:
-
-* GreenRoot Mobile App
-* GreenRoot Admin Portal
-* Future Marketplace Services
-* Future Analytics Platform
-
----
-
-## Responsibilities
-
-### Authentication
-
-* Mobile OTP Login
-* JWT Tokens
-* Refresh Tokens
-* Device Registration
-
----
-
-### User Management
-
-* Owners
-* Gumastas
-* Drivers
-* Administrators
-
----
-
-### Nursery Management
-
-* Nursery Registration
-* Nursery Approval
-* Nursery Profile
-* Subscription Status
-
----
-
-### Dispatch Management
-
-* Create Dispatch
-* Update Dispatch
-* Cancel Dispatch
-* Approve Dispatch
-
----
-
-### Plant Manifest
-
-Manage:
-
-* Plant Name
-* Plant Category
-* Plant Size
-* Quantity
-
----
-
-### Driver Management
-
-* Driver Registration
-* Driver Assignment
-* Driver Availability
-* Driver History
-
----
-
-### Trip Management
-
-* Create Trip
-* Start Trip
-* Complete Trip
-* Partial Delivery
-* Trip Timeline
-
----
-
-### GPS Tracking
-
-* Driver Location Updates
-* Active Vehicle Tracking
-* Trip Monitoring
-
----
-
-### Photo Management
-
-* Loading Photos
-* Delivery Photos
-* Proof Of Delivery
-
-Stored in AWS S3.
-
----
-
-### Notifications
-
-* Push Notifications
-* System Alerts
-* Dispatch Updates
-
----
-
-### Audit Logging
-
-Track:
-
-* Created By
-* Updated By
-* Approved By
-* Delivered By
-
----
-
-## Technology Stack
-
-### Language
-
-Go
-
-### Framework
-
-Gin
-
-### Database
-
-PostgreSQL
-
-### Storage
-
-AWS S3
-
-### Authentication
-
-Firebase Auth
-
-### Notifications
-
-Firebase Cloud Messaging
-
-### Monitoring
-
-AWS CloudWatch
-
----
-
-## Architecture
-
-```text
-Mobile App
-      ↓
-GreenRoot API
-      ↓
-PostgreSQL
-      ↓
-AWS S3
+```bash
+DATABASE_URL='postgres:///greenroot?host=/tmp' \
+JWT_SECRET='local-dev-change-me' \
+LOG_DIR='/tmp/gr-logs' \
+go run ./cmd/api
 ```
 
----
+Server: `http://localhost:8080`
 
-## Project Structure
+Useful endpoints: `/healthz` · `/swagger/` · `/openapi.yaml`
 
-```text
-cmd/
+## Configuration
 
-internal/
-
-├── auth/
-├── users/
-├── nurseries/
-├── dispatches/
-├── plants/
-├── drivers/
-├── trips/
-├── tracking/
-├── photos/
-├── notifications/
-├── subscriptions/
-├── audit/
-
-pkg/
-
-configs/
-
-migrations/
-
-docs/
+```bash
+cp .env.example .env
 ```
 
----
+Key variables: `APP_ENV`, `HTTP_PORT`, `DATABASE_URL`, `JWT_SECRET`, `LOG_DIR`, `CORS_ALLOWED_ORIGINS`
 
-## API Modules
+For local admin UI: `CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173`
 
-### Auth Module
+## Commands
 
-Responsibilities:
-
-* Login
-* Logout
-* OTP Verification
-* Token Management
-
----
-
-### User Module
-
-Responsibilities:
-
-* User CRUD
-* Role Management
-* Device Management
-
----
-
-### Nursery Module
-
-Responsibilities:
-
-* Nursery Registration
-* Nursery Profile
-* Subscription Validation
-
----
-
-### Dispatch Module
-
-Responsibilities:
-
-* Create Dispatch
-* Update Dispatch
-* Approval Workflow
-
----
-
-### Tracking Module
-
-Responsibilities:
-
-* GPS Updates
-* Vehicle Location
-* Trip Tracking
-
----
-
-### Audit Module
-
-Responsibilities:
-
-* Action History
-* Compliance Logs
-* Activity Tracking
-
----
-
-## Database
-
-Primary Database:
-
-```text
-PostgreSQL
+```bash
+make run          # Start API
+make fmt          # Format code
+make vet          # Vet code
+make test         # Run unit tests
+make build        # Build binary
+make smoke        # HTTP smoke suite (non-destructive)
+make integration  # Full integration suite (disposable DB)
+make migrate-up   # Apply migrations
+make migrate-status
+make migrate-down
 ```
 
-Core Tables:
+## Documentation
 
-```text
-users
-nurseries
-drivers
-vehicles
-dispatches
-dispatch_items
-trips
-trip_locations
-photos
-notifications
-subscriptions
-audit_logs
-```
+| Doc | Contents |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | Design patterns, auth, identifiers, governance |
+| [`docs/modules.md`](docs/modules.md) | All 18 modules — routes, responsibilities, hardening |
+| [`docs/rbac-matrix.md`](docs/rbac-matrix.md) | RBAC roles and route policies |
+| [`docs/testing.md`](docs/testing.md) | Smoke + integration testing guide |
+| [`docs/migrations.md`](docs/migrations.md) | DB migration commands and rules |
+| [`docs/development-status.md`](docs/development-status.md) | Module status + production hardening backlog |
+| [`docs/swagger/`](docs/swagger/) | OpenAPI spec (source of truth for all routes) |
 
----
+## Full Project Context
 
-## Environments
-
-### Development
-
-```text
-DEV
-```
-
-### Production
-
-```text
-PROD
-```
-
----
-
-## Security
-
-* JWT Authentication
-* OTP Verification
-* Device Validation
-* API Rate Limiting
-* Audit Logs
-* HTTPS Only
-
----
-
-## Monitoring
-
-* CloudWatch Logs
-* CloudWatch Metrics
-* Health Checks
-* Error Tracking
-
----
-
-## Future Roadmap
-
-### V1
-
-* Dispatch Platform
-* GPS Tracking
-* Delivery Verification
-
-### V2
-
-* Nursery Network
-* Customer Directory
-* Business Insights
-
-### V3
-
-* Plant Marketplace
-* Customer Ordering
-* AI Recommendations
-* Demand Forecasting
-
----
-
-## Product Vision
-
-GreenRoot API serves as the central platform powering plant dispatch, transportation visibility, and future nursery commerce across India.
+See [`../AI_CONTEXT.md`](../AI_CONTEXT.md) for the cross-repo master context.

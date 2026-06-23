@@ -1,0 +1,36 @@
+# Binaries and build output
+/api
+/smoke
+/integration
+bin/
+dist/
+build/
+coverage.out
+coverage.html
+*.test
+*.prof
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Runtime logs
+logs/**
+!logs/.gitkeep
+test-log/**
+!test-log/.gitkeep
+*.log
+
+# OS/editor noise
+.DS_Store
+.DS_Store?
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temporary files
+tmp/
+temp/
+.tmp/

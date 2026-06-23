@@ -1,0 +1,2968 @@
+openapi: 3.0.3
+info:
+  title: GreenRoot API
+  version: 0.1.0
+  description: Modular Go chi backend for the GreenRoot platform.
+servers:
+  - url: http://localhost:8080
+    description: Local development
+tags:
+  - name: Health
+  - name: Platform
+  - name: Auth
+  - name: Users
+  - name: Plants
+  - name: Nurseries
+  - name: Inventory
+  - name: Plant Requests
+  - name: Orders
+  - name: Payments
+  - name: Subscriptions
+  - name: Vehicles
+  - name: Drivers
+  - name: Dispatches
+  - name: Notifications
+  - name: Attachments
+  - name: Audit
+  - name: Admin
+  - name: Tracking
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      responses:
+        "200":
+          description: API process is alive
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Health check
+      responses:
+        "200":
+          description: API process is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /readyz:
+    get:
+      tags: [Health]
+      summary: Readiness check
+      responses:
+        "200":
+          description: API is ready to serve traffic
+  /api/v1:
+    get:
+      tags: [Platform]
+      summary: API module catalog
+      responses:
+        "200":
+          description: Available and planned API modules
+  /api/v1/auth/send-otp:
+    post:
+      tags: [Auth]
+      summary: Send OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendOTPRequest"
+      responses:
+        "200":
+          description: OTP sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SendOTPResponse"
+        "400":
+          description: Invalid request
+  /api/v1/auth/verify-otp:
+    post:
+      tags: [Auth]
+      summary: Verify OTP and login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyOTPRequest"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid OTP
+  /api/v1/auth/refresh-token:
+    post:
+      tags: [Auth]
+      summary: Refresh JWT tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshTokenRequest"
+      responses:
+        "200":
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid refresh token
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogoutRequest"
+      responses:
+        "200":
+          description: Logged out
+        "401":
+          description: Invalid refresh token
+  /api/v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Current authenticated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeResponse"
+        "401":
+          description: Invalid access token
+  /api/v1/users/me:
+    get:
+      tags: [Users]
+      summary: Current user profile
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Current user profile
+    put:
+      tags: [Users]
+      summary: Update current user profile
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileRequest"
+      responses:
+        "200":
+          description: Updated user profile
+  /api/v1/users/{id}:
+    get:
+      tags: [Users]
+      summary: Get user by ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/UserID"
+      responses:
+        "200":
+          description: User profile
+  /api/v1/users/{id}/addresses:
+    get:
+      tags: [Users]
+      summary: List user addresses
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/UserID"
+      responses:
+        "200":
+          description: User addresses
+    post:
+      tags: [Users]
+      summary: Create user address
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/UserID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddressRequest"
+      responses:
+        "201":
+          description: Address created
+  /api/v1/users/addresses/{addressId}:
+    put:
+      tags: [Users]
+      summary: Update user address
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AddressID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddressRequest"
+      responses:
+        "200":
+          description: Address updated
+    delete:
+      tags: [Users]
+      summary: Delete user address
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AddressID"
+      responses:
+        "200":
+          description: Address deleted
+  /api/v1/users/{id}/roles:
+    get:
+      tags: [Users]
+      summary: List user roles
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/UserID"
+      responses:
+        "200":
+          description: User roles
+  /api/v1/users/{id}/sessions:
+    get:
+      tags: [Users]
+      summary: List user sessions
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/UserID"
+      responses:
+        "200":
+          description: User sessions
+  /api/v1/plants:
+    get:
+      tags: [Plants]
+      summary: List plants
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: category_id
+          in: query
+          schema:
+            type: integer
+        - name: plant_type
+          in: query
+          schema:
+            type: string
+        - name: light_requirement
+          in: query
+          schema:
+            type: string
+        - name: water_requirement
+          in: query
+          schema:
+            type: string
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [id, scientific_name, common_name, plant_type, light_requirement, water_requirement, created_at, updated_at]
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+      responses:
+        "200":
+          description: Plant catalog
+    post:
+      tags: [Plants]
+      summary: Create plant
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlantRequest"
+      responses:
+        "201":
+          description: Plant created
+  /api/v1/plants/categories:
+    get:
+      tags: [Plants]
+      summary: List plant categories
+      responses:
+        "200":
+          description: Plant categories
+  /api/v1/plants/{id}:
+    get:
+      tags: [Plants]
+      summary: Get plant
+      parameters:
+        - $ref: "#/components/parameters/PlantID"
+      responses:
+        "200":
+          description: Plant detail
+    put:
+      tags: [Plants]
+      summary: Update plant
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlantRequest"
+      responses:
+        "200":
+          description: Plant updated
+    delete:
+      tags: [Plants]
+      summary: Delete plant
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlantID"
+      responses:
+        "200":
+          description: Plant deleted
+  /api/v1/plants/{id}/images:
+    post:
+      tags: [Plants]
+      summary: Add plant image
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlantImageRequest"
+      responses:
+        "201":
+          description: Plant image created
+  /api/v1/plants/{id}/care-guide:
+    get:
+      tags: [Plants]
+      summary: Get plant care guide
+      parameters:
+        - $ref: "#/components/parameters/PlantID"
+      responses:
+        "200":
+          description: Plant care guide
+  /api/v1/nurseries:
+    get:
+      tags: [Nurseries]
+      summary: List nurseries
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: city
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: nursery_status
+          in: query
+          schema:
+            type: string
+        - name: verification_status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Nursery list
+    post:
+      tags: [Nurseries]
+      summary: Create nursery
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NurseryRequest"
+      responses:
+        "201":
+          description: Nursery created
+  /api/v1/nurseries/{id}:
+    get:
+      tags: [Nurseries]
+      summary: Get nursery
+      parameters:
+        - $ref: "#/components/parameters/NurseryID"
+      responses:
+        "200":
+          description: Nursery detail
+    put:
+      tags: [Nurseries]
+      summary: Update nursery
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/NurseryID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NurseryRequest"
+      responses:
+        "200":
+          description: Nursery updated
+    delete:
+      tags: [Nurseries]
+      summary: Delete nursery
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/NurseryID"
+      responses:
+        "200":
+          description: Nursery deleted
+  /api/v1/nurseries/{id}/addresses:
+    get:
+      tags: [Nurseries]
+      summary: List nursery addresses
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/NurseryID"
+      responses:
+        "200":
+          description: Nursery addresses
+    post:
+      tags: [Nurseries]
+      summary: Create nursery address
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/NurseryID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NurseryAddressRequest"
+      responses:
+        "201":
+          description: Nursery address created
+  /api/v1/nurseries/addresses/{addressId}:
+    put:
+      tags: [Nurseries]
+      summary: Update nursery address
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AddressID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NurseryAddressRequest"
+      responses:
+        "200":
+          description: Nursery address updated
+    delete:
+      tags: [Nurseries]
+      summary: Delete nursery address
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AddressID"
+      responses:
+        "200":
+          description: Nursery address deleted
+  /api/v1/nurseries/{id}/users:
+    get:
+      tags: [Nurseries]
+      summary: List nursery users
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/NurseryID"
+      responses:
+        "200":
+          description: Nursery users
+    post:
+      tags: [Nurseries]
+      summary: Add nursery user
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/NurseryID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NurseryUserRequest"
+      responses:
+        "201":
+          description: Nursery user added
+  /api/v1/nurseries/{id}/users/{userId}:
+    delete:
+      tags: [Nurseries]
+      summary: Remove nursery user
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/NurseryID"
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Nursery user removed
+  /api/v1/inventory:
+    get:
+      tags: [Inventory]
+      summary: List inventory
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search by nursery, scientific name, common name, or size.
+        - name: nursery_id
+          in: query
+          schema:
+            type: integer
+        - name: plant_id
+          in: query
+          schema:
+            type: integer
+        - name: size_id
+          in: query
+          schema:
+            type: integer
+        - name: inventory_status
+          in: query
+          schema:
+            type: string
+            enum: [AVAILABLE, LOW_STOCK, OUT_OF_STOCK, RESERVED, DISCONTINUED]
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [id, nursery_name, scientific_name, common_name, size_code, available_quantity, inventory_status, last_updated_at, created_at]
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+      responses:
+        "200":
+          description: Inventory list
+    post:
+      tags: [Inventory]
+      summary: Create inventory item
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryRequest"
+      responses:
+        "201":
+          description: Inventory item created
+  /api/v1/inventory/{id}:
+    get:
+      tags: [Inventory]
+      summary: Get inventory item
+      parameters:
+        - $ref: "#/components/parameters/InventoryID"
+      responses:
+        "200":
+          description: Inventory item
+    put:
+      tags: [Inventory]
+      summary: Update inventory item
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/InventoryID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryRequest"
+      responses:
+        "200":
+          description: Inventory item updated
+    delete:
+      tags: [Inventory]
+      summary: Delete inventory item
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/InventoryID"
+      responses:
+        "200":
+          description: Inventory item deleted
+  /api/v1/nurseries/{nurseryId}/inventory:
+    get:
+      tags: [Inventory]
+      summary: List inventory by nursery
+      parameters:
+        - name: nurseryId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Nursery inventory
+  /api/v1/plants/{plantId}/inventory:
+    get:
+      tags: [Inventory]
+      summary: List inventory by plant
+      parameters:
+        - name: plantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Plant inventory
+  /api/v1/plant-requests:
+    get:
+      tags: [Plant Requests]
+      summary: List plant requests
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+        - name: nursery_id
+          in: query
+          schema:
+            type: integer
+        - name: plant_id
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Plant request list
+    post:
+      tags: [Plant Requests]
+      summary: Create plant request
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlantRequestRequest"
+      responses:
+        "201":
+          description: Plant request created
+  /api/v1/plant-requests/{id}:
+    get:
+      tags: [Plant Requests]
+      summary: Get plant request
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlantRequestID"
+      responses:
+        "200":
+          description: Plant request detail
+    put:
+      tags: [Plant Requests]
+      summary: Update plant request
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlantRequestID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlantRequestRequest"
+      responses:
+        "200":
+          description: Plant request updated
+    delete:
+      tags: [Plant Requests]
+      summary: Cancel plant request
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlantRequestID"
+      responses:
+        "200":
+          description: Plant request cancelled
+  /api/v1/plant-requests/{id}/responses:
+    get:
+      tags: [Plant Requests]
+      summary: List plant request responses
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlantRequestID"
+      responses:
+        "200":
+          description: Plant request responses
+    post:
+      tags: [Plant Requests]
+      summary: Respond to plant request
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlantRequestID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlantRequestResponseRequest"
+      responses:
+        "201":
+          description: Plant request response created
+  /api/v1/plant-requests/responses/{responseId}:
+    put:
+      tags: [Plant Requests]
+      summary: Update plant request response
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: responseId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlantRequestResponseUpdateRequest"
+      responses:
+        "200":
+          description: Plant request response updated
+  /api/v1/orders:
+    get:
+      tags: [Orders]
+      summary: List orders
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search by order number, buyer name, nursery name, or notes.
+        - name: buyer_user_id
+          in: query
+          schema:
+            type: integer
+        - name: nursery_id
+          in: query
+          schema:
+            type: integer
+        - name: order_status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING, CONFIRMED, PARTIALLY_FULFILLED, COMPLETED, CANCELLED]
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [id, order_number, buyer_name, seller_nursery, order_status, total_amount, order_date, created_at]
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+      responses:
+        "200":
+          description: Order list
+    post:
+      tags: [Orders]
+      summary: Create order
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderRequest"
+      responses:
+        "201":
+          description: Order created
+  /api/v1/orders/{id}:
+    get:
+      tags: [Orders]
+      summary: Get order
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: Order detail
+    delete:
+      tags: [Orders]
+      summary: Delete order
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: Order deleted
+  /api/v1/orders/{id}/status:
+    put:
+      tags: [Orders]
+      summary: Update order status
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderStatusRequest"
+      responses:
+        "200":
+          description: Order status updated
+  /api/v1/orders/{id}/items:
+    get:
+      tags: [Orders]
+      summary: List order items
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: Order items
+    post:
+      tags: [Orders]
+      summary: Add order item
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderItemRequest"
+      responses:
+        "201":
+          description: Order item created
+  /api/v1/orders/items/{itemId}:
+    put:
+      tags: [Orders]
+      summary: Update order item
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderItemRequest"
+      responses:
+        "200":
+          description: Order item updated
+    delete:
+      tags: [Orders]
+      summary: Delete order item
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Order item deleted
+  /api/v1/payments:
+    get:
+      tags: [Payments]
+      summary: List payments
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search by order number, subscription plan, payer, transaction reference, provider ids, or notes.
+        - name: payment_for
+          in: query
+          schema:
+            type: string
+            enum: [ORDER, SUBSCRIPTION]
+        - name: order_id
+          in: query
+          schema:
+            type: integer
+        - name: subscription_id
+          in: query
+          schema:
+            type: integer
+        - name: payer_user_id
+          in: query
+          schema:
+            type: integer
+        - name: payment_status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING, SUCCESS, FAILED, REFUNDED, CANCELLED]
+        - name: payment_method
+          in: query
+          schema:
+            type: string
+            enum: [UPI, CARD, CASH, BANK_TRANSFER, NET_BANKING, WALLET, COD, CHEQUE, OTHER]
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [id, payment_for, order_number, subscription_plan, payer_name, amount, payment_method, payment_status, payment_date, created_at]
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+      responses:
+        "200":
+          description: Payment list
+  /api/v1/payments/manual:
+    post:
+      tags: [Payments]
+      summary: Record manual or gateway-ready payment
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentManualRequest"
+      responses:
+        "201":
+          description: Payment recorded
+  /api/v1/payments/{id}:
+    get:
+      tags: [Payments]
+      summary: Get payment
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PaymentID"
+      responses:
+        "200":
+          description: Payment detail
+  /api/v1/payments/{id}/status:
+    put:
+      tags: [Payments]
+      summary: Update payment status
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PaymentID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentStatusRequest"
+      responses:
+        "200":
+          description: Payment status updated
+  /api/v1/orders/{orderId}/payments:
+    get:
+      tags: [Payments]
+      summary: List payments for order
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Order payments
+  /api/v1/subscription-plans:
+    get:
+      tags: [Subscriptions]
+      summary: List subscription plans
+      responses:
+        "200":
+          description: Active subscription plans
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionPlansResponse"
+  /api/v1/subscription-plans/{id}:
+    get:
+      tags: [Subscriptions]
+      summary: Get subscription plan
+      parameters:
+        - $ref: "#/components/parameters/SubscriptionPlanID"
+      responses:
+        "200":
+          description: Subscription plan detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionPlanResponse"
+  /api/v1/subscriptions:
+    get:
+      tags: [Subscriptions]
+      summary: List subscriptions
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+        - name: user_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: subscription_status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE, PAUSED, CANCELLED, EXPIRED]
+      responses:
+        "200":
+          description: Subscription list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionsResponse"
+    post:
+      tags: [Subscriptions]
+      summary: Create user subscription
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscriptionCreateRequest"
+      responses:
+        "201":
+          description: Subscription created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionResponse"
+  /api/v1/subscriptions/me:
+    get:
+      tags: [Subscriptions]
+      summary: List my subscriptions
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Current user's subscriptions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionsResponse"
+  /api/v1/subscriptions/{id}:
+    get:
+      tags: [Subscriptions]
+      summary: Get subscription
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SubscriptionID"
+      responses:
+        "200":
+          description: Subscription detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionResponse"
+  /api/v1/subscriptions/{id}/status:
+    put:
+      tags: [Subscriptions]
+      summary: Update subscription status
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SubscriptionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscriptionStatusRequest"
+      responses:
+        "200":
+          description: Subscription status updated
+  /api/v1/subscriptions/{id}/renew:
+    post:
+      tags: [Subscriptions]
+      summary: Renew subscription
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SubscriptionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscriptionRenewRequest"
+      responses:
+        "200":
+          description: Subscription renewed
+  /api/v1/subscriptions/{id}/cancel:
+    post:
+      tags: [Subscriptions]
+      summary: Cancel subscription
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SubscriptionID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscriptionCancelRequest"
+      responses:
+        "200":
+          description: Subscription cancelled
+  /api/v1/subscriptions/{subscriptionId}/payments:
+    get:
+      tags: [Payments]
+      summary: List payments for subscription
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: subscriptionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Subscription payments
+  /api/v1/vehicles:
+    get:
+      tags: [Vehicles]
+      summary: List vehicles
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: per_page
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: search
+          in: query
+          schema: { type: string }
+          description: Search by vehicle number, owner name, or mobile.
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE, INACTIVE, MAINTENANCE, RETIRED]
+        - name: vehicle_type
+          in: query
+          schema: { type: string }
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [id, vehicle_number, vehicle_type, owner_name, mobile, status, created_at]
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+      responses:
+        "200":
+          description: Vehicle list
+    post:
+      tags: [Vehicles]
+      summary: Create vehicle
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleRequest"
+      responses:
+        "201":
+          description: Vehicle created
+  /api/v1/vehicles/{id}:
+    get:
+      tags: [Vehicles]
+      summary: Get vehicle
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/VehicleID"
+      responses:
+        "200":
+          description: Vehicle detail
+    put:
+      tags: [Vehicles]
+      summary: Update vehicle
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/VehicleID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleRequest"
+      responses:
+        "200":
+          description: Vehicle updated
+    delete:
+      tags: [Vehicles]
+      summary: Retire vehicle
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/VehicleID"
+      responses:
+        "200":
+          description: Vehicle retired
+  /api/v1/drivers:
+    get:
+      tags: [Drivers]
+      summary: List drivers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: per_page
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: search
+          in: query
+          schema: { type: string }
+          description: Search by driver name, mobile, or license number.
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE, INACTIVE, SUSPENDED, DELETED]
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [id, driver_name, mobile, license_number, status, created_at]
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+      responses:
+        "200":
+          description: Driver list
+    post:
+      tags: [Drivers]
+      summary: Create driver
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DriverRequest"
+      responses:
+        "201":
+          description: Driver created
+  /api/v1/drivers/{id}:
+    get:
+      tags: [Drivers]
+      summary: Get driver
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/DriverID"
+      responses:
+        "200":
+          description: Driver detail
+    put:
+      tags: [Drivers]
+      summary: Update driver
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/DriverID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DriverRequest"
+      responses:
+        "200":
+          description: Driver updated
+    delete:
+      tags: [Drivers]
+      summary: Deactivate driver
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/DriverID"
+      responses:
+        "200":
+          description: Driver deactivated
+  /api/v1/drivers/{id}/location:
+    post:
+      tags: [Drivers]
+      summary: Add driver location
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/DriverID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DriverLocationRequest"
+      responses:
+        "201":
+          description: Driver location recorded
+  /api/v1/dispatches:
+    get:
+      tags: [Dispatches]
+      summary: List dispatches
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: per_page
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: search
+          in: query
+          schema: { type: string }
+          description: Search by dispatch number, order number, vehicle number, or driver name.
+        - name: nursery_id
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: dispatch_status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING, DISPATCHED, IN_TRANSIT, DELIVERED, CANCELLED]
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [id, dispatch_number, dispatch_status, order_number, vehicle_number, driver_name, dispatch_date, created_at]
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+      responses:
+        "200":
+          description: Dispatch list
+    post:
+      tags: [Dispatches]
+      summary: Create dispatch
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchRequest"
+      responses:
+        "201":
+          description: Dispatch created
+  /api/v1/dispatches/{id}:
+    get:
+      tags: [Dispatches]
+      summary: Get dispatch
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/DispatchID"
+      responses:
+        "200":
+          description: Dispatch detail
+  /api/v1/dispatches/{id}/status:
+    put:
+      tags: [Dispatches]
+      summary: Update dispatch status
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/DispatchID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchStatusRequest"
+      responses:
+        "200":
+          description: Dispatch status updated
+  /api/v1/dispatches/{id}/items:
+    post:
+      tags: [Dispatches]
+      summary: Add dispatch item
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/DispatchID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchItemRequest"
+      responses:
+        "201":
+          description: Dispatch item added
+  /api/v1/orders/{orderId}/dispatches:
+    get:
+      tags: [Dispatches]
+      summary: List dispatches for order
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Order dispatches
+  /api/v1/notifications:
+    get:
+      tags: [Notifications]
+      summary: List notifications
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: notification_type
+          in: query
+          schema: { type: string }
+        - name: notification_status
+          in: query
+          schema: { type: string }
+        - name: channel
+          in: query
+          schema: { type: string }
+        - name: unread
+          in: query
+          schema: { type: boolean }
+      responses:
+        "200": { description: Notification list }
+    post:
+      tags: [Notifications]
+      summary: Create notification
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationCreateRequest"
+      responses:
+        "201": { description: Notification created }
+  /api/v1/notifications/{id}:
+    get:
+      tags: [Notifications]
+      summary: Get notification
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/NotificationID"
+      responses:
+        "200": { description: Notification detail }
+    delete:
+      tags: [Notifications]
+      summary: Delete notification
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/NotificationID"
+      responses:
+        "200": { description: Notification deleted }
+  /api/v1/notifications/{id}/read:
+    put:
+      tags: [Notifications]
+      summary: Mark notification read
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/NotificationID"
+      responses:
+        "200": { description: Notification marked read }
+  /api/v1/notifications/read-all:
+    put:
+      tags: [Notifications]
+      summary: Mark all notifications read
+      security:
+        - BearerAuth: []
+      responses:
+        "200": { description: Notifications marked read }
+  /api/v1/notifications/devices:
+    get:
+      tags: [Notifications]
+      summary: List notification devices
+      security:
+        - BearerAuth: []
+      responses:
+        "200": { description: Device list }
+    post:
+      tags: [Notifications]
+      summary: Register notification device
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationDeviceRequest"
+      responses:
+        "201": { description: Device registered }
+  /api/v1/notifications/devices/{id}:
+    delete:
+      tags: [Notifications]
+      summary: Delete notification device
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/NotificationDeviceID"
+      responses:
+        "200": { description: Device deleted }
+  /api/v1/notifications/templates:
+    get:
+      tags: [Notifications]
+      summary: List notification templates
+      security:
+        - BearerAuth: []
+      responses:
+        "200": { description: Template list }
+    post:
+      tags: [Notifications]
+      summary: Create notification template
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationTemplateRequest"
+      responses:
+        "201": { description: Template created }
+  /api/v1/notifications/templates/{id}:
+    put:
+      tags: [Notifications]
+      summary: Update notification template
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/NotificationTemplateID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationTemplateRequest"
+      responses:
+        "200": { description: Template updated }
+    delete:
+      tags: [Notifications]
+      summary: Delete notification template
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/NotificationTemplateID"
+      responses:
+        "200": { description: Template deactivated }
+  /api/v1/admin/dashboard:
+    get:
+      tags: [Admin]
+      summary: Admin dashboard summary
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Platform summary
+  /api/v1/admin/users:
+    get:
+      tags: [Admin]
+      summary: Search admin users
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: per_page
+          in: query
+          schema: { type: integer, default: 10, maximum: 100 }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: role
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Admin user list
+  /api/v1/audit-logs:
+    get:
+      tags: [Audit]
+      summary: Search audit logs
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: table_name
+          in: query
+          schema: { type: string }
+        - name: action_type
+          in: query
+          schema: { type: string }
+        - name: changed_by
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: record_id
+          in: query
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Audit log list
+  /api/v1/attachments:
+    get:
+      tags: [Attachments]
+      summary: List attachments
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: entity_type
+          in: query
+          schema: { type: string }
+        - name: entity_id
+          in: query
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Attachment list
+    post:
+      tags: [Attachments]
+      summary: Create attachment metadata
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttachmentRequest"
+      responses:
+        "201":
+          description: Attachment created
+  /api/v1/attachments/{id}:
+    get:
+      tags: [Attachments]
+      summary: Get attachment
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AttachmentID"
+      responses:
+        "200":
+          description: Attachment detail
+    delete:
+      tags: [Attachments]
+      summary: Delete attachment
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AttachmentID"
+      responses:
+        "200":
+          description: Attachment deleted
+  /api/v1/tracking:
+    post:
+      tags: [Tracking]
+      summary: Create tracking point
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrackingPointRequest"
+      responses:
+        "201":
+          description: Tracking point created
+  /api/v1/vehicles/{vehicleId}/tracking:
+    get:
+      tags: [Tracking]
+      summary: Vehicle tracking history
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: vehicleId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": { description: Vehicle tracking history }
+  /api/v1/vehicles/{vehicleId}/tracking/latest:
+    get:
+      tags: [Tracking]
+      summary: Latest vehicle tracking point
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: vehicleId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": { description: Latest vehicle tracking point }
+  /api/v1/drivers/{driverId}/tracking:
+    get:
+      tags: [Tracking]
+      summary: Driver tracking history
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: driverId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": { description: Driver tracking history }
+  /api/v1/drivers/{driverId}/tracking/latest:
+    get:
+      tags: [Tracking]
+      summary: Latest driver tracking point
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: driverId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": { description: Latest driver tracking point }
+  /api/v1/dispatches/{dispatchId}/tracking:
+    get:
+      tags: [Tracking]
+      summary: Dispatch tracking history
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: dispatchId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": { description: Dispatch tracking history }
+  /api/v1/dispatches/{dispatchId}/tracking/latest:
+    get:
+      tags: [Tracking]
+      summary: Latest dispatch tracking point
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: dispatchId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": { description: Latest dispatch tracking point }
+components:
+  parameters:
+    UserID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    AddressID:
+      name: addressId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    PlantID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    NurseryID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    InventoryID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    PlantRequestID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    OrderID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    PaymentID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    SubscriptionPlanID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    SubscriptionID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    VehicleID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    DriverID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    DispatchID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    NotificationID:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    NotificationDeviceID:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    NotificationTemplateID:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    AttachmentID:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    SendOTPRequest:
+      type: object
+      required: [mobile]
+      properties:
+        mobile:
+          type: string
+          example: "9000000002"
+    VerifyOTPRequest:
+      type: object
+      required: [mobile, otp]
+      properties:
+        mobile:
+          type: string
+          example: "9000000002"
+        otp:
+          type: string
+          example: "123456"
+        device_type:
+          type: string
+          example: "MOBILE"
+        os_name:
+          type: string
+          example: "ANDROID"
+        app_version:
+          type: string
+          example: "1.0.0"
+    RefreshTokenRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+    LogoutRequest:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+    SendOTPResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        mock_otp:
+          type: string
+          example: "123456"
+    AuthResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        user:
+          $ref: "#/components/schemas/User"
+    MeResponse:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_code:
+          type: string
+          example: USR-000001
+        first_name:
+          type: string
+        mobile:
+          type: string
+        mobile_verified:
+          type: boolean
+        email_verified:
+          type: boolean
+        status:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+    UpdateProfileRequest:
+      type: object
+      required: [first_name]
+      properties:
+        first_name:
+          type: string
+          example: Demo
+        last_name:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        profile_image_url:
+          type: string
+          nullable: true
+        gender:
+          type: string
+          nullable: true
+          enum: [MALE, FEMALE, NON_BINARY, OTHER, PREFER_NOT_TO_SAY]
+    AddressRequest:
+      type: object
+      required: [address_line1]
+      properties:
+        address_type:
+          type: string
+          nullable: true
+          example: HOME
+        contact_name:
+          type: string
+          nullable: true
+        contact_mobile:
+          type: string
+          nullable: true
+        address_line1:
+          type: string
+        address_line2:
+          type: string
+          nullable: true
+        city:
+          type: string
+          nullable: true
+        state:
+          type: string
+          nullable: true
+        country:
+          type: string
+          nullable: true
+        postal_code:
+          type: string
+          nullable: true
+        latitude:
+          type: number
+          nullable: true
+        longitude:
+          type: number
+          nullable: true
+        is_default:
+          type: boolean
+    PlantRequest:
+      type: object
+      required: [scientific_name]
+      properties:
+        scientific_name:
+          type: string
+          example: Ficus religiosa
+        common_name:
+          type: string
+          nullable: true
+          example: Peepal
+        english_description:
+          type: string
+          nullable: true
+        plant_type:
+          type: string
+          nullable: true
+          example: TREE
+        light_requirement:
+          type: string
+          nullable: true
+          example: FULL_SUN
+        water_requirement:
+          type: string
+          nullable: true
+          example: MEDIUM
+        category_ids:
+          type: array
+          items:
+            type: integer
+        care_guide:
+          $ref: "#/components/schemas/CareGuideRequest"
+    PlantImageRequest:
+      type: object
+      required: [image_url]
+      properties:
+        image_url:
+          type: string
+        alt_text:
+          type: string
+          nullable: true
+        display_order:
+          type: integer
+        is_primary:
+          type: boolean
+    CareGuideRequest:
+      type: object
+      properties:
+        sunlight:
+          type: string
+          nullable: true
+        watering:
+          type: string
+          nullable: true
+        soil:
+          type: string
+          nullable: true
+        temperature:
+          type: string
+          nullable: true
+        fertilizer:
+          type: string
+          nullable: true
+        pruning:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+    NurseryRequest:
+      type: object
+      required: [name]
+      properties:
+        code:
+          type: string
+          nullable: true
+        name:
+          type: string
+        gst_number:
+          type: string
+          nullable: true
+        mobile:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        website:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        status:
+          type: string
+          nullable: true
+          enum: [ACTIVE, INACTIVE, SUSPENDED, DELETED]
+    NurseryAddressRequest:
+      type: object
+      properties:
+        address_type:
+          type: string
+          nullable: true
+          example: BUSINESS
+        address_line1:
+          type: string
+          nullable: true
+        address_line2:
+          type: string
+          nullable: true
+        city:
+          type: string
+          nullable: true
+        state:
+          type: string
+          nullable: true
+        country:
+          type: string
+          nullable: true
+        postal_code:
+          type: string
+          nullable: true
+        latitude:
+          type: number
+          nullable: true
+        longitude:
+          type: number
+          nullable: true
+        is_primary:
+          type: boolean
+    NurseryUserRequest:
+      type: object
+      required: [user_id]
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        role_id:
+          type: integer
+        role_code:
+          type: string
+          example: OWNER
+    InventoryRequest:
+      type: object
+      required: [nursery_id, plant_id, size_id, available_quantity]
+      properties:
+        nursery_id:
+          type: integer
+          format: int64
+        plant_id:
+          type: integer
+          format: int64
+        size_id:
+          type: integer
+        available_quantity:
+          type: integer
+          minimum: 0
+        inventory_status:
+          type: string
+          enum: [AVAILABLE, LOW_STOCK, OUT_OF_STOCK, RESERVED, DISCONTINUED]
+    PlantRequestRequest:
+      type: object
+      required: [requesting_nursery_id, plant_id, quantity_required]
+      properties:
+        requesting_nursery_id:
+          type: integer
+          format: int64
+        plant_id:
+          type: integer
+          format: int64
+        size_id:
+          type: integer
+          nullable: true
+        quantity_required:
+          type: integer
+          minimum: 1
+        radius_km:
+          type: integer
+          minimum: 1
+          example: 50
+        notes:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [OPEN, RESPONDED, FULFILLED, CANCELLED, EXPIRED]
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+    PlantRequestResponseRequest:
+      type: object
+      required: [supplier_nursery_id, available_quantity]
+      properties:
+        supplier_nursery_id:
+          type: integer
+          format: int64
+        available_quantity:
+          type: integer
+          minimum: 1
+        remarks:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [RESPONDED, ACCEPTED, REJECTED, EXPIRED]
+    PlantRequestResponseUpdateRequest:
+      type: object
+      required: [available_quantity]
+      properties:
+        available_quantity:
+          type: integer
+          minimum: 0
+        remarks:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [RESPONDED, ACCEPTED, REJECTED, EXPIRED]
+    OrderRequest:
+      type: object
+      required: [seller_nursery_id]
+      properties:
+        order_number:
+          type: string
+          nullable: true
+        buyer_user_id:
+          type: integer
+          format: int64
+          nullable: true
+        seller_nursery_id:
+          type: integer
+          format: int64
+        order_status:
+          type: string
+          enum: [PENDING, CONFIRMED, PARTIALLY_FULFILLED, COMPLETED, CANCELLED]
+        notes:
+          type: string
+          nullable: true
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderItemRequest"
+    OrderStatusRequest:
+      type: object
+      required: [order_status]
+      properties:
+        order_status:
+          type: string
+          enum: [PENDING, CONFIRMED, PARTIALLY_FULFILLED, COMPLETED, CANCELLED]
+    OrderItemRequest:
+      type: object
+      required: [plant_id, quantity, unit_price, total_price]
+      properties:
+        plant_id:
+          type: integer
+          format: int64
+        size_id:
+          type: integer
+          nullable: true
+        quantity:
+          type: number
+          minimum: 0
+        unit_price:
+          type: number
+          minimum: 0
+        total_price:
+          type: number
+          minimum: 0
+        remarks:
+          type: string
+          nullable: true
+    PaymentManualRequest:
+      type: object
+      required: [payment_for, amount, payment_method]
+      properties:
+        payment_for:
+          type: string
+          enum: [ORDER, SUBSCRIPTION]
+        order_id:
+          type: integer
+          format: int64
+          nullable: true
+        user_subscription_id:
+          type: integer
+          format: int64
+          nullable: true
+        payer_user_id:
+          type: integer
+          format: int64
+          nullable: true
+        amount:
+          type: number
+          minimum: 0
+        payment_method:
+          type: string
+          enum: [UPI, CARD, CASH, BANK_TRANSFER, NET_BANKING, WALLET, COD, CHEQUE, OTHER]
+        transaction_reference:
+          type: string
+          nullable: true
+        payment_status:
+          type: string
+          enum: [PENDING, SUCCESS, FAILED, REFUNDED, CANCELLED]
+        notes:
+          type: string
+          nullable: true
+        provider:
+          type: string
+          nullable: true
+          example: RAZORPAY
+        provider_payment_id:
+          type: string
+          nullable: true
+        provider_order_id:
+          type: string
+          nullable: true
+        provider_signature:
+          type: string
+          nullable: true
+        raw_response:
+          type: object
+          nullable: true
+    PaymentStatusRequest:
+      type: object
+      required: [payment_status]
+      properties:
+        payment_status:
+          type: string
+          enum: [PENDING, SUCCESS, FAILED, REFUNDED, CANCELLED]
+        transaction_reference:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        provider:
+          type: string
+          nullable: true
+        provider_payment_id:
+          type: string
+          nullable: true
+        provider_order_id:
+          type: string
+          nullable: true
+        provider_signature:
+          type: string
+          nullable: true
+        raw_response:
+          type: object
+          nullable: true
+    SubscriptionPlan:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        plan_code:
+          type: string
+          example: BASIC
+        plan_name:
+          type: string
+          example: Basic
+        description:
+          type: string
+          nullable: true
+        monthly_price:
+          type: number
+          nullable: true
+        yearly_price:
+          type: number
+          nullable: true
+        max_users:
+          type: integer
+          nullable: true
+        max_nurseries:
+          type: integer
+          nullable: true
+        is_active:
+          type: boolean
+    Subscription:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        subscription_code:
+          type: string
+          example: SUB-000001
+        user_id:
+          type: integer
+          format: int64
+        plan_id:
+          type: integer
+          format: int64
+        plan_code:
+          type: string
+        plan_name:
+          type: string
+        start_date:
+          type: string
+          format: date-time
+        end_date:
+          type: string
+          format: date-time
+          nullable: true
+        subscription_status:
+          type: string
+          enum: [ACTIVE, PAUSED, CANCELLED, EXPIRED]
+        auto_renew:
+          type: boolean
+        latest_payment:
+          $ref: "#/components/schemas/SubscriptionPaymentSummary"
+    SubscriptionPaymentSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        payment_code:
+          type: string
+          example: PAY-20260622-0001
+        amount:
+          type: number
+        payment_method:
+          type: string
+          nullable: true
+        transaction_reference:
+          type: string
+          nullable: true
+        payment_status:
+          type: string
+        provider:
+          type: string
+          nullable: true
+        provider_payment_id:
+          type: string
+          nullable: true
+        provider_order_id:
+          type: string
+          nullable: true
+    SubscriptionPlansResponse:
+      type: object
+      properties:
+        plans:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubscriptionPlan"
+    SubscriptionPlanResponse:
+      type: object
+      properties:
+        plan:
+          $ref: "#/components/schemas/SubscriptionPlan"
+    SubscriptionsResponse:
+      type: object
+      properties:
+        subscriptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Subscription"
+        pagination:
+          type: object
+    SubscriptionResponse:
+      type: object
+      properties:
+        subscription:
+          $ref: "#/components/schemas/Subscription"
+    SubscriptionCreateRequest:
+      type: object
+      required: [plan_id]
+      properties:
+        user_id:
+          type: integer
+          format: int64
+          nullable: true
+        plan_id:
+          type: integer
+          format: int64
+        billing_cycle:
+          type: string
+          enum: [MONTHLY, YEARLY]
+          default: MONTHLY
+        start_date:
+          type: string
+          format: date
+          nullable: true
+        auto_renew:
+          type: boolean
+        payment_method:
+          type: string
+          enum: [UPI, CARD, CASH, BANK_TRANSFER, NET_BANKING, WALLET, COD, CHEQUE, OTHER]
+          nullable: true
+        provider:
+          type: string
+          nullable: true
+          example: RAZORPAY
+        provider_order_id:
+          type: string
+          nullable: true
+    SubscriptionRenewRequest:
+      type: object
+      properties:
+        billing_cycle:
+          type: string
+          enum: [MONTHLY, YEARLY]
+          default: MONTHLY
+        payment_method:
+          type: string
+          enum: [UPI, CARD, CASH, BANK_TRANSFER, NET_BANKING, WALLET, COD, CHEQUE, OTHER]
+          nullable: true
+        provider:
+          type: string
+          nullable: true
+        provider_order_id:
+          type: string
+          nullable: true
+    SubscriptionStatusRequest:
+      type: object
+      required: [subscription_status]
+      properties:
+        subscription_status:
+          type: string
+          enum: [ACTIVE, PAUSED, CANCELLED, EXPIRED]
+    SubscriptionCancelRequest:
+      type: object
+      properties:
+        cancel_immediately:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+    VehicleRequest:
+      type: object
+      required: [vehicle_number]
+      properties:
+        vehicle_number:
+          type: string
+          example: TS09AB1234
+        vehicle_type:
+          type: string
+          nullable: true
+          example: MINI_TRUCK
+        capacity_kg:
+          type: number
+          nullable: true
+        owner_name:
+          type: string
+          nullable: true
+        mobile:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE, MAINTENANCE, RETIRED]
+    DriverRequest:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          format: int64
+          nullable: true
+        license_number:
+          type: string
+          nullable: true
+        license_expiry_date:
+          type: string
+          format: date
+          nullable: true
+        emergency_contact:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE, SUSPENDED, DELETED]
+    DriverLocationRequest:
+      type: object
+      required: [latitude, longitude]
+      properties:
+        latitude:
+          type: number
+          example: 17.385044
+        longitude:
+          type: number
+          example: 78.486671
+    DispatchRequest:
+      type: object
+      required: [order_id]
+      properties:
+        order_id:
+          type: integer
+          format: int64
+        dispatch_number:
+          type: string
+          nullable: true
+        vehicle_id:
+          type: integer
+          format: int64
+          nullable: true
+        driver_id:
+          type: integer
+          format: int64
+          nullable: true
+        dispatch_date:
+          type: string
+          format: date-time
+          nullable: true
+        destination_address:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DispatchItemRequest"
+    DispatchStatusRequest:
+      type: object
+      required: [dispatch_status]
+      properties:
+        dispatch_status:
+          type: string
+          enum: [PENDING, DISPATCHED, IN_TRANSIT, DELIVERED, CANCELLED]
+        delivery_date:
+          type: string
+          format: date-time
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+    DispatchItemRequest:
+      type: object
+      required: [quantity]
+      properties:
+        order_item_id:
+          type: integer
+          format: int64
+          nullable: true
+        quantity:
+          type: number
+          minimum: 0
+        notes:
+          type: string
+          nullable: true
+    NotificationCreateRequest:
+      type: object
+      required: [notification_type, channel]
+      properties:
+        user_id:
+          type: integer
+          format: int64
+          nullable: true
+        notification_type:
+          type: string
+          enum: [ORDER_CREATED, ORDER_STATUS_UPDATED, PAYMENT_RECORDED, DISPATCH_CREATED, DISPATCH_STATUS_UPDATED, SUBSCRIPTION_CREATED, SUBSCRIPTION_RENEWED, SYSTEM]
+        template_id:
+          type: integer
+          format: int64
+          nullable: true
+        title:
+          type: string
+          nullable: true
+        message:
+          type: string
+          nullable: true
+        channel:
+          type: string
+          enum: [PUSH, SMS, EMAIL, IN_APP]
+        data:
+          type: object
+          nullable: true
+    NotificationDeviceRequest:
+      type: object
+      required: [fcm_token]
+      properties:
+        fcm_token:
+          type: string
+        device_type:
+          type: string
+          nullable: true
+        device_id_external:
+          type: string
+          nullable: true
+        platform:
+          type: string
+          nullable: true
+        app_version:
+          type: string
+          nullable: true
+    NotificationTemplateRequest:
+      type: object
+      required: [template_code, channel]
+      properties:
+        template_code:
+          type: string
+        template_name:
+          type: string
+          nullable: true
+        channel:
+          type: string
+          enum: [PUSH, SMS, EMAIL, IN_APP]
+        subject:
+          type: string
+          nullable: true
+        message_template:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+    AttachmentRequest:
+      type: object
+      required: [entity_type, entity_id, file_name, file_url]
+      properties:
+        entity_type:
+          type: string
+          example: ORDER
+        entity_id:
+          type: integer
+          format: int64
+        file_name:
+          type: string
+          example: invoice.pdf
+        file_url:
+          type: string
+          example: s3://greenroot-dev-files/orders/invoice.pdf
+        file_type:
+          type: string
+          nullable: true
+          example: application/pdf
+        file_size:
+          type: integer
+          format: int64
+          nullable: true
+    TrackingPointRequest:
+      type: object
+      required: [latitude, longitude]
+      properties:
+        vehicle_id:
+          type: integer
+          format: int64
+          nullable: true
+        driver_id:
+          type: integer
+          format: int64
+          nullable: true
+        dispatch_id:
+          type: integer
+          format: int64
+          nullable: true
+        latitude:
+          type: number
+          example: 17.385044
+        longitude:
+          type: number
+          example: 78.486671
+        notes:
+          type: string
+          nullable: true
+    HealthResponse:
+      type: object
+      required: [status, service, version, env, timestamp]
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: greenroot-api
+        version:
+          type: string
+          example: 0.1.0
+        env:
+          type: string
+          example: local
+        timestamp:
+          type: string
+          format: date-time
