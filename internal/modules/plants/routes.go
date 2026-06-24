@@ -21,6 +21,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 	router.Route("/plants", func(r chi.Router) {
 		r.Get("/", m.handler.List)
 		r.Post("/", m.handler.Create)
+		r.Get("/sizes", m.handler.Sizes)
 		r.Get("/categories", m.handler.Categories)
 		r.Post("/categories", m.handler.CreateCategory)
 		r.Put("/categories/{categoryId}", m.handler.UpdateCategory)

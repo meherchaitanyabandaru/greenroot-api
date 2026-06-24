@@ -1,14 +1,15 @@
 package dispatches
 
 type ListDispatchesRequest struct {
-	Page      int
-	PerPage   int
-	OrderID   int64
-	NurseryID int64
-	Status    string
-	Search    string
-	SortBy    string
-	SortOrder string
+	Page         int
+	PerPage      int
+	OrderID      int64
+	NurseryID    int64
+	DriverUserID int64
+	Status       string
+	Search       string
+	SortBy       string
+	SortOrder    string
 }
 
 type CreateDispatchRequest struct {

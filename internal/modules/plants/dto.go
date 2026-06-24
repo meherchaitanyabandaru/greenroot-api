@@ -58,6 +58,10 @@ type PlantResponse struct {
 	Plant Plant `json:"plant"`
 }
 
+type SizesResponse struct {
+	Sizes []PlantSize `json:"sizes"`
+}
+
 type CategoriesResponse struct {
 	Categories []Category `json:"categories"`
 }

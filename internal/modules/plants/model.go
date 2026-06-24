@@ -24,6 +24,14 @@ type Plant struct {
 	Images             []Image    `json:"images,omitempty"`
 }
 
+type PlantSize struct {
+	ID           int    `json:"id"`
+	SizeCode     string `json:"size_code"`
+	DisplayName  string `json:"display_name"`
+	DisplayOrder int    `json:"display_order"`
+	IsActive     bool   `json:"is_active"`
+}
+
 type Category struct {
 	ID        int64     `json:"id"`
 	Name      string    `json:"name"`

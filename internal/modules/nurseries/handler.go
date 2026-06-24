@@ -42,6 +42,19 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 //	@Tags		Nurseries
 //	@Success	200	{object}	NurseryResponse
 //	@Router		/api/v1/nurseries/{id} [get]
+func (h *Handler) Mine(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	nurseries, err := h.service.ListMine(r.Context(), actor.UserID)
+	if err != nil {
+		writeNurseriesError(w, err)
+		return
+	}
+	response.OK(w, NurseriesResponse{Nurseries: nurseries})
+}
+
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	nurseryID, ok := pathID(w, r, "id")
 	if !ok {

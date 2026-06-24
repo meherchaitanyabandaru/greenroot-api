@@ -1,43 +1,47 @@
 # GreenRoot RBAC Matrix
 
-This matrix documents the intended V1 route authorization model before Admin UI work.
-
 ## Roles
 
 | Role | Purpose |
 | --- | --- |
 | `ADMIN` | Platform operations, catalog management, audit visibility, global dashboard |
-| `BUYER` | End user/customer flows, orders, subscriptions, own notifications |
-| `NURSERY_OWNER` | Nursery profile, inventory, plant requests, order fulfillment participation |
+| `SUPER_ADMIN` | Full platform access including admin management |
+| `NURSERY_OWNER` | Nursery profile, inventory, plant requests, order management |
+| `MANAGER` | Works under a nursery — creates orders for buyers, manages inventory and dispatches |
 | `DRIVER` | Dispatch assignment, driver profile, location/tracking updates |
+| `TRANSPORT_PROVIDER` | Fleet/vehicle management for transport companies |
+| `BUYER` | Read own orders and track dispatches (orders placed by nursery staff on their behalf) |
+
+## Order Creation Flow
+
+Orders are always created by nursery staff (`NURSERY_OWNER` or `MANAGER`), never by buyers directly. Staff call `POST /orders` with `buyer_mobile` + `buyer_name`. The API auto-creates a `BUYER` user if the mobile is not registered. Buyers log in to view their orders and track delivery (read-only).
 
 ## Route Policy
 
-| Area | Public | Authenticated | Admin | Nursery Owner | Driver | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| Health | yes | no | no | no | no | `/health`, `/healthz`, `/readyz` |
-| Swagger/OpenAPI | yes | no | no | no | no | Local/dev API contract |
-| Auth | partial | yes | no | no | no | OTP public, `me/logout` protected |
-| Users | no | own data | global read where allowed | own/member data | own data | Profile and session visibility must stay scoped |
-| Plants | read | no | write | no | no | Public catalog read, admin catalog mutation |
-| Nurseries | read | member actions | write/global | own nursery | no | Ownership/membership checks in service layer |
-| Inventory | no | scoped read | global write | own nursery write | no | Nursery access must be checked before mutation |
-| Plant Requests | no | scoped read | global | nursery workflows | no | Request/response flows are nursery-centered |
-| Orders | no | own/scoped | global | nursery orders | no | Buyer and nursery access both valid |
-| Payments | no | own/scoped | global | order-linked | no | Manual order payments now, gateway subscription payments later |
-| Subscriptions | plans public | own | global/status | no | no | Plans public, subscription records protected |
-| Vehicles | no | no | global write | no | no | Driver assignment depends on dispatch workflows |
-| Drivers | no | own/scoped | global write | no | own profile/location | Driver route hardening should prefer own-driver checks |
-| Dispatches | no | scoped | global | nursery dispatches | assigned | Tracking and status should remain scoped |
-| Tracking | no | scoped | global | nursery dispatches | assigned | Latest/history reads must respect dispatch/driver ownership |
-| Notifications | no | own | global/templates | own | own | Templates admin-only |
-| Attachments | no | scoped | global | scoped | scoped | Entity-level access rules should be expanded as modules mature |
-| Audit | no | no | yes | no | no | Admin-only |
-| Admin | no | no | yes | no | no | Admin dashboard only |
+| Area | Public | Admin | Nursery Owner | Manager | Driver | Buyer | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Health | yes | — | — | — | — | — | `/healthz`, `/readyz` |
+| Swagger | yes | — | — | — | — | — | Dev only |
+| Auth | partial | — | — | — | — | — | OTP public, `me/logout` protected |
+| Users | no | global | own/member | own | own | own | Profile scoped to self |
+| Plants | read | write | read | read | read | read | Public catalog; admin mutates |
+| Nurseries | read | write/global | own nursery | own nursery | no | read | Membership checked in service |
+| Inventory | no | global | own nursery | own nursery | no | no | Nursery-scoped |
+| Plant Requests | no | global | nursery B2B | nursery B2B | no | no | Nursery-to-nursery requests only |
+| Orders | no | global | own nursery | own nursery | no | own orders | Manager creates; buyer reads |
+| Payments | no | global | order-linked | no | no | own | Subscription fee only from platform |
+| Subscriptions | plans public | global | own | no | no | no | Plans public |
+| Vehicles | no | global write | no | no | assigned | no | |
+| Drivers | no | global write | no | no | own profile | no | Location updates driver-only |
+| Dispatches | no | global | own nursery | own nursery | assigned | own orders | Scoped to nursery/driver |
+| Tracking | no | global | own nursery | own nursery | assigned | own orders | Reads respect ownership |
+| Notifications | no | global/templates | own | own | own | own | Templates admin-only |
+| Audit | no | yes | no | no | no | no | Admin-only |
+| Admin | no | yes | no | no | no | no | Admin dashboard only |
 
 ## Hardening Checklist
 
-* Add table-driven tests for every service role check.
-* Add one negative test per protected route for missing JWT.
-* Add one negative test per admin-only route for non-admin JWT.
-* Keep authorization in service layer; handlers should only extract actor context.
+- Add table-driven tests for every service role check.
+- Add one negative test per protected route for missing JWT.
+- Add one negative test per admin-only route for non-admin JWT.
+- Keep authorization in service layer; handlers should only extract actor context.

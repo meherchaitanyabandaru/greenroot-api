@@ -80,7 +80,6 @@ func (r *PostgresRepository) HasDuplicate(ctx context.Context, vehicleNumber str
 			SELECT 1
 			FROM public.vehicles
 			WHERE vehicle_id <> $1
-				AND COALESCE(status, '') <> 'RETIRED'
 				AND UPPER(vehicle_number) = UPPER($2)
 		)
 	`
@@ -168,7 +167,7 @@ func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAud
 }
 
 func buildWhere(input ListVehiclesRequest) (string, []any) {
-	clauses := []string{"1 = 1"}
+	clauses := []string{"COALESCE(status::text, '') <> 'RETIRED'"}
 	args := make([]any, 0)
 	if input.Status != "" {
 		args = append(args, input.Status)

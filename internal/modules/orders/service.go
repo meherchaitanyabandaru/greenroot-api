@@ -47,6 +47,13 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, orderID int64) (O
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateOrderRequest) (Order, error) {
+	if input.BuyerMobile != nil && *input.BuyerMobile != "" {
+		buyerID, err := s.repository.FindOrCreateBuyerByMobile(ctx, *input.BuyerMobile, stringOrEmpty(input.BuyerName))
+		if err != nil {
+			return Order{}, err
+		}
+		input.BuyerUserID = &buyerID
+	}
 	input = normalizeCreate(actor, input)
 	if err := validateOrder(input); err != nil {
 		return Order{}, err
@@ -177,7 +184,7 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 	if hasRole(actor, "ADMIN") {
 		return nil
 	}
-	if hasRole(actor, "NURSERY_OWNER") {
+	if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
 		if input.NurseryID <= 0 {
 			return ErrForbidden
 		}
@@ -194,7 +201,7 @@ func (s *Service) canView(ctx context.Context, actor ActorContext, order Order) 
 	if order.BuyerUserID != nil && *order.BuyerUserID == actor.UserID {
 		return nil
 	}
-	if hasRole(actor, "NURSERY_OWNER") && order.SellerNurseryID != nil {
+	if (hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER")) && order.SellerNurseryID != nil {
 		return s.mustBeNurseryMember(ctx, actor, *order.SellerNurseryID)
 	}
 	return ErrForbidden
@@ -204,11 +211,15 @@ func (s *Service) canCreate(ctx context.Context, actor ActorContext, input Creat
 	if hasRole(actor, "ADMIN") {
 		return nil
 	}
+	if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
+		if input.SellerNurseryID == nil {
+			return ErrInvalidInput
+		}
+		return s.mustBeNurseryMember(ctx, actor, *input.SellerNurseryID)
+	}
+	// BUYER creating own order
 	if input.BuyerUserID != nil && *input.BuyerUserID != actor.UserID {
 		return ErrForbidden
-	}
-	if hasRole(actor, "NURSERY_OWNER") && input.SellerNurseryID != nil {
-		return s.mustBeNurseryMember(ctx, actor, *input.SellerNurseryID)
 	}
 	return nil
 }
@@ -217,7 +228,7 @@ func (s *Service) canManage(ctx context.Context, actor ActorContext, order Order
 	if hasRole(actor, "ADMIN") {
 		return nil
 	}
-	if hasRole(actor, "NURSERY_OWNER") && order.SellerNurseryID != nil {
+	if (hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER")) && order.SellerNurseryID != nil {
 		return s.mustBeNurseryMember(ctx, actor, *order.SellerNurseryID)
 	}
 	return ErrForbidden
@@ -259,7 +270,8 @@ func normalizeCreate(actor ActorContext, input CreateOrderRequest) CreateOrderRe
 	if input.Status == "" {
 		input.Status = "PENDING"
 	}
-	if input.BuyerUserID == nil {
+	// Only default buyer to self when a BUYER is creating their own order
+	if input.BuyerUserID == nil && hasRole(actor, "BUYER") {
 		input.BuyerUserID = &actor.UserID
 	}
 	return input

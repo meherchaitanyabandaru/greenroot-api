@@ -37,6 +37,10 @@ func (s *Service) List(ctx context.Context, input ListNurseriesRequest) ([]Nurse
 	}, nil
 }
 
+func (s *Service) ListMine(ctx context.Context, userID int64) ([]Nursery, error) {
+	return s.repository.ListByUserID(ctx, userID)
+}
+
 func (s *Service) Get(ctx context.Context, nurseryID int64) (Nursery, error) {
 	nursery, err := s.repository.FindByID(ctx, nurseryID)
 	if err != nil {

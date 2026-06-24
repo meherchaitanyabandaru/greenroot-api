@@ -27,6 +27,7 @@ type Repository interface {
 	AddUser(ctx context.Context, nurseryID int64, input AddUserRequest) (*UserLink, error)
 	RemoveUser(ctx context.Context, nurseryID int64, userID int64) error
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
+	ListByUserID(ctx context.Context, userID int64) ([]Nursery, error)
 	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 }
 
@@ -406,6 +407,35 @@ func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int6
 	var exists bool
 	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM public.nursery_users WHERE nursery_id = $1 AND user_id = $2 AND COALESCE(is_active, true) = true)`, nurseryID, userID).Scan(&exists)
 	return exists, err
+}
+
+func (r *PostgresRepository) ListByUserID(ctx context.Context, userID int64) ([]Nursery, error) {
+	const query = `
+		SELECT DISTINCT n.nursery_id, n.nursery_code, n.nursery_name, n.gst_number, n.mobile,
+			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.created_at,
+			n.updated_at, n.created_by, n.updated_by
+		FROM public.nurseries n
+		JOIN public.nursery_users nu ON nu.nursery_id = n.nursery_id
+		WHERE nu.user_id = $1
+		  AND COALESCE(nu.is_active, true) = true
+		  AND COALESCE(n.status::text, '') <> 'DELETED'
+		ORDER BY n.nursery_id
+	`
+	rows, err := r.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	nurseries := make([]Nursery, 0)
+	for rows.Next() {
+		nursery, err := scanNurseryRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		nurseries = append(nurseries, nursery)
+	}
+	return nurseries, rows.Err()
 }
 
 func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAuditInput) error {

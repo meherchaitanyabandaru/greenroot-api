@@ -25,6 +25,7 @@ type Repository interface {
 	UpdateItem(ctx context.Context, itemID int64, input OrderItemRequest) (*OrderItem, error)
 	DeleteItem(ctx context.Context, itemID int64) error
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
+	FindOrCreateBuyerByMobile(ctx context.Context, mobile string, name string) (int64, error)
 	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 }
 
@@ -292,6 +293,55 @@ func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int6
 	var exists bool
 	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM public.nursery_users WHERE nursery_id = $1 AND user_id = $2 AND COALESCE(is_active, true) = true)`, nurseryID, userID).Scan(&exists)
 	return exists, err
+}
+
+func (r *PostgresRepository) FindOrCreateBuyerByMobile(ctx context.Context, mobile string, name string) (int64, error) {
+	var userID int64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT user_id FROM public.users WHERE mobile = $1 AND deleted_at IS NULL`,
+		mobile).Scan(&userID)
+	if err == nil {
+		return userID, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	userCode, err := publiccode.Next(ctx, tx, publiccode.Users, time.Now())
+	if err != nil {
+		return 0, err
+	}
+
+	firstName := strings.TrimSpace(name)
+	if firstName == "" {
+		firstName = mobile
+	}
+
+	const insertUser = `
+		INSERT INTO public.users (user_code, first_name, mobile, mobile_verified, email_verified, status, created_at, updated_at)
+		VALUES ($1, $2, $3, false, false, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		RETURNING user_id
+	`
+	if err := tx.QueryRowContext(ctx, insertUser, userCode, firstName, mobile).Scan(&userID); err != nil {
+		return 0, err
+	}
+
+	const assignRole = `
+		INSERT INTO public.user_roles (user_id, role_id, assigned_at)
+		SELECT $1, role_id, CURRENT_TIMESTAMP FROM public.roles WHERE role_code = 'BUYER'
+		ON CONFLICT DO NOTHING
+	`
+	if _, err := tx.ExecContext(ctx, assignRole, userID); err != nil {
+		return 0, err
+	}
+
+	return userID, tx.Commit()
 }
 
 func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAuditInput) error {

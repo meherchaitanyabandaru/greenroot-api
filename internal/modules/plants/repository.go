@@ -19,6 +19,7 @@ type Repository interface {
 	Create(ctx context.Context, input CreatePlantRequest) (*Plant, error)
 	Update(ctx context.Context, plantID int64, input UpdatePlantRequest) (*Plant, error)
 	Delete(ctx context.Context, plantID int64) error
+	ListSizes(ctx context.Context) ([]PlantSize, error)
 	ListCategories(ctx context.Context) ([]Category, error)
 	CreateCategory(ctx context.Context, name string) (Category, error)
 	UpdateCategory(ctx context.Context, categoryID int64, input UpdateCategoryRequest) (Category, error)
@@ -220,6 +221,30 @@ func (r *PostgresRepository) Delete(ctx context.Context, plantID int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *PostgresRepository) ListSizes(ctx context.Context) ([]PlantSize, error) {
+	const query = `
+		SELECT size_id, size_code, display_name, display_order, is_active
+		FROM public.plant_sizes
+		WHERE is_active = true
+		ORDER BY display_order
+	`
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	sizes := make([]PlantSize, 0)
+	for rows.Next() {
+		var s PlantSize
+		if err := rows.Scan(&s.ID, &s.SizeCode, &s.DisplayName, &s.DisplayOrder, &s.IsActive); err != nil {
+			return nil, err
+		}
+		sizes = append(sizes, s)
+	}
+	return sizes, rows.Err()
 }
 
 func (r *PostgresRepository) ListCategories(ctx context.Context) ([]Category, error) {

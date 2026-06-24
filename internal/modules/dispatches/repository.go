@@ -23,6 +23,7 @@ type Repository interface {
 	ListItems(ctx context.Context, dispatchID int64) ([]DispatchItem, error)
 	OrderAccess(ctx context.Context, orderID int64) (*OrderAccess, error)
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
+	IsDispatchDriver(ctx context.Context, driverID int64, userID int64) (bool, error)
 	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 }
 
@@ -242,6 +243,12 @@ func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int6
 	return exists, err
 }
 
+func (r *PostgresRepository) IsDispatchDriver(ctx context.Context, driverID int64, userID int64) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM public.drivers WHERE driver_id = $1 AND user_id = $2)`, driverID, userID).Scan(&exists)
+	return exists, err
+}
+
 func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAuditInput) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO public.audit_logs (table_name, record_id, action_type, old_data, new_data, changed_by, source_ip, user_agent, changed_at)
@@ -285,6 +292,10 @@ func buildWhere(input ListDispatchesRequest) (string, []any) {
 	if input.NurseryID > 0 {
 		args = append(args, input.NurseryID)
 		clauses = append(clauses, fmt.Sprintf("o.seller_nursery_id = $%d", len(args)))
+	}
+	if input.DriverUserID > 0 {
+		args = append(args, input.DriverUserID)
+		clauses = append(clauses, fmt.Sprintf("dr.user_id = $%d", len(args)))
 	}
 	if input.Status != "" {
 		args = append(args, input.Status)

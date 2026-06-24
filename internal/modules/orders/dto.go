@@ -14,6 +14,8 @@ type ListOrdersRequest struct {
 type CreateOrderRequest struct {
 	OrderNumber     *string            `json:"order_number"`
 	BuyerUserID     *int64             `json:"buyer_user_id"`
+	BuyerMobile     *string            `json:"buyer_mobile"`
+	BuyerName       *string            `json:"buyer_name"`
 	SellerNurseryID *int64             `json:"seller_nursery_id"`
 	Status          string             `json:"order_status"`
 	Notes           *string            `json:"notes"`

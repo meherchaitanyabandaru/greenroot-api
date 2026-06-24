@@ -87,6 +87,10 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, plantID int64)
 	return nil
 }
 
+func (s *Service) ListSizes(ctx context.Context) ([]PlantSize, error) {
+	return s.repository.ListSizes(ctx)
+}
+
 func (s *Service) ListCategories(ctx context.Context) ([]Category, error) {
 	return s.repository.ListCategories(ctx)
 }

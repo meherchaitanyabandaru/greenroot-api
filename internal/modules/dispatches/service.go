@@ -143,6 +143,10 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 		}
 		return nil
 	}
+	if hasRole(actor, "DRIVER") {
+		input.DriverUserID = actor.UserID
+		return nil
+	}
 	return ErrForbidden
 }
 
@@ -156,6 +160,12 @@ func (s *Service) canAccess(ctx context.Context, actor ActorContext, dispatch Di
 			return err
 		}
 		if member {
+			return nil
+		}
+	}
+	if hasRole(actor, "DRIVER") && dispatch.DriverID != nil {
+		isDriver, err := s.repository.IsDispatchDriver(ctx, *dispatch.DriverID, actor.UserID)
+		if err == nil && isDriver {
 			return nil
 		}
 	}

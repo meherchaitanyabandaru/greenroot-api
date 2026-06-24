@@ -139,6 +139,15 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, DeletePlantResponse{Message: "Plant deleted successfully"})
 }
 
+func (h *Handler) Sizes(w http.ResponseWriter, r *http.Request) {
+	sizes, err := h.service.ListSizes(r.Context())
+	if err != nil {
+		writePlantsError(w, err)
+		return
+	}
+	response.OK(w, SizesResponse{Sizes: sizes})
+}
+
 func (h *Handler) Categories(w http.ResponseWriter, r *http.Request) {
 	categories, err := h.service.ListCategories(r.Context())
 	if err != nil {

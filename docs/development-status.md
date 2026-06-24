@@ -11,7 +11,7 @@
 | Nurseries | ✅ Complete | CRUD, addresses, nursery users |
 | Inventory | ✅ Complete | Nursery and plant inventory |
 | Plant Requests | ✅ Complete | Request/response flow and matching foundation |
-| Orders | ✅ Complete | Orders and order items |
+| Orders | ✅ Complete | Manager creates orders for buyers via buyer_mobile; buyer reads own orders |
 | Payments | ✅ Complete | Manual order payments and subscription payment records |
 | Subscriptions | ✅ Complete | Plans, create, renew, cancel, status |
 | Vehicles | ✅ Complete | Vehicle registry and status |
