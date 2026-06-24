@@ -34,3 +34,7 @@ test-log/**
 tmp/
 temp/
 .tmp/
+
+# Runtime logs and local test output
+logs/
+test-log/
