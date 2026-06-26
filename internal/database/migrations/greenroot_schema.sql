@@ -10,7 +10,11 @@
 -- → orders, orders.quotation_id → quotations). One FK is added at the end — it is
 -- the only ALTER TABLE in this file, and it is structurally unavoidable.
 --
--- Tables: 46  |  Sections: DDL → Constraints → Indexes → Reference seed data
+-- Tables: 49  |  Sections: DDL → Constraints → Indexes → Reference seed data
+-- Gap fixes applied: otp_requests, platform_config, nursery_applications added;
+--   nurseries/orders/dispatches/attachments got deleted_at; nurseries got
+--   approval columns; dispatches got driver acceptance columns;
+--   partial unique indexes enforce one-active-nursery and one-active-trip rules.
 -- =============================================================================
 
 SET statement_timeout = 0;
@@ -253,6 +257,29 @@ CREATE TABLE public.notification_templates (
 );
 
 
+/*
+ * platform_config
+ * Runtime key-value configuration managed by Super Admin without a code deploy.
+ * data_type hints how the API should parse the value (string/integer/numeric/boolean).
+ *
+ * Who uses it: Super Admin reads/writes via admin portal. API layer reads on
+ * startup and caches; refreshes on change. Notification worker reads OTP settings.
+ * Why: avoids hardcoding OTP expiry, fee percentages, or approval windows in Go
+ * binary — ops can change them live without a deployment.
+ */
+CREATE TABLE public.platform_config (
+    config_id    BIGSERIAL    PRIMARY KEY,
+    config_key   VARCHAR(100) NOT NULL UNIQUE,
+    config_value TEXT         NOT NULL,
+    data_type    VARCHAR(20)  NOT NULL DEFAULT 'string',
+    description  TEXT,
+    is_active    BOOLEAN      NOT NULL DEFAULT true,
+    updated_by   BIGINT,
+    updated_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+
 -- =============================================================================
 -- SECTION 4: USERS & IDENTITY
 -- =============================================================================
@@ -331,6 +358,31 @@ CREATE TABLE public.user_sessions (
     ip_address       VARCHAR(100),
     user_agent       TEXT,
     created_at       TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+);
+
+/*
+ * otp_requests
+ * Stores every OTP sent to a mobile number. Verified by the auth module on login.
+ * attempt_count tracks wrong guesses so the code can be blocked after N failures.
+ * is_used prevents replay attacks — a code is single-use.
+ * purpose distinguishes LOGIN from VERIFY_EMAIL or RESET_PASSWORD flows.
+ *
+ * Who uses it: auth module creates a row on every OTP send, marks is_used=true
+ * on successful verification. Rate-limit middleware reads attempt_count.
+ * Why: without this table there is no place to store the OTP in production;
+ * the DEV admin works with a hardcoded OTP but that must not reach production.
+ */
+CREATE TABLE public.otp_requests (
+    otp_id        BIGSERIAL    PRIMARY KEY,
+    mobile        VARCHAR(20)  NOT NULL,
+    otp_code      VARCHAR(10)  NOT NULL,
+    purpose       VARCHAR(50)  NOT NULL DEFAULT 'LOGIN',
+    expires_at    TIMESTAMP    NOT NULL,
+    is_used       BOOLEAN      NOT NULL DEFAULT false,
+    used_at       TIMESTAMP,
+    attempt_count INTEGER      NOT NULL DEFAULT 0,
+    ip_address    VARCHAR(100),
+    created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 /*
@@ -448,21 +500,65 @@ CREATE TABLE public.user_notification_devices (
  * and managers all belong to a nursery.
  */
 CREATE TABLE public.nurseries (
-    nursery_id    BIGSERIAL    PRIMARY KEY,
-    nursery_code  VARCHAR(50)  NOT NULL UNIQUE
-                      DEFAULT public.next_public_code('nurseries', 'NUR', 6, false),
-    nursery_name  VARCHAR(255) NOT NULL,
-    owner_user_id BIGINT       UNIQUE,
-    gst_number    VARCHAR(50),
-    mobile        VARCHAR(20),
-    email         VARCHAR(255),
-    website       VARCHAR(255),
-    description   TEXT,
-    status        VARCHAR(20)  DEFAULT 'ACTIVE',
-    created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_by    BIGINT,
-    updated_by    BIGINT
+    nursery_id       BIGSERIAL    PRIMARY KEY,
+    nursery_code     VARCHAR(50)  NOT NULL UNIQUE
+                         DEFAULT public.next_public_code('nurseries', 'NUR', 6, false),
+    nursery_name     VARCHAR(255) NOT NULL,
+    owner_user_id    BIGINT       UNIQUE,
+    gst_number       VARCHAR(50),
+    mobile           VARCHAR(20),
+    email            VARCHAR(255),
+    website          VARCHAR(255),
+    description      TEXT,
+    status           VARCHAR(20)  DEFAULT 'PENDING_APPROVAL',  -- PENDING_APPROVAL → ACTIVE | REJECTED | SUSPENDED
+    approved_by      BIGINT,        -- super admin who approved
+    approved_at      TIMESTAMP,
+    rejected_by      BIGINT,        -- super admin who rejected
+    rejected_at      TIMESTAMP,
+    rejection_reason TEXT,
+    deleted_at       TIMESTAMP,     -- soft delete (business rule: never hard-delete nurseries)
+    created_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by       BIGINT,
+    updated_by       BIGINT
+);
+
+/*
+ * nursery_applications
+ * Pre-approval onboarding record submitted by a prospective nursery owner.
+ * Super Admin reviews PENDING applications and either approves (creates the
+ * nursery row, links nursery_id here) or rejects with a reason.
+ * Status: PENDING → APPROVED | REJECTED.
+ *
+ * Who uses it: nursery owner submits during registration. Super Admin reviews
+ * in the admin portal "Nursery Applications" page. On approval, the system
+ * creates the nurseries row and sets nursery_id here for traceability.
+ * Why: without this table a nursery goes live immediately (status defaulted
+ * to ACTIVE) bypassing the mandatory Super Admin approval step.
+ */
+CREATE TABLE public.nursery_applications (
+    application_id    BIGSERIAL    PRIMARY KEY,
+    application_code  VARCHAR(20)  NOT NULL UNIQUE
+                          DEFAULT public.next_public_code('nursery_applications', 'NRA', 6, false),
+    applicant_user_id BIGINT       NOT NULL,
+    nursery_name      VARCHAR(255) NOT NULL,
+    gst_number        VARCHAR(50),
+    mobile            VARCHAR(20),
+    email             VARCHAR(255),
+    address_line1     VARCHAR(255),
+    address_line2     VARCHAR(255),
+    city              VARCHAR(100),
+    state             VARCHAR(100),
+    country           VARCHAR(100) DEFAULT 'India',
+    postal_code       VARCHAR(20),
+    description       TEXT,
+    status            VARCHAR(30)  NOT NULL DEFAULT 'PENDING',
+    reviewed_by       BIGINT,
+    reviewed_at       TIMESTAMP,
+    rejection_reason  TEXT,
+    nursery_id        BIGINT,       -- set when application is approved and nursery row created
+    created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 /*
@@ -517,6 +613,8 @@ CREATE TABLE public.nursery_users (
     updated_at          TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
     is_active           BOOLEAN     DEFAULT true,
     CONSTRAINT nursery_users_uq UNIQUE (nursery_id, user_id, nursery_role_id)
+    -- Note: partial unique index uq_manager_one_active_nursery enforces
+    -- "one active nursery per manager" business rule — added in SECTION 17.
 );
 
 /*
@@ -865,6 +963,7 @@ CREATE TABLE public.orders (
     cancelled_by_user_id          BIGINT,
     cancelled_at                  TIMESTAMP,
     cancel_reason                 TEXT,
+    deleted_at                    TIMESTAMP,   -- soft delete (business rule: never hard-delete orders)
     created_at                    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at                    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_by                    BIGINT,
@@ -940,9 +1039,15 @@ CREATE TABLE public.dispatches (
     trip_started_at              TIMESTAMP,
     trip_started_by_user_id      BIGINT,
     completed_at                 TIMESTAMP,
+    driver_accepted_at           TIMESTAMP,   -- when driver explicitly accepted the trip (Assigned → Accepted)
+    driver_rejected_at           TIMESTAMP,
+    driver_reject_reason         TEXT,
+    deleted_at                   TIMESTAMP,   -- soft delete (business rule: never hard-delete dispatches)
     notes                        TEXT,
     created_at                   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at                   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+    -- Note: partial unique index uq_driver_one_active_trip enforces
+    -- "driver can only have one active trip at a time" — added in SECTION 17.
 );
 
 /*
@@ -1290,7 +1395,8 @@ CREATE TABLE public.attachments (
     file_type        VARCHAR(100),
     file_size        BIGINT,
     uploaded_by      BIGINT,
-    uploaded_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+    uploaded_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+    deleted_at       TIMESTAMP    -- soft delete (business rule: never hard-delete attachments)
 );
 
 /*
@@ -1337,8 +1443,9 @@ ALTER TABLE public.users ADD CONSTRAINT users_created_by_fkey FOREIGN KEY (creat
 ALTER TABLE public.users ADD CONSTRAINT users_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(user_id);
 
 -- user_roles
-ALTER TABLE public.user_roles ADD CONSTRAINT user_roles_user_id_fkey  FOREIGN KEY (user_id)  REFERENCES public.users(user_id) ON DELETE CASCADE;
-ALTER TABLE public.user_roles ADD CONSTRAINT user_roles_role_id_fkey  FOREIGN KEY (role_id)  REFERENCES public.roles(role_id);
+ALTER TABLE public.user_roles ADD CONSTRAINT user_roles_user_id_fkey    FOREIGN KEY (user_id)     REFERENCES public.users(user_id) ON DELETE CASCADE;
+ALTER TABLE public.user_roles ADD CONSTRAINT user_roles_role_id_fkey    FOREIGN KEY (role_id)     REFERENCES public.roles(role_id);
+ALTER TABLE public.user_roles ADD CONSTRAINT user_roles_assigned_by_fkey FOREIGN KEY (assigned_by) REFERENCES public.users(user_id) ON DELETE SET NULL;
 
 -- user_sessions
 ALTER TABLE public.user_sessions ADD CONSTRAINT user_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id) ON DELETE CASCADE;
@@ -1360,6 +1467,16 @@ ALTER TABLE public.user_notification_devices ADD CONSTRAINT user_notification_de
 -- nurseries
 ALTER TABLE public.nurseries ADD CONSTRAINT nurseries_owner_user_id_fkey  FOREIGN KEY (owner_user_id) REFERENCES public.users(user_id);
 ALTER TABLE public.nurseries ADD CONSTRAINT nurseries_created_by_fkey     FOREIGN KEY (created_by)    REFERENCES public.users(user_id);
+ALTER TABLE public.nurseries ADD CONSTRAINT nurseries_approved_by_fkey    FOREIGN KEY (approved_by)   REFERENCES public.users(user_id);
+ALTER TABLE public.nurseries ADD CONSTRAINT nurseries_rejected_by_fkey    FOREIGN KEY (rejected_by)   REFERENCES public.users(user_id);
+
+-- nursery_applications
+ALTER TABLE public.nursery_applications ADD CONSTRAINT nursery_apps_applicant_fkey   FOREIGN KEY (applicant_user_id) REFERENCES public.users(user_id);
+ALTER TABLE public.nursery_applications ADD CONSTRAINT nursery_apps_reviewed_by_fkey FOREIGN KEY (reviewed_by)       REFERENCES public.users(user_id);
+ALTER TABLE public.nursery_applications ADD CONSTRAINT nursery_apps_nursery_id_fkey  FOREIGN KEY (nursery_id)        REFERENCES public.nurseries(nursery_id);
+
+-- platform_config
+ALTER TABLE public.platform_config ADD CONSTRAINT platform_config_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(user_id);
 
 -- nursery_addresses
 ALTER TABLE public.nursery_addresses ADD CONSTRAINT nursery_addresses_nursery_id_fkey FOREIGN KEY (nursery_id) REFERENCES public.nurseries(nursery_id) ON DELETE CASCADE;
@@ -1528,12 +1645,24 @@ CREATE INDEX idx_user_subscriptions_user_status ON public.user_subscriptions (us
 CREATE INDEX idx_user_subscriptions_plan        ON public.user_subscriptions (plan_id);
 
 -- nurseries
-CREATE INDEX idx_nurseries_owner  ON public.nurseries (owner_user_id);
-CREATE INDEX idx_nurseries_status ON public.nurseries (status);
+CREATE INDEX idx_nurseries_owner       ON public.nurseries (owner_user_id);
+CREATE INDEX idx_nurseries_status      ON public.nurseries (status);
+CREATE INDEX idx_nurseries_deleted     ON public.nurseries (deleted_at) WHERE deleted_at IS NOT NULL;
+CREATE INDEX idx_nurseries_approved_by ON public.nurseries (approved_by);
+
+-- nursery_applications
+CREATE INDEX idx_nursery_apps_applicant ON public.nursery_applications (applicant_user_id);
+CREATE INDEX idx_nursery_apps_status    ON public.nursery_applications (status);
+CREATE INDEX idx_nursery_apps_nursery   ON public.nursery_applications (nursery_id);
 
 -- nursery_users
 CREATE INDEX idx_nursery_users_nursery ON public.nursery_users (nursery_id);
 CREATE INDEX idx_nursery_users_user    ON public.nursery_users (user_id);
+
+-- Business rule: manager can belong to only ONE active nursery at a time
+CREATE UNIQUE INDEX uq_manager_one_active_nursery
+    ON public.nursery_users (user_id)
+    WHERE status = 'ACTIVE';
 
 -- nursery_drivers
 CREATE INDEX idx_nursery_drivers_nursery ON public.nursery_drivers (nursery_id);
@@ -1597,6 +1726,12 @@ CREATE INDEX idx_dispatches_driver       ON public.dispatches (driver_id);
 CREATE INDEX idx_dispatches_driver_user  ON public.dispatches (driver_user_id);
 CREATE INDEX idx_dispatches_manager      ON public.dispatches (assigned_manager_user_id);
 CREATE INDEX idx_dispatches_status       ON public.dispatches (dispatch_status);
+CREATE INDEX idx_dispatches_deleted      ON public.dispatches (deleted_at) WHERE deleted_at IS NOT NULL;
+
+-- Business rule: driver can only have ONE active trip at a time
+CREATE UNIQUE INDEX uq_driver_one_active_trip
+    ON public.dispatches (driver_user_id)
+    WHERE dispatch_status = 'TRIP_STARTED';
 
 -- dispatch_items
 CREATE INDEX idx_dispatch_items_dispatch ON public.dispatch_items (dispatch_id);
@@ -1646,6 +1781,17 @@ CREATE INDEX idx_notification_templates_code_channel
 
 -- subscription_plans
 CREATE INDEX idx_subscription_plans_active ON public.subscription_plans (is_active);
+
+-- orders (soft delete)
+CREATE INDEX idx_orders_deleted ON public.orders (deleted_at) WHERE deleted_at IS NOT NULL;
+
+-- otp_requests
+CREATE INDEX idx_otp_mobile_active
+    ON public.otp_requests (mobile, purpose, expires_at)
+    WHERE is_used = false;
+
+-- platform_config
+CREATE INDEX idx_platform_config_active ON public.platform_config (config_key) WHERE is_active = true;
 
 
 -- =============================================================================
@@ -1715,16 +1861,28 @@ ON CONFLICT (language_code) DO NOTHING;
 
 -- ─── Public code sequence seeds (start all counters at 0) ────────────────────
 INSERT INTO public.public_code_sequences (code_key, date_key, last_value) VALUES
-  ('users',               '', 0),
-  ('plants',              '', 0),
-  ('nurseries',           '', 0),
-  ('nursery_inventory',   '', 0),
-  ('drivers',             '', 0),
-  ('vehicles',            '', 0),
-  ('attachments',         '', 0),
-  ('notifications',       '', 0),
-  ('user_subscriptions',  '', 0)
+  ('users',                 '', 0),
+  ('plants',                '', 0),
+  ('nurseries',             '', 0),
+  ('nursery_inventory',     '', 0),
+  ('nursery_applications',  '', 0),
+  ('drivers',               '', 0),
+  ('vehicles',              '', 0),
+  ('attachments',           '', 0),
+  ('notifications',         '', 0),
+  ('user_subscriptions',    '', 0)
 ON CONFLICT (code_key, date_key) DO NOTHING;
+
+-- ─── Platform config defaults ─────────────────────────────────────────────────
+INSERT INTO public.platform_config (config_key, config_value, data_type, description) VALUES
+  ('otp_expiry_minutes',      '5',    'integer', 'OTP validity window in minutes'),
+  ('otp_max_attempts',        '5',    'integer', 'Wrong OTP attempts before the code is blocked'),
+  ('otp_resend_cooldown_sec', '30',   'integer', 'Seconds a user must wait before requesting another OTP'),
+  ('min_order_amount',        '100',  'numeric', 'Minimum order total in INR'),
+  ('platform_fee_pct',        '0',    'numeric', 'Platform fee percentage applied to orders'),
+  ('driver_approval_days',    '3',    'integer', 'Days before a pending driver approval auto-expires'),
+  ('nursery_approval_days',   '7',    'integer', 'Days before a pending nursery application auto-expires')
+ON CONFLICT (config_key) DO NOTHING;
 
 -- ─── Dev admin user (login: 9000000777, any OTP works in DEV mode) ─────────────
 INSERT INTO public.users (user_id, user_code, first_name, mobile, mobile_verified, status)
