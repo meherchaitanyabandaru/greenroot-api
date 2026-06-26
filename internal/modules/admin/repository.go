@@ -20,7 +20,20 @@ func (r *PostgresRepository) Summary(ctx context.Context) (Summary, error) {
 		name string
 		dest *int64
 	}{
-		{"SELECT COUNT(*) FROM public.users", &s.Users}, {"SELECT COUNT(*) FROM public.nurseries", &s.Nurseries}, {"SELECT COUNT(*) FROM public.plants", &s.Plants}, {"SELECT COUNT(*) FROM public.nursery_inventory", &s.InventoryItems}, {"SELECT COUNT(*) FROM public.plant_requests", &s.PlantRequests}, {"SELECT COUNT(*) FROM public.orders", &s.Orders}, {"SELECT COUNT(*) FROM public.payments", &s.Payments}, {"SELECT COUNT(*) FROM public.dispatches", &s.Dispatches}, {"SELECT COUNT(*) FROM public.notifications", &s.Notifications},
+		{"SELECT COUNT(*) FROM public.users WHERE deleted_at IS NULL", &s.Users},
+		{"SELECT COUNT(*) FROM public.nurseries WHERE COALESCE(status,'') <> 'DELETED'", &s.Nurseries},
+		{"SELECT COUNT(*) FROM public.nurseries WHERE UPPER(COALESCE(status,'')) = 'PENDING'", &s.PendingNurseries},
+		{"SELECT COUNT(*) FROM public.nurseries WHERE UPPER(COALESCE(status,'')) IN ('ACTIVE','APPROVED')", &s.ApprovedNurseries},
+		{"SELECT COUNT(*) FROM public.nurseries WHERE UPPER(COALESCE(status,'')) = 'SUSPENDED'", &s.SuspendedNurseries},
+		{"SELECT COUNT(*) FROM public.plants WHERE is_active = TRUE", &s.Plants},
+		{"SELECT COUNT(*) FROM public.nursery_inventory", &s.InventoryItems},
+		{"SELECT COUNT(*) FROM public.plant_requests WHERE COALESCE(status,'') <> 'CANCELLED'", &s.PlantRequests},
+		{"SELECT COUNT(*) FROM public.orders WHERE UPPER(COALESCE(order_status,'')) <> 'CANCELLED'", &s.Orders},
+		{"SELECT COUNT(*) FROM public.orders WHERE UPPER(COALESCE(order_status,'')) IN ('CONFIRMED','LOADING','LOADING_COMPLETED','DISPATCH_CREATED','DISPATCHED','IN_TRANSIT')", &s.ActiveOrders},
+		{"SELECT COUNT(*) FROM public.payments", &s.Payments},
+		{"SELECT COUNT(*) FROM public.dispatches WHERE COALESCE(dispatch_status,'') <> 'CANCELLED'", &s.Dispatches},
+		{"SELECT COUNT(*) FROM public.notifications", &s.Notifications},
+		{"SELECT COUNT(*) FROM public.drivers WHERE UPPER(COALESCE(approval_status,'')) = 'APPROVED' AND COALESCE(status::text,'') = 'ACTIVE'", &s.ActiveDrivers},
 	}
 	for _, q := range queries {
 		if err := r.db.QueryRowContext(ctx, q.name).Scan(q.dest); err != nil {

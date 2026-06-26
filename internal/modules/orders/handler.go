@@ -187,6 +187,88 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, MessageResponse{Message: "Order item deleted successfully"})
 }
 
+// StartLoading transitions an order to LOADING status.
+func (h *Handler) StartLoading(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	orderID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	order, err := h.service.StartLoading(r.Context(), actor, orderID)
+	if err != nil {
+		writeOrdersError(w, err)
+		return
+	}
+	response.OK(w, OrderResponse{Order: order})
+}
+
+// CompleteLoading transitions an order to LOADED status.
+func (h *Handler) CompleteLoading(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	orderID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	order, err := h.service.CompleteLoading(r.Context(), actor, orderID)
+	if err != nil {
+		writeOrdersError(w, err)
+		return
+	}
+	response.OK(w, OrderResponse{Order: order})
+}
+
+// CancelOrder cancels an order.
+func (h *Handler) CancelOrder(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	orderID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	_ = decodeJSON(w, r, &req)
+	order, err := h.service.Cancel(r.Context(), actor, orderID, req.Reason)
+	if err != nil {
+		writeOrdersError(w, err)
+		return
+	}
+	response.OK(w, OrderResponse{Order: order})
+}
+
+// AssignManager assigns a manager to an order.
+func (h *Handler) AssignManager(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	orderID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req struct {
+		ManagerUserID int64 `json:"manager_user_id"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	order, err := h.service.AssignManager(r.Context(), actor, orderID, req.ManagerUserID)
+	if err != nil {
+		writeOrdersError(w, err)
+		return
+	}
+	response.OK(w, OrderResponse{Order: order})
+}
+
 func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, bool) {
 	actor, ok := authctx.FromRequest(w, r, h.jwt)
 	if !ok {
@@ -206,6 +288,7 @@ func listRequest(r *http.Request) ListOrdersRequest {
 		Status:    query.Get("order_status"),
 		SortBy:    query.Get("sort_by"),
 		SortOrder: query.Get("sort_order"),
+		Buying:    query.Get("buying") == "true" || query.Get("buying") == "1",
 	}
 }
 
@@ -245,6 +328,8 @@ func writeOrdersError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusNotFound, "not_found", "order resource not found")
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid order input")
+	case errors.Is(err, ErrInvalidStatus):
+		response.Error(w, http.StatusConflict, "invalid_status_transition", "order is not in the correct status for this action")
 	default:
 		response.Error(w, http.StatusInternalServerError, "orders_error", "order request failed")
 	}

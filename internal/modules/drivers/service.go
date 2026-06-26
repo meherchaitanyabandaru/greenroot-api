@@ -103,6 +103,41 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, driverID int64
 	return nil
 }
 
+// Apply creates or updates the current user's driver profile (V1 self-registration flow).
+func (s *Service) Apply(ctx context.Context, actor ActorContext, req ApplyDriverRequest) (Driver, error) {
+	if strings.TrimSpace(req.LicenceNumber) == "" || strings.TrimSpace(req.VehicleNumber) == "" {
+		return Driver{}, ErrInvalidInput
+	}
+	driver, err := s.repository.Upsert(ctx, actor.UserID, req)
+	if err != nil {
+		return Driver{}, err
+	}
+	s.audit(ctx, actor, driver.ID, actionInsert, req)
+	return *driver, nil
+}
+
+// GetMine returns the driver profile for the current user.
+func (s *Service) GetMine(ctx context.Context, actor ActorContext) (Driver, error) {
+	driver, err := s.repository.FindByUserID(ctx, actor.UserID)
+	if err != nil {
+		return Driver{}, err
+	}
+	return *driver, nil
+}
+
+// Approve approves a driver profile (admin only).
+func (s *Service) Approve(ctx context.Context, actor ActorContext, driverUserID int64) (Driver, error) {
+	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+		return Driver{}, ErrForbidden
+	}
+	driver, err := s.repository.Approve(ctx, driverUserID, actor.UserID)
+	if err != nil {
+		return Driver{}, err
+	}
+	s.audit(ctx, actor, driver.ID, actionUpdate, map[string]any{"approval_status": "APPROVED"})
+	return *driver, nil
+}
+
 func (s *Service) CreateLocation(ctx context.Context, actor ActorContext, driverID int64, input LocationRequest) (DriverLocation, error) {
 	driver, err := s.repository.FindByID(ctx, driverID)
 	if err != nil {

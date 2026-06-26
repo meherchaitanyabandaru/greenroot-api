@@ -18,10 +18,12 @@ type Repository interface {
 	FindByID(ctx context.Context, requestID int64) (*PlantRequest, error)
 	Create(ctx context.Context, actorID int64, input CreateRequest) (*PlantRequest, error)
 	Update(ctx context.Context, actorID int64, requestID int64, input UpdateRequest) (*PlantRequest, error)
+	UpdateStatus(ctx context.Context, requestID int64, status string) (*PlantRequest, error)
 	Delete(ctx context.Context, requestID int64) error
 	ListResponses(ctx context.Context, requestID int64) ([]Response, error)
 	CreateResponse(ctx context.Context, requestID int64, actorID int64, input CreateResponseRequest) (*Response, error)
 	UpdateResponse(ctx context.Context, responseID int64, input UpdateResponseRequest) (*Response, error)
+	RecomputeRequestStatus(ctx context.Context, requestID int64) error
 	InventoryAvailable(ctx context.Context, supplierNurseryID int64, plantID int64, sizeID *int16) (int, error)
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
@@ -99,9 +101,9 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 	const query = `
 		INSERT INTO public.plant_requests (
 			request_code, requesting_nursery_id, requested_by_user_id, plant_id, size_id, quantity_required,
-			radius_km, notes, status, expires_at, created_at, updated_at
+			radius_km, required_by_date, notes, status, expires_at, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9, $10, $11, $11)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), $10, $11, $12, $12)
 		RETURNING request_id
 	`
 	var requestID int64
@@ -115,6 +117,7 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 		int16OrNil(input.SizeID),
 		input.QuantityRequired,
 		input.RadiusKM,
+		input.RequiredByDate,
 		stringOrEmpty(input.Notes),
 		input.Status,
 		input.ExpiresAt,
@@ -134,10 +137,11 @@ func (r *PostgresRepository) Update(ctx context.Context, actorID int64, requestI
 			size_id = $5,
 			quantity_required = $6,
 			radius_km = $7,
-			notes = NULLIF($8, ''),
-			status = $9,
-			expires_at = $10,
-			fulfilled_at = CASE WHEN $11 = 'FULFILLED' THEN COALESCE(fulfilled_at, CURRENT_TIMESTAMP) ELSE fulfilled_at END,
+			required_by_date = $8,
+			notes = NULLIF($9, ''),
+			status = $10,
+			expires_at = $11,
+			fulfilled_at = CASE WHEN $12 = 'CLOSED' THEN COALESCE(fulfilled_at, CURRENT_TIMESTAMP) ELSE fulfilled_at END,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE request_id = $1
 	`
@@ -151,6 +155,7 @@ func (r *PostgresRepository) Update(ctx context.Context, actorID int64, requestI
 		int16OrNil(input.SizeID),
 		input.QuantityRequired,
 		input.RadiusKM,
+		input.RequiredByDate,
 		stringOrEmpty(input.Notes),
 		input.Status,
 		input.ExpiresAt,
@@ -169,8 +174,32 @@ func (r *PostgresRepository) Update(ctx context.Context, actorID int64, requestI
 	return r.FindByID(ctx, requestID)
 }
 
+func (r *PostgresRepository) UpdateStatus(ctx context.Context, requestID int64, status string) (*PlantRequest, error) {
+	query := `
+		UPDATE public.plant_requests
+		SET status = $2,
+			fulfilled_at = CASE WHEN $3 = 'CLOSED' THEN COALESCE(fulfilled_at, CURRENT_TIMESTAMP) ELSE fulfilled_at END,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE request_id = $1
+	`
+	result, err := r.db.ExecContext(ctx, query, requestID, status, status)
+	if err != nil {
+		return nil, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if affected == 0 {
+		return nil, ErrNotFound
+	}
+	return r.FindByID(ctx, requestID)
+}
+
 func (r *PostgresRepository) Delete(ctx context.Context, requestID int64) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE public.plant_requests SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE request_id = $1 AND status <> 'CANCELLED'`, requestID)
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE public.plant_requests SET status = 'REJECTED', updated_at = CURRENT_TIMESTAMP WHERE request_id = $1 AND status <> 'REJECTED'`,
+		requestID)
 	if err != nil {
 		return err
 	}
@@ -218,19 +247,16 @@ func (r *PostgresRepository) CreateResponse(ctx context.Context, requestID int64
 	if err := r.db.QueryRowContext(ctx, query, requestID, input.SupplierNurseryID, actorID, input.AvailableQuantity, stringOrEmpty(input.Remarks), input.Status).Scan(&responseID); err != nil {
 		return nil, err
 	}
-	_, _ = r.db.ExecContext(ctx, `UPDATE public.plant_requests SET status = 'RESPONDED', updated_at = CURRENT_TIMESTAMP WHERE request_id = $1 AND status = 'OPEN'`, requestID)
 	return r.findResponse(ctx, responseID)
 }
 
 func (r *PostgresRepository) UpdateResponse(ctx context.Context, responseID int64, input UpdateResponseRequest) (*Response, error) {
 	const query = `
 		UPDATE public.plant_request_responses
-		SET available_quantity = $2,
-			remarks = NULLIF($3, ''),
-			status = $4
+		SET status = $2
 		WHERE response_id = $1
 	`
-	result, err := r.db.ExecContext(ctx, query, responseID, input.AvailableQuantity, stringOrEmpty(input.Remarks), input.Status)
+	result, err := r.db.ExecContext(ctx, query, responseID, input.Status)
 	if err != nil {
 		return nil, err
 	}
@@ -242,6 +268,52 @@ func (r *PostgresRepository) UpdateResponse(ctx context.Context, responseID int6
 		return nil, ErrNotFound
 	}
 	return r.findResponse(ctx, responseID)
+}
+
+// RecomputeRequestStatus recalculates and persists the request status based on accepted response quantities.
+// DRAFT and CLOSED requests are not touched.
+func (r *PostgresRepository) RecomputeRequestStatus(ctx context.Context, requestID int64) error {
+	var requiredQty int
+	var currentStatus string
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT quantity_required, status FROM public.plant_requests WHERE request_id = $1`,
+		requestID).Scan(&requiredQty, &currentStatus); err != nil {
+		return err
+	}
+	if currentStatus == "DRAFT" || currentStatus == "CLOSED" {
+		return nil
+	}
+
+	var acceptedQty int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(available_quantity), 0) FROM public.plant_request_responses WHERE request_id = $1 AND status = 'ACCEPTED'`,
+		requestID).Scan(&acceptedQty); err != nil {
+		return err
+	}
+
+	var totalResponses, terminalResponses int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*), COUNT(*) FILTER (WHERE status IN ('REJECTED', 'NOT_AVAILABLE')) FROM public.plant_request_responses WHERE request_id = $1`,
+		requestID).Scan(&totalResponses, &terminalResponses); err != nil {
+		return err
+	}
+
+	var newStatus string
+	switch {
+	case acceptedQty >= requiredQty:
+		newStatus = "ACCEPTED"
+	case acceptedQty > 0:
+		newStatus = "PARTIALLY_ACCEPTED"
+	case totalResponses > 0 && totalResponses == terminalResponses:
+		newStatus = "REJECTED"
+	default:
+		newStatus = "OPEN"
+	}
+
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE public.plant_requests SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE request_id = $1`,
+		requestID, newStatus)
+	return err
 }
 
 func (r *PostgresRepository) InventoryAvailable(ctx context.Context, supplierNurseryID int64, plantID int64, sizeID *int16) (int, error) {
@@ -262,7 +334,13 @@ func (r *PostgresRepository) InventoryAvailable(ctx context.Context, supplierNur
 
 func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error) {
 	var exists bool
-	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM public.nursery_users WHERE nursery_id = $1 AND user_id = $2 AND COALESCE(is_active, true) = true)`, nurseryID, userID).Scan(&exists)
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM public.nursery_users
+		WHERE nursery_id = $1 AND user_id = $2 AND COALESCE(is_active, true) = true
+		UNION ALL
+		SELECT 1 FROM public.nurseries
+		WHERE nursery_id = $1 AND owner_user_id = $2 AND COALESCE(status::text, '') <> 'DELETED'
+	)`, nurseryID, userID).Scan(&exists)
 	return exists, err
 }
 
@@ -281,7 +359,7 @@ func baseSelect() string {
 	return `
 		SELECT pr.request_id, pr.request_code, pr.requesting_nursery_id, n.nursery_name, pr.requested_by_user_id,
 			u.first_name, pr.plant_id, p.scientific_name, p.common_name, pr.size_id, ps.size_code,
-			ps.display_name, pr.quantity_required, pr.radius_km, pr.notes, pr.status::text,
+			ps.display_name, pr.quantity_required, pr.radius_km, pr.required_by_date, pr.notes, pr.status::text,
 			pr.expires_at, pr.fulfilled_at, pr.created_at, pr.updated_at
 		FROM public.plant_requests pr
 		JOIN public.nurseries n ON n.nursery_id = pr.requesting_nursery_id
@@ -357,7 +435,7 @@ func scanRequest(row interface{ Scan(dest ...any) error }) (PlantRequest, error)
 	var request PlantRequest
 	var commonName, sizeCode, sizeName, notes sql.NullString
 	var sizeID sql.NullInt16
-	var expiresAt, fulfilledAt sql.NullTime
+	var requiredByDate, expiresAt, fulfilledAt sql.NullTime
 	if err := row.Scan(
 		&request.ID,
 		&request.RequestCode,
@@ -373,6 +451,7 @@ func scanRequest(row interface{ Scan(dest ...any) error }) (PlantRequest, error)
 		&sizeName,
 		&request.QuantityRequired,
 		&request.RadiusKM,
+		&requiredByDate,
 		&notes,
 		&request.Status,
 		&expiresAt,
@@ -389,6 +468,9 @@ func scanRequest(row interface{ Scan(dest ...any) error }) (PlantRequest, error)
 	request.SizeCode = nullableString(sizeCode)
 	request.SizeName = nullableString(sizeName)
 	request.Notes = nullableString(notes)
+	if requiredByDate.Valid {
+		request.RequiredByDate = &requiredByDate.Time
+	}
 	if expiresAt.Valid {
 		request.ExpiresAt = &expiresAt.Time
 	}

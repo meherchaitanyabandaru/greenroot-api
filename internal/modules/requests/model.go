@@ -23,6 +23,7 @@ type PlantRequest struct {
 	SizeName            *string    `json:"size_name,omitempty"`
 	QuantityRequired    int        `json:"quantity_required"`
 	RadiusKM            int        `json:"radius_km"`
+	RequiredByDate      *time.Time `json:"required_by_date,omitempty"`
 	Notes               *string    `json:"notes,omitempty"`
 	Status              string     `json:"status"`
 	ExpiresAt           *time.Time `json:"expires_at,omitempty"`

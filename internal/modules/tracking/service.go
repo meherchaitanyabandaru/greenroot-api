@@ -31,15 +31,11 @@ func (s *Service) List(ctx context.Context, a ActorContext, col string, id int64
 	}
 	return s.repository.ListBy(ctx, col, id)
 }
-func (s *Service) Latest(ctx context.Context, a ActorContext, col string, id int64) (TrackingPoint, error) {
+func (s *Service) Latest(ctx context.Context, a ActorContext, col string, id int64) (*TrackingPoint, error) {
 	if id <= 0 {
-		return TrackingPoint{}, ErrInvalidInput
+		return nil, ErrInvalidInput
 	}
-	p, err := s.repository.LatestBy(ctx, col, id)
-	if err != nil {
-		return TrackingPoint{}, err
-	}
-	return *p, nil
+	return s.repository.LatestBy(ctx, col, id)
 }
 func hasRole(a ActorContext, role string) bool {
 	for _, r := range a.Roles {

@@ -19,12 +19,27 @@ type Nursery struct {
 	Website     *string    `json:"website,omitempty"`
 	Description *string    `json:"description,omitempty"`
 	Status      string     `json:"status"`
+	OwnerUserID *int64     `json:"owner_user_id,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 	CreatedBy   *int64     `json:"created_by,omitempty"`
 	UpdatedBy   *int64     `json:"updated_by,omitempty"`
 	Addresses   []Address  `json:"addresses,omitempty"`
 	Users       []UserLink `json:"users,omitempty"`
+}
+
+// NurseryDriver represents a driver connected to a nursery.
+type NurseryDriver struct {
+	ID               int64      `json:"id"`
+	NurseryID        int64      `json:"nursery_id"`
+	DriverUserID     int64      `json:"driver_user_id"`
+	DriverName       *string    `json:"driver_name,omitempty"`
+	DriverMobile     *string    `json:"driver_mobile,omitempty"`
+	VehicleNumber    *string    `json:"vehicle_number,omitempty"`
+	VehicleType      *string    `json:"vehicle_type,omitempty"`
+	ConnectionStatus string     `json:"connection_status"`
+	ConnectedAt      *time.Time `json:"connected_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
 }
 
 type Address struct {
@@ -51,9 +66,11 @@ type UserLink struct {
 	FirstName string     `json:"first_name"`
 	Mobile    string     `json:"mobile"`
 	Email     *string    `json:"email,omitempty"`
-	RoleID    int16      `json:"role_id"`
+	RoleID    int16      `json:"role_id,omitempty"`
 	RoleCode  string     `json:"role_code"`
 	RoleName  string     `json:"role_name"`
+	Role      string     `json:"role"` // V1 text role: MANAGER | GUMASTHA
+	Status    string     `json:"status"`
 	JoinedAt  *time.Time `json:"joined_at,omitempty"`
 	IsActive  bool       `json:"is_active"`
 }

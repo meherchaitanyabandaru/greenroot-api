@@ -13,6 +13,7 @@ var (
 	ErrForbidden             = errors.New("forbidden")
 	ErrInvalidInput          = errors.New("invalid input")
 	ErrInsufficientInventory = errors.New("insufficient inventory")
+	ErrInvalidTransition     = errors.New("invalid status transition")
 )
 
 type Service struct {
@@ -78,6 +79,28 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, requestID int6
 	return *request, nil
 }
 
+// UpdateStatus advances the request lifecycle (OPEN → ACCEPTED, CLOSED, REJECTED, etc.)
+// Only the requesting nursery manager or an admin may call this.
+func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, requestID int64, input UpdateStatusRequest) (PlantRequest, error) {
+	input.Status = strings.ToUpper(strings.TrimSpace(input.Status))
+	if !isAllowedRequestStatus(input.Status) {
+		return PlantRequest{}, ErrInvalidInput
+	}
+	existing, err := s.repository.FindByID(ctx, requestID)
+	if err != nil {
+		return PlantRequest{}, err
+	}
+	if err := s.canManageNursery(ctx, actor, existing.RequestingNurseryID); err != nil {
+		return PlantRequest{}, err
+	}
+	request, err := s.repository.UpdateStatus(ctx, requestID, input.Status)
+	if err != nil {
+		return PlantRequest{}, err
+	}
+	s.audit(ctx, actor, "plant_requests", requestID, actionUpdate, input)
+	return *request, nil
+}
+
 func (s *Service) Delete(ctx context.Context, actor ActorContext, requestID int64) error {
 	request, err := s.repository.FindByID(ctx, requestID)
 	if err != nil {
@@ -89,7 +112,7 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, requestID int6
 	if err := s.repository.Delete(ctx, requestID); err != nil {
 		return err
 	}
-	s.audit(ctx, actor, "plant_requests", requestID, actionDelete, map[string]any{"status": "CANCELLED"})
+	s.audit(ctx, actor, "plant_requests", requestID, actionDelete, map[string]any{"status": "REJECTED"})
 	return nil
 }
 
@@ -103,8 +126,10 @@ func (s *Service) ListResponses(ctx context.Context, actor ActorContext, request
 	return s.repository.ListResponses(ctx, requestID)
 }
 
+// CreateResponse is called by the supplier nursery to declare their availability.
+// Status must be AVAILABLE, PARTIAL, or NOT_AVAILABLE.
 func (s *Service) CreateResponse(ctx context.Context, actor ActorContext, requestID int64, input CreateResponseRequest) (Response, error) {
-	input = normalizeResponse(input)
+	input = normalizeNewResponse(input)
 	if err := s.canManageNursery(ctx, actor, input.SupplierNurseryID); err != nil {
 		return Response{}, err
 	}
@@ -112,15 +137,17 @@ func (s *Service) CreateResponse(ctx context.Context, actor ActorContext, reques
 	if err != nil {
 		return Response{}, err
 	}
-	if err := validateResponse(input); err != nil {
+	if err := validateNewResponse(input); err != nil {
 		return Response{}, err
 	}
-	available, err := s.repository.InventoryAvailable(ctx, input.SupplierNurseryID, request.PlantID, request.SizeID)
-	if err != nil {
-		return Response{}, err
-	}
-	if available < input.AvailableQuantity {
-		return Response{}, ErrInsufficientInventory
+	if input.Status == "AVAILABLE" || input.Status == "PARTIAL" {
+		available, err := s.repository.InventoryAvailable(ctx, input.SupplierNurseryID, request.PlantID, request.SizeID)
+		if err != nil {
+			return Response{}, err
+		}
+		if available < input.AvailableQuantity {
+			return Response{}, ErrInsufficientInventory
+		}
 	}
 	response, err := s.repository.CreateResponse(ctx, requestID, actor.UserID, input)
 	if err != nil {
@@ -130,18 +157,22 @@ func (s *Service) CreateResponse(ctx context.Context, actor ActorContext, reques
 	return *response, nil
 }
 
+// UpdateResponse is called by the requesting nursery manager to select or reject a supplier.
+// Status must be ACCEPTED or REJECTED.
 func (s *Service) UpdateResponse(ctx context.Context, actor ActorContext, responseID int64, input UpdateResponseRequest) (Response, error) {
 	if !canUseRequests(actor) {
 		return Response{}, ErrForbidden
 	}
-	input = normalizeUpdateResponse(input)
-	if err := validateUpdateResponse(input); err != nil {
-		return Response{}, err
+	input.Status = strings.ToUpper(strings.TrimSpace(input.Status))
+	if !isAllowedManagerResponseStatus(input.Status) {
+		return Response{}, ErrInvalidInput
 	}
 	response, err := s.repository.UpdateResponse(ctx, responseID, input)
 	if err != nil {
 		return Response{}, err
 	}
+	// Recompute the parent request's status based on total accepted quantity.
+	_ = s.repository.RecomputeRequestStatus(ctx, response.RequestID)
 	s.audit(ctx, actor, "plant_request_responses", response.ID, actionUpdate, input)
 	return *response, nil
 }
@@ -191,18 +222,10 @@ func normalizeRequest(input CreateRequest) CreateRequest {
 	return input
 }
 
-func normalizeResponse(input CreateResponseRequest) CreateResponseRequest {
+func normalizeNewResponse(input CreateResponseRequest) CreateResponseRequest {
 	input.Status = strings.ToUpper(strings.TrimSpace(input.Status))
 	if input.Status == "" {
-		input.Status = "RESPONDED"
-	}
-	return input
-}
-
-func normalizeUpdateResponse(input UpdateResponseRequest) UpdateResponseRequest {
-	input.Status = strings.ToUpper(strings.TrimSpace(input.Status))
-	if input.Status == "" {
-		input.Status = "RESPONDED"
+		input.Status = "AVAILABLE"
 	}
 	return input
 }
@@ -220,38 +243,40 @@ func validateRequest(input CreateRequest) error {
 	return nil
 }
 
-func validateResponse(input CreateResponseRequest) error {
+func validateNewResponse(input CreateResponseRequest) error {
 	if input.SupplierNurseryID <= 0 || input.AvailableQuantity <= 0 {
 		return ErrInvalidInput
 	}
-	if !isAllowedResponseStatus(input.Status) {
+	if !isAllowedNewResponseStatus(input.Status) {
 		return ErrInvalidInput
 	}
 	return nil
 }
 
-func validateUpdateResponse(input UpdateResponseRequest) error {
-	if input.AvailableQuantity < 0 {
-		return ErrInvalidInput
-	}
-	if !isAllowedResponseStatus(input.Status) {
-		return ErrInvalidInput
-	}
-	return nil
-}
-
+// Request statuses
 func isAllowedRequestStatus(value string) bool {
 	switch value {
-	case "OPEN", "RESPONDED", "FULFILLED", "CANCELLED", "EXPIRED":
+	case "DRAFT", "OPEN", "PARTIALLY_ACCEPTED", "ACCEPTED", "REJECTED", "CLOSED":
 		return true
 	default:
 		return false
 	}
 }
 
-func isAllowedResponseStatus(value string) bool {
+// Supplier submits one of these when creating a response
+func isAllowedNewResponseStatus(value string) bool {
 	switch value {
-	case "RESPONDED", "ACCEPTED", "REJECTED", "EXPIRED":
+	case "AVAILABLE", "PARTIAL", "NOT_AVAILABLE":
+		return true
+	default:
+		return false
+	}
+}
+
+// Manager selects one of these when updating a response
+func isAllowedManagerResponseStatus(value string) bool {
+	switch value {
+	case "ACCEPTED", "REJECTED":
 		return true
 	default:
 		return false

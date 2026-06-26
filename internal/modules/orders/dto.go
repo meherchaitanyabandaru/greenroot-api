@@ -9,6 +9,7 @@ type ListOrdersRequest struct {
 	Status    string
 	SortBy    string
 	SortOrder string
+	Buying    bool  // true = buyer perspective (buyer_user_id or buyer_nursery_id filter)
 }
 
 type CreateOrderRequest struct {
@@ -16,6 +17,7 @@ type CreateOrderRequest struct {
 	BuyerUserID     *int64             `json:"buyer_user_id"`
 	BuyerMobile     *string            `json:"buyer_mobile"`
 	BuyerName       *string            `json:"buyer_name"`
+	BuyerNurseryID  *int64             `json:"buyer_nursery_id"`
 	SellerNurseryID *int64             `json:"seller_nursery_id"`
 	Status          string             `json:"order_status"`
 	Notes           *string            `json:"notes"`

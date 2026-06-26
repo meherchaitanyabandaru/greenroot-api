@@ -9,11 +9,29 @@ const (
 )
 
 type Order struct {
-	ID              int64       `json:"id"`
-	OrderCode       string      `json:"order_code"`
-	OrderNumber     string      `json:"order_number"`
+	ID                        int64       `json:"id"`
+	OrderCode                 string      `json:"order_code"`
+	OrderNumber               string      `json:"order_number"`
+	// V1 nursery-centric fields
+	NurseryID                 *int64      `json:"nursery_id,omitempty"`
+	NurseryName               *string     `json:"nursery_name,omitempty"`
+	QuotationID               *int64      `json:"quotation_id,omitempty"`
+	CustomerUserID            *int64      `json:"customer_user_id,omitempty"`
+	CustomerName              *string     `json:"customer_name,omitempty"`
+	CustomerMobile            *string     `json:"customer_mobile,omitempty"`
+	AssignedManagerUserID     *int64      `json:"assigned_manager_user_id,omitempty"`
+	CreatedByUserID           *int64      `json:"created_by_user_id,omitempty"`
+	CancelledByUserID         *int64      `json:"cancelled_by_user_id,omitempty"`
+	CancelledAt               *time.Time  `json:"cancelled_at,omitempty"`
+	CancelReason              *string     `json:"cancel_reason,omitempty"`
+	LoadingStartedAt          *time.Time  `json:"loading_started_at,omitempty"`
+	LoadingCompletedAt        *time.Time  `json:"loading_completed_at,omitempty"`
+	LoadingCompletedByUserID  *int64      `json:"loading_completed_by_user_id,omitempty"`
+	// Buyer fields
 	BuyerUserID     *int64      `json:"buyer_user_id,omitempty"`
+	BuyerNurseryID  *int64      `json:"buyer_nursery_id,omitempty"`
 	BuyerName       *string     `json:"buyer_name,omitempty"`
+	// Seller fields
 	SellerNurseryID *int64      `json:"seller_nursery_id,omitempty"`
 	SellerNursery   *string     `json:"seller_nursery,omitempty"`
 	Status          string      `json:"order_status"`
@@ -22,8 +40,6 @@ type Order struct {
 	OrderDate       time.Time   `json:"order_date"`
 	CreatedAt       time.Time   `json:"created_at"`
 	UpdatedAt       time.Time   `json:"updated_at"`
-	CreatedBy       *int64      `json:"created_by,omitempty"`
-	UpdatedBy       *int64      `json:"updated_by,omitempty"`
 	Items           []OrderItem `json:"items,omitempty"`
 }
 

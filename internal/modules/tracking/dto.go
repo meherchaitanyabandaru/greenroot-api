@@ -12,5 +12,5 @@ type ListResponse struct {
 	Tracking []TrackingPoint `json:"tracking"`
 }
 type PointResponse struct {
-	Tracking TrackingPoint `json:"tracking"`
+	Tracking *TrackingPoint `json:"tracking"`
 }

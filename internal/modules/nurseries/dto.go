@@ -19,6 +19,7 @@ type CreateNurseryRequest struct {
 	Website     *string `json:"website"`
 	Description *string `json:"description"`
 	Status      *string `json:"status"`
+	OwnerUserID *int64  `json:"owner_user_id"`
 }
 
 type UpdateNurseryRequest = CreateNurseryRequest
@@ -40,6 +41,19 @@ type AddUserRequest struct {
 	UserID   int64  `json:"user_id"`
 	RoleID   int16  `json:"role_id"`
 	RoleCode string `json:"role_code"`
+}
+
+type AddManagerRequest struct {
+	UserID int64  `json:"user_id"`
+	Role   string `json:"role"` // MANAGER | GUMASTHA
+}
+
+type ConnectDriverRequest struct {
+	DriverUserID int64 `json:"driver_user_id"`
+}
+
+type DriversResponse struct {
+	Drivers []NurseryDriver `json:"drivers"`
 }
 
 type Pagination struct {

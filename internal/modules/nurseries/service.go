@@ -10,9 +10,12 @@ import (
 )
 
 var (
-	ErrForbidden      = errors.New("forbidden")
-	ErrInvalidInput   = errors.New("invalid input")
-	ErrInvalidAddress = errors.New("invalid address")
+	ErrForbidden               = errors.New("forbidden")
+	ErrInvalidInput            = errors.New("invalid input")
+	ErrInvalidAddress          = errors.New("invalid address")
+	ErrAlreadyOwner           = errors.New("user already owns a nursery")
+	ErrNotNurseryOwner        = errors.New("only the nursery owner can perform this action")
+	ErrManagerCannotOwnNursery = errors.New("managers cannot register a nursery")
 )
 
 type Service struct {
@@ -37,8 +40,77 @@ func (s *Service) List(ctx context.Context, input ListNurseriesRequest) ([]Nurse
 	}, nil
 }
 
+// ListMine returns nurseries where the user is a manager.
 func (s *Service) ListMine(ctx context.Context, userID int64) ([]Nursery, error) {
 	return s.repository.ListByUserID(ctx, userID)
+}
+
+// GetOwned returns the nursery owned by the user.
+func (s *Service) GetOwned(ctx context.Context, userID int64) (Nursery, error) {
+	nursery, err := s.repository.FindOwnedByUser(ctx, userID)
+	if err != nil {
+		return Nursery{}, err
+	}
+	return *nursery, nil
+}
+
+// ListManagers returns all managers for a nursery. Owner or admin only.
+func (s *Service) ListManagers(ctx context.Context, actor ActorContext, nurseryID int64) ([]UserLink, error) {
+	isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
+	if !isOwner && !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+		return nil, ErrForbidden
+	}
+	return s.repository.ListManagers(ctx, nurseryID)
+}
+
+// AddManager adds a manager to a nursery. Owner only.
+func (s *Service) AddManager(ctx context.Context, actor ActorContext, nurseryID int64, input AddManagerRequest) (UserLink, error) {
+	isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
+	if !isOwner && !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+		return UserLink{}, ErrNotNurseryOwner
+	}
+	if input.UserID <= 0 {
+		return UserLink{}, ErrInvalidInput
+	}
+	manager, err := s.repository.AddManager(ctx, nurseryID, actor.UserID, input)
+	if err != nil {
+		return UserLink{}, err
+	}
+	s.audit(ctx, actor, "nursery_users", manager.ID, actionInsert, input)
+	return *manager, nil
+}
+
+// ConnectDriver connects a driver to a nursery.
+func (s *Service) ConnectDriver(ctx context.Context, actor ActorContext, nurseryID int64, driverUserID int64) (NurseryDriver, error) {
+	isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
+	isMember, _ := s.repository.IsNurseryMember(ctx, nurseryID, actor.UserID)
+	if !isOwner && !isMember && !hasRole(actor, "ADMIN") {
+		return NurseryDriver{}, ErrForbidden
+	}
+	nd, err := s.repository.ConnectDriver(ctx, nurseryID, driverUserID, actor.UserID)
+	if err != nil {
+		return NurseryDriver{}, err
+	}
+	return *nd, nil
+}
+
+// ApproveDriverConnection approves a driver connection. Owner only.
+func (s *Service) ApproveDriverConnection(ctx context.Context, actor ActorContext, nurseryID int64, driverUserID int64) error {
+	isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
+	if !isOwner && !hasRole(actor, "ADMIN") {
+		return ErrNotNurseryOwner
+	}
+	return s.repository.ApproveDriverConnection(ctx, nurseryID, driverUserID, actor.UserID)
+}
+
+// ListConnectedDrivers returns all drivers connected to a nursery.
+func (s *Service) ListConnectedDrivers(ctx context.Context, actor ActorContext, nurseryID int64) ([]NurseryDriver, error) {
+	isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
+	isMember, _ := s.repository.IsNurseryMember(ctx, nurseryID, actor.UserID)
+	if !isOwner && !isMember && !hasRole(actor, "ADMIN") {
+		return nil, ErrForbidden
+	}
+	return s.repository.ListConnectedDrivers(ctx, nurseryID)
 }
 
 func (s *Service) Get(ctx context.Context, nurseryID int64) (Nursery, error) {
@@ -50,12 +122,32 @@ func (s *Service) Get(ctx context.Context, nurseryID int64) (Nursery, error) {
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateNurseryRequest) (Nursery, error) {
-	if !canManageNurseries(actor) {
-		return Nursery{}, ErrForbidden
+	// Any authenticated user can register a nursery (they become the owner).
+	// Admins bypass the one-per-user rules below.
+	// V1 rules: one nursery per user; managers cannot own a nursery.
+	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+		alreadyOwns, err := s.repository.UserOwnsANursery(ctx, actor.UserID)
+		if err != nil {
+			return Nursery{}, err
+		}
+		if alreadyOwns {
+			return Nursery{}, ErrAlreadyOwner
+		}
+		isManager, err := s.repository.UserIsManager(ctx, actor.UserID)
+		if err != nil {
+			return Nursery{}, err
+		}
+		if isManager {
+			return Nursery{}, ErrManagerCannotOwnNursery
+		}
 	}
 	input = normalizeNursery(input)
 	if err := validateNursery(input); err != nil {
 		return Nursery{}, err
+	}
+	// Non-admin actors own the nursery they create; admins leave owner_user_id nil unless specified.
+	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+		input.OwnerUserID = &actor.UserID
 	}
 	nursery, err := s.repository.Create(ctx, actor.UserID, input)
 	if err != nil {
@@ -78,6 +170,22 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, nurseryID int6
 		return Nursery{}, err
 	}
 	s.audit(ctx, actor, "nurseries", nursery.ID, actionUpdate, input)
+	return *nursery, nil
+}
+
+func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, nurseryID int64, status string) (Nursery, error) {
+	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+		return Nursery{}, ErrForbidden
+	}
+	status = strings.ToUpper(strings.TrimSpace(status))
+	if status == "" {
+		return Nursery{}, ErrInvalidInput
+	}
+	nursery, err := s.repository.UpdateStatusOnly(ctx, actor.UserID, nurseryID, status)
+	if err != nil {
+		return Nursery{}, err
+	}
+	s.audit(ctx, actor, "nurseries", nursery.ID, actionUpdate, map[string]any{"status": status})
 	return *nursery, nil
 }
 
@@ -228,7 +336,7 @@ func validateNursery(input CreateNurseryRequest) error {
 	}
 	status := statusOrActive(input.Status)
 	switch status {
-	case "ACTIVE", "INACTIVE", "SUSPENDED", "DELETED":
+	case "ACTIVE", "INACTIVE", "SUSPENDED", "DELETED", "PENDING", "APPROVED", "REJECTED":
 		return nil
 	default:
 		return ErrInvalidInput
@@ -249,7 +357,7 @@ func validateAddress(input AddressRequest) error {
 }
 
 func canManageNurseries(actor ActorContext) bool {
-	return hasRole(actor, "ADMIN") || hasRole(actor, "NURSERY_OWNER")
+	return hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") || hasRole(actor, "NURSERY_OWNER")
 }
 
 func hasRole(actor ActorContext, role string) bool {

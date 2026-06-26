@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
@@ -294,6 +295,36 @@ func intQuery(value string) int {
 func int64Query(value string) int64 {
 	parsed, _ := strconv.ParseInt(value, 10, 64)
 	return parsed
+}
+
+// Names returns plant names in a specific language for a list of plant IDs.
+// GET /plants/names?ids=1,2,3&lang=hi
+func (h *Handler) Names(w http.ResponseWriter, r *http.Request) {
+	idsStr := r.URL.Query().Get("ids")
+	langCode := r.URL.Query().Get("lang")
+	if idsStr == "" || langCode == "" {
+		response.Error(w, http.StatusBadRequest, "missing_params", "ids and lang query params are required")
+		return
+	}
+	var plantIDs []int64
+	for _, s := range strings.Split(idsStr, ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			response.Error(w, http.StatusBadRequest, "invalid_id", "invalid plant id: "+s)
+			return
+		}
+		plantIDs = append(plantIDs, id)
+	}
+	names, err := h.service.GetNamesByLanguage(r.Context(), plantIDs, langCode)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", "failed to fetch plant names")
+		return
+	}
+	response.OK(w, map[string]any{"names": names})
 }
 
 func writePlantsError(w http.ResponseWriter, err error) {

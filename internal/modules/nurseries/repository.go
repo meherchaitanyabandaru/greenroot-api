@@ -16,18 +16,28 @@ var ErrNotFound = errors.New("not found")
 type Repository interface {
 	List(ctx context.Context, input ListNurseriesRequest) ([]Nursery, int64, error)
 	FindByID(ctx context.Context, nurseryID int64) (*Nursery, error)
+	FindOwnedByUser(ctx context.Context, ownerUserID int64) (*Nursery, error)
+	UserOwnsANursery(ctx context.Context, userID int64) (bool, error)
+	UserIsManager(ctx context.Context, userID int64) (bool, error)
+	IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	Create(ctx context.Context, actorID int64, input CreateNurseryRequest) (*Nursery, error)
 	Update(ctx context.Context, actorID int64, nurseryID int64, input UpdateNurseryRequest) (*Nursery, error)
+	UpdateStatusOnly(ctx context.Context, actorID int64, nurseryID int64, status string) (*Nursery, error)
 	Delete(ctx context.Context, actorID int64, nurseryID int64) error
 	ListAddresses(ctx context.Context, nurseryID int64) ([]Address, error)
 	CreateAddress(ctx context.Context, nurseryID int64, input AddressRequest) (*Address, error)
 	UpdateAddress(ctx context.Context, addressID int64, input AddressRequest) (*Address, error)
 	DeleteAddress(ctx context.Context, addressID int64) error
+	ListManagers(ctx context.Context, nurseryID int64) ([]UserLink, error)
 	ListUsers(ctx context.Context, nurseryID int64) ([]UserLink, error)
 	AddUser(ctx context.Context, nurseryID int64, input AddUserRequest) (*UserLink, error)
+	AddManager(ctx context.Context, nurseryID int64, invitedByUserID int64, input AddManagerRequest) (*UserLink, error)
 	RemoveUser(ctx context.Context, nurseryID int64, userID int64) error
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	ListByUserID(ctx context.Context, userID int64) ([]Nursery, error)
+	ConnectDriver(ctx context.Context, nurseryID int64, driverUserID int64, invitedByUserID int64) (*NurseryDriver, error)
+	ApproveDriverConnection(ctx context.Context, nurseryID int64, driverUserID int64, approvedByUserID int64) error
+	ListConnectedDrivers(ctx context.Context, nurseryID int64) ([]NurseryDriver, error)
 	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 }
 
@@ -62,8 +72,8 @@ func (r *PostgresRepository) List(ctx context.Context, input ListNurseriesReques
 	args = append(args, input.PerPage, offset)
 	query := fmt.Sprintf(`
 		SELECT DISTINCT n.nursery_id, n.nursery_code, n.nursery_name, n.gst_number, n.mobile,
-			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.created_at,
-			n.updated_at, n.created_by, n.updated_by
+			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
+			n.created_at, n.updated_at, n.created_by, n.updated_by
 		FROM public.nurseries n
 		%s
 		ORDER BY n.nursery_id DESC
@@ -103,6 +113,54 @@ func (r *PostgresRepository) FindByID(ctx context.Context, nurseryID int64) (*Nu
 	return nursery, nil
 }
 
+func (r *PostgresRepository) FindOwnedByUser(ctx context.Context, ownerUserID int64) (*Nursery, error) {
+	nursery, err := r.scanNursery(ctx, `WHERE n.owner_user_id = $1 AND COALESCE(n.status::text,'') <> 'DELETED'`, ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+	nursery.Addresses, _ = r.ListAddresses(ctx, nursery.ID)
+	return nursery, nil
+}
+
+func (r *PostgresRepository) UserOwnsANursery(ctx context.Context, userID int64) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS (
+			SELECT 1 FROM public.nurseries
+			WHERE owner_user_id = $1
+			  AND COALESCE(status::text, '') <> 'DELETED'
+		)`,
+		userID,
+	).Scan(&exists)
+	return exists, err
+}
+
+func (r *PostgresRepository) UserIsManager(ctx context.Context, userID int64) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS (
+			SELECT 1 FROM public.nursery_users
+			WHERE user_id = $1 AND nursery_role_id = 3
+			  AND COALESCE(is_active, true) = true
+		)`,
+		userID,
+	).Scan(&exists)
+	return exists, err
+}
+
+func (r *PostgresRepository) IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS (
+			SELECT 1 FROM public.nurseries
+			WHERE nursery_id = $1 AND owner_user_id = $2
+			  AND COALESCE(status::text, '') <> 'DELETED'
+		)`,
+		nurseryID, userID,
+	).Scan(&exists)
+	return exists, err
+}
+
 func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input CreateNurseryRequest) (*Nursery, error) {
 	nurseryCode := strings.TrimSpace(stringOrEmpty(input.Code))
 	if nurseryCode == "" {
@@ -116,12 +174,16 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 	const query = `
 		INSERT INTO public.nurseries (
 			nursery_code, nursery_name, gst_number, mobile, email, website, description,
-			status, created_at, updated_at, created_by, updated_by
+			status, owner_user_id, created_at, updated_at, created_by, updated_by
 		)
 		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''),
-			NULLIF($6, ''), NULLIF($7, ''), $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $9, $9)
+			NULLIF($6, ''), NULLIF($7, ''), $8, $9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $10, $10)
 		RETURNING nursery_id
 	`
+	var ownerUserID any
+	if input.OwnerUserID != nil {
+		ownerUserID = *input.OwnerUserID
+	}
 	var nurseryID int64
 	if err := r.db.QueryRowContext(
 		ctx,
@@ -134,6 +196,7 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 		stringOrEmpty(input.Website),
 		stringOrEmpty(input.Description),
 		statusOrActive(input.Status),
+		ownerUserID,
 		actorID,
 	).Scan(&nurseryID); err != nil {
 		return nil, err
@@ -169,6 +232,24 @@ func (r *PostgresRepository) Update(ctx context.Context, actorID int64, nurseryI
 		stringOrEmpty(input.Description),
 		statusOrActive(input.Status),
 		actorID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if affected == 0 {
+		return nil, ErrNotFound
+	}
+	return r.FindByID(ctx, nurseryID)
+}
+
+func (r *PostgresRepository) UpdateStatusOnly(ctx context.Context, actorID int64, nurseryID int64, status string) (*Nursery, error) {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE public.nurseries SET status = $2, updated_at = CURRENT_TIMESTAMP, updated_by = $3 WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'`,
+		nurseryID, status, actorID,
 	)
 	if err != nil {
 		return nil, err
@@ -343,15 +424,18 @@ func (r *PostgresRepository) DeleteAddress(ctx context.Context, addressID int64)
 	return nil
 }
 
-func (r *PostgresRepository) ListUsers(ctx context.Context, nurseryID int64) ([]UserLink, error) {
+// ListManagers returns all active managers for a nursery using the V1 text role column.
+func (r *PostgresRepository) ListManagers(ctx context.Context, nurseryID int64) ([]UserLink, error) {
 	const query = `
 		SELECT nu.nursery_user_id, nu.nursery_id, nu.user_id, u.first_name, u.mobile, u.email,
-			nr.nursery_role_id, nr.role_code, nr.role_name, nu.joined_at, COALESCE(nu.is_active, true)
+			COALESCE(nu.nursery_role_id, 0),
+			COALESCE(nu.role, 'MANAGER'), COALESCE(nu.role, 'MANAGER'),
+			nu.role, COALESCE(nu.status, 'ACTIVE'),
+			nu.joined_at, COALESCE(nu.is_active, true)
 		FROM public.nursery_users nu
 		JOIN public.users u ON u.user_id = nu.user_id
-		JOIN public.nursery_roles nr ON nr.nursery_role_id = nu.nursery_role_id
-		WHERE nu.nursery_id = $1 AND COALESCE(nu.is_active, true) = true
-		ORDER BY nr.nursery_role_id, u.first_name
+		WHERE nu.nursery_id = $1 AND COALESCE(nu.status, 'ACTIVE') = 'ACTIVE'
+		ORDER BY u.first_name
 	`
 	rows, err := r.db.QueryContext(ctx, query, nurseryID)
 	if err != nil {
@@ -360,7 +444,7 @@ func (r *PostgresRepository) ListUsers(ctx context.Context, nurseryID int64) ([]
 	defer rows.Close()
 	users := make([]UserLink, 0)
 	for rows.Next() {
-		user, err := scanUserLinkRows(rows)
+		user, err := scanManagerLinkRows(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -369,14 +453,38 @@ func (r *PostgresRepository) ListUsers(ctx context.Context, nurseryID int64) ([]
 	return users, rows.Err()
 }
 
+func (r *PostgresRepository) ListUsers(ctx context.Context, nurseryID int64) ([]UserLink, error) {
+	return r.ListManagers(ctx, nurseryID)
+}
+
+// AddManager adds a manager to a nursery using the V1 text role column.
+func (r *PostgresRepository) AddManager(ctx context.Context, nurseryID int64, invitedByUserID int64, input AddManagerRequest) (*UserLink, error) {
+	role := strings.ToUpper(strings.TrimSpace(input.Role))
+	if role == "" {
+		role = "MANAGER"
+	}
+	const query = `
+		INSERT INTO public.nursery_users (nursery_id, user_id, role, status, invited_by_user_id, joined_at, is_active)
+		VALUES ($1, $2, $3, 'ACTIVE', $4, CURRENT_TIMESTAMP, true)
+		ON CONFLICT (nursery_id, user_id, nursery_role_id)
+		DO UPDATE SET role = $3, status = 'ACTIVE', is_active = true, updated_at = CURRENT_TIMESTAMP
+		RETURNING nursery_user_id
+	`
+	var nurseryUserID int64
+	if err := r.db.QueryRowContext(ctx, query, nurseryID, input.UserID, role, invitedByUserID).Scan(&nurseryUserID); err != nil {
+		return nil, err
+	}
+	return r.findManagerLink(ctx, nurseryUserID)
+}
+
 func (r *PostgresRepository) AddUser(ctx context.Context, nurseryID int64, input AddUserRequest) (*UserLink, error) {
 	roleID, err := r.roleID(ctx, input)
 	if err != nil {
 		return nil, err
 	}
 	const query = `
-		INSERT INTO public.nursery_users (nursery_id, user_id, nursery_role_id, joined_at, is_active)
-		VALUES ($1, $2, $3, CURRENT_TIMESTAMP, true)
+		INSERT INTO public.nursery_users (nursery_id, user_id, nursery_role_id, role, status, joined_at, is_active)
+		VALUES ($1, $2, $3, 'MANAGER', 'ACTIVE', CURRENT_TIMESTAMP, true)
 		ON CONFLICT (nursery_id, user_id, nursery_role_id)
 		DO UPDATE SET is_active = true
 		RETURNING nursery_user_id
@@ -386,6 +494,110 @@ func (r *PostgresRepository) AddUser(ctx context.Context, nurseryID int64, input
 		return nil, err
 	}
 	return r.findUserLink(ctx, nurseryUserID)
+}
+
+// ConnectDriver creates a nursery-driver connection request.
+func (r *PostgresRepository) ConnectDriver(ctx context.Context, nurseryID int64, driverUserID int64, invitedByUserID int64) (*NurseryDriver, error) {
+	status := "REQUESTED"
+	if invitedByUserID > 0 {
+		status = "INVITED"
+	}
+	const query = `
+		INSERT INTO public.nursery_drivers (nursery_id, driver_user_id, invited_by_user_id, connection_status, created_at, updated_at)
+		VALUES ($1, $2, NULLIF($3, 0), $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT (nursery_id, driver_user_id) DO UPDATE
+		SET connection_status = $4, updated_at = CURRENT_TIMESTAMP
+		RETURNING id
+	`
+	var id int64
+	if err := r.db.QueryRowContext(ctx, query, nurseryID, driverUserID, invitedByUserID, status).Scan(&id); err != nil {
+		return nil, err
+	}
+	return r.findNurseryDriver(ctx, id)
+}
+
+// ApproveDriverConnection approves a nursery-driver connection.
+func (r *PostgresRepository) ApproveDriverConnection(ctx context.Context, nurseryID int64, driverUserID int64, approvedByUserID int64) error {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE public.nursery_drivers
+		SET connection_status = 'APPROVED', approved_by_user_id = $3, connected_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		WHERE nursery_id = $1 AND driver_user_id = $2
+	`, nurseryID, driverUserID, approvedByUserID)
+	if err != nil {
+		return err
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListConnectedDrivers returns all approved drivers for a nursery.
+func (r *PostgresRepository) ListConnectedDrivers(ctx context.Context, nurseryID int64) ([]NurseryDriver, error) {
+	const query = `
+		SELECT nd.id, nd.nursery_id, nd.driver_user_id,
+			u.first_name, u.mobile,
+			d.vehicle_number, d.vehicle_type,
+			nd.connection_status, nd.connected_at, nd.created_at
+		FROM public.nursery_drivers nd
+		JOIN public.users u ON u.user_id = nd.driver_user_id
+		LEFT JOIN public.drivers d ON d.user_id = nd.driver_user_id
+		WHERE nd.nursery_id = $1
+		ORDER BY nd.created_at DESC
+	`
+	rows, err := r.db.QueryContext(ctx, query, nurseryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	drivers := make([]NurseryDriver, 0)
+	for rows.Next() {
+		var nd NurseryDriver
+		var firstName, mobile string
+		var vehicleNumber, vehicleType sql.NullString
+		var connectedAt sql.NullTime
+		if err := rows.Scan(&nd.ID, &nd.NurseryID, &nd.DriverUserID, &firstName, &mobile, &vehicleNumber, &vehicleType, &nd.ConnectionStatus, &connectedAt, &nd.CreatedAt); err != nil {
+			return nil, err
+		}
+		nd.DriverName = &firstName
+		nd.DriverMobile = &mobile
+		nd.VehicleNumber = nullableString(vehicleNumber)
+		nd.VehicleType = nullableString(vehicleType)
+		if connectedAt.Valid {
+			nd.ConnectedAt = &connectedAt.Time
+		}
+		drivers = append(drivers, nd)
+	}
+	return drivers, rows.Err()
+}
+
+func (r *PostgresRepository) findNurseryDriver(ctx context.Context, id int64) (*NurseryDriver, error) {
+	const query = `
+		SELECT nd.id, nd.nursery_id, nd.driver_user_id,
+			u.first_name, u.mobile,
+			d.vehicle_number, d.vehicle_type,
+			nd.connection_status, nd.connected_at, nd.created_at
+		FROM public.nursery_drivers nd
+		JOIN public.users u ON u.user_id = nd.driver_user_id
+		LEFT JOIN public.drivers d ON d.user_id = nd.driver_user_id
+		WHERE nd.id = $1
+	`
+	var nd NurseryDriver
+	var firstName, mobile string
+	var vehicleNumber, vehicleType sql.NullString
+	var connectedAt sql.NullTime
+	if err := r.db.QueryRowContext(ctx, query, id).Scan(&nd.ID, &nd.NurseryID, &nd.DriverUserID, &firstName, &mobile, &vehicleNumber, &vehicleType, &nd.ConnectionStatus, &connectedAt, &nd.CreatedAt); err != nil {
+		return nil, err
+	}
+	nd.DriverName = &firstName
+	nd.DriverMobile = &mobile
+	nd.VehicleNumber = nullableString(vehicleNumber)
+	nd.VehicleType = nullableString(vehicleType)
+	if connectedAt.Valid {
+		nd.ConnectedAt = &connectedAt.Time
+	}
+	return &nd, nil
 }
 
 func (r *PostgresRepository) RemoveUser(ctx context.Context, nurseryID int64, userID int64) error {
@@ -405,15 +617,21 @@ func (r *PostgresRepository) RemoveUser(ctx context.Context, nurseryID int64, us
 
 func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error) {
 	var exists bool
-	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM public.nursery_users WHERE nursery_id = $1 AND user_id = $2 AND COALESCE(is_active, true) = true)`, nurseryID, userID).Scan(&exists)
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM public.nursery_users
+		WHERE nursery_id = $1 AND user_id = $2 AND COALESCE(is_active, true) = true
+		UNION ALL
+		SELECT 1 FROM public.nurseries
+		WHERE nursery_id = $1 AND owner_user_id = $2 AND COALESCE(status::text, '') <> 'DELETED'
+	)`, nurseryID, userID).Scan(&exists)
 	return exists, err
 }
 
 func (r *PostgresRepository) ListByUserID(ctx context.Context, userID int64) ([]Nursery, error) {
 	const query = `
 		SELECT DISTINCT n.nursery_id, n.nursery_code, n.nursery_name, n.gst_number, n.mobile,
-			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.created_at,
-			n.updated_at, n.created_by, n.updated_by
+			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
+			n.created_at, n.updated_at, n.created_by, n.updated_by
 		FROM public.nurseries n
 		JOIN public.nursery_users nu ON nu.nursery_id = n.nursery_id
 		WHERE nu.user_id = $1
@@ -479,8 +697,8 @@ func buildNurseryWhere(input ListNurseriesRequest) (string, []any) {
 func (r *PostgresRepository) scanNursery(ctx context.Context, where string, args ...any) (*Nursery, error) {
 	query := `
 		SELECT n.nursery_id, n.nursery_code, n.nursery_name, n.gst_number, n.mobile,
-			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.created_at,
-			n.updated_at, n.created_by, n.updated_by
+			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
+			n.created_at, n.updated_at, n.created_by, n.updated_by
 		FROM public.nurseries n
 		` + where
 	nursery, err := scanNurseryRow(r.db.QueryRowContext(ctx, query, args...))
@@ -496,7 +714,7 @@ func (r *PostgresRepository) roleID(ctx context.Context, input AddUserRequest) (
 	}
 	roleCode := strings.ToUpper(strings.TrimSpace(input.RoleCode))
 	if roleCode == "" {
-		roleCode = "OWNER"
+		roleCode = "MANAGER"
 	}
 	var roleID int16
 	err := r.db.QueryRowContext(ctx, `SELECT nursery_role_id FROM public.nursery_roles WHERE role_code = $1 AND is_active = true`, roleCode).Scan(&roleID)
@@ -507,15 +725,21 @@ func (r *PostgresRepository) roleID(ctx context.Context, input AddUserRequest) (
 }
 
 func (r *PostgresRepository) findUserLink(ctx context.Context, nurseryUserID int64) (*UserLink, error) {
+	return r.findManagerLink(ctx, nurseryUserID)
+}
+
+func (r *PostgresRepository) findManagerLink(ctx context.Context, nurseryUserID int64) (*UserLink, error) {
 	const query = `
 		SELECT nu.nursery_user_id, nu.nursery_id, nu.user_id, u.first_name, u.mobile, u.email,
-			nr.nursery_role_id, nr.role_code, nr.role_name, nu.joined_at, COALESCE(nu.is_active, true)
+			COALESCE(nu.nursery_role_id, 0),
+			COALESCE(nu.role, 'MANAGER'), COALESCE(nu.role, 'MANAGER'),
+			COALESCE(nu.role, 'MANAGER'), COALESCE(nu.status, 'ACTIVE'),
+			nu.joined_at, COALESCE(nu.is_active, true)
 		FROM public.nursery_users nu
 		JOIN public.users u ON u.user_id = nu.user_id
-		JOIN public.nursery_roles nr ON nr.nursery_role_id = nu.nursery_role_id
 		WHERE nu.nursery_user_id = $1
 	`
-	user, err := scanUserLinkRow(r.db.QueryRowContext(ctx, query, nurseryUserID))
+	user, err := scanManagerLinkRow(r.db.QueryRowContext(ctx, query, nurseryUserID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -537,8 +761,8 @@ func scanNurseryRows(rows *sql.Rows) (Nursery, error) {
 func scanNursery(row interface{ Scan(dest ...any) error }) (Nursery, error) {
 	var nursery Nursery
 	var code, gst, mobile, email, website, description sql.NullString
-	var createdBy, updatedBy sql.NullInt64
-	if err := row.Scan(&nursery.ID, &code, &nursery.Name, &gst, &mobile, &email, &website, &description, &nursery.Status, &nursery.CreatedAt, &nursery.UpdatedAt, &createdBy, &updatedBy); err != nil {
+	var ownerUserID, createdBy, updatedBy sql.NullInt64
+	if err := row.Scan(&nursery.ID, &code, &nursery.Name, &gst, &mobile, &email, &website, &description, &nursery.Status, &ownerUserID, &nursery.CreatedAt, &nursery.UpdatedAt, &createdBy, &updatedBy); err != nil {
 		return Nursery{}, err
 	}
 	nursery.Code = nullableString(code)
@@ -548,6 +772,7 @@ func scanNursery(row interface{ Scan(dest ...any) error }) (Nursery, error) {
 	nursery.Email = nullableString(email)
 	nursery.Website = nullableString(website)
 	nursery.Description = nullableString(description)
+	nursery.OwnerUserID = nullableInt64(ownerUserID)
 	nursery.CreatedBy = nullableInt64(createdBy)
 	nursery.UpdatedBy = nullableInt64(updatedBy)
 	return nursery, nil
@@ -592,22 +817,33 @@ func scanAddress(row interface{ Scan(dest ...any) error }) (Address, error) {
 }
 
 func scanUserLinkRow(row interface{ Scan(dest ...any) error }) (*UserLink, error) {
-	user, err := scanUserLink(row)
+	return scanManagerLinkRow(row)
+}
+
+func scanUserLinkRows(rows *sql.Rows) (UserLink, error) {
+	return scanManagerLink(rows)
+}
+
+func scanManagerLinkRow(row interface{ Scan(dest ...any) error }) (*UserLink, error) {
+	user, err := scanManagerLink(row)
 	if err != nil {
 		return nil, err
 	}
 	return &user, nil
 }
 
-func scanUserLinkRows(rows *sql.Rows) (UserLink, error) {
-	return scanUserLink(rows)
+func scanManagerLinkRows(rows *sql.Rows) (UserLink, error) {
+	return scanManagerLink(rows)
 }
 
-func scanUserLink(row interface{ Scan(dest ...any) error }) (UserLink, error) {
+func scanManagerLink(row interface{ Scan(dest ...any) error }) (UserLink, error) {
 	var user UserLink
 	var email sql.NullString
 	var joinedAt sql.NullTime
-	if err := row.Scan(&user.ID, &user.NurseryID, &user.UserID, &user.FirstName, &user.Mobile, &email, &user.RoleID, &user.RoleCode, &user.RoleName, &joinedAt, &user.IsActive); err != nil {
+	// columns: id, nursery_id, user_id, first_name, mobile, email,
+	//          role_id(legacy), role_code, role_name, role(v1), status, joined_at, is_active
+	if err := row.Scan(&user.ID, &user.NurseryID, &user.UserID, &user.FirstName, &user.Mobile, &email,
+		&user.RoleID, &user.RoleCode, &user.RoleName, &user.Role, &user.Status, &joinedAt, &user.IsActive); err != nil {
 		return UserLink{}, err
 	}
 	user.Email = nullableString(email)

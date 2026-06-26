@@ -1,16 +1,21 @@
 package admin
 
 type Summary struct {
-	Users          int64   `json:"users"`
-	Nurseries      int64   `json:"nurseries"`
-	Plants         int64   `json:"plants"`
-	InventoryItems int64   `json:"inventory_items"`
-	PlantRequests  int64   `json:"plant_requests"`
-	Orders         int64   `json:"orders"`
-	Payments       int64   `json:"payments"`
-	Dispatches     int64   `json:"dispatches"`
-	Notifications  int64   `json:"notifications"`
-	Revenue        float64 `json:"revenue"`
+	Users              int64   `json:"users"`
+	Nurseries          int64   `json:"nurseries"`
+	PendingNurseries   int64   `json:"pending_nurseries"`
+	ApprovedNurseries  int64   `json:"approved_nurseries"`
+	SuspendedNurseries int64   `json:"suspended_nurseries"`
+	Plants             int64   `json:"plants"`
+	InventoryItems     int64   `json:"inventory_items"`
+	PlantRequests      int64   `json:"plant_requests"`
+	Orders             int64   `json:"orders"`
+	ActiveOrders       int64   `json:"active_orders"`
+	Payments           int64   `json:"payments"`
+	Dispatches         int64   `json:"dispatches"`
+	Notifications      int64   `json:"notifications"`
+	ActiveDrivers      int64   `json:"active_drivers"`
+	Revenue            float64 `json:"revenue"`
 }
 
 type User struct {

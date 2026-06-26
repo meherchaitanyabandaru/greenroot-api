@@ -17,6 +17,19 @@ type DriverRequest struct {
 	Status            string  `json:"status"`
 }
 
+// ApplyDriverRequest is used by a user to self-register as a driver (V1 flow).
+type ApplyDriverRequest struct {
+	LicenceNumber   string  `json:"licence_number"`
+	LicencePhotoURL *string `json:"licence_photo_url"`
+	VehicleNumber   string  `json:"vehicle_number"`
+	VehicleType     string  `json:"vehicle_type"`
+}
+
+// ApproveDriverRequest is used by admin to approve a driver profile.
+type ApproveDriverRequest struct {
+	DriverUserID int64 `json:"driver_user_id"`
+}
+
 type LocationRequest struct {
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`

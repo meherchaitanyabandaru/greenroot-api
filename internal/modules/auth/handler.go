@@ -162,6 +162,46 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, MeResponse{User: user})
 }
 
+// Workspaces godoc
+//
+//	@Summary		List workspaces
+//	@Description	Returns all workspaces the authenticated user can operate in (personal, owned nursery, manager nurseries, driver).
+//	@Tags			Auth
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{array}		Workspace
+//	@Failure		401	{object}	response.ErrorBody
+//	@Router			/api/v1/me/workspaces [get]
+func (h *Handler) Workspaces(w http.ResponseWriter, r *http.Request) {
+	token := bearerToken(r)
+	if token == "" {
+		response.Error(w, http.StatusUnauthorized, "missing_token", "missing bearer token")
+		return
+	}
+
+	workspaces, err := h.service.Workspaces(r.Context(), token)
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+
+	response.OK(w, workspaces)
+}
+
+func (h *Handler) OwnerDashboard(w http.ResponseWriter, r *http.Request) {
+	token := bearerToken(r)
+	if token == "" {
+		response.Error(w, http.StatusUnauthorized, "missing_token", "missing bearer token")
+		return
+	}
+	dashboard, err := h.service.OwnerDashboard(r.Context(), token)
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+	response.OK(w, map[string]any{"dashboard": dashboard})
+}
+
 func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
 	defer r.Body.Close()
 	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {

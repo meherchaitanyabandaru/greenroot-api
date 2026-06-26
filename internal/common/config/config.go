@@ -14,6 +14,7 @@ type Config struct {
 	Logging  LoggingConfig
 	Database DatabaseConfig
 	JWT      JWTConfig
+	Storage  StorageConfig
 }
 
 type AppConfig struct {
@@ -58,6 +59,15 @@ type JWTConfig struct {
 	SigningMethod string
 }
 
+type StorageConfig struct {
+	Endpoint        string // "localhost:9000" for MinIO, "s3.amazonaws.com" for AWS
+	AccessKeyID     string
+	SecretAccessKey string
+	UseSSL          bool
+	Region          string
+	PublicURL       string // base URL for constructing permanent file URLs
+}
+
 func Load() Config {
 	return Config{
 		App: AppConfig{
@@ -92,6 +102,14 @@ func Load() Config {
 			AccessTTL:     getDuration("JWT_ACCESS_TTL", 15*time.Minute),
 			RefreshTTL:    getDuration("JWT_REFRESH_TTL", 720*time.Hour),
 			SigningMethod: getString("JWT_SIGNING_METHOD", "HS256"),
+		},
+		Storage: StorageConfig{
+			Endpoint:        getString("STORAGE_ENDPOINT", "localhost:9000"),
+			AccessKeyID:     getString("STORAGE_ACCESS_KEY", "greenroot"),
+			SecretAccessKey: getString("STORAGE_SECRET_KEY", "greenroot123"),
+			UseSSL:          getBool("STORAGE_USE_SSL", false),
+			Region:          getString("STORAGE_REGION", "us-east-1"),
+			PublicURL:       getString("STORAGE_PUBLIC_URL", "http://localhost:9000"),
 		},
 	}
 }
@@ -132,6 +150,18 @@ func getStringSlice(key string, fallback []string) []string {
 		return fallback
 	}
 	return values
+}
+
+func getBool(key string, fallback bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func getDuration(key string, fallback time.Duration) time.Duration {

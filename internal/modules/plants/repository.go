@@ -26,6 +26,7 @@ type Repository interface {
 	DeleteCategory(ctx context.Context, categoryID int64) error
 	CreateImage(ctx context.Context, plantID int64, input CreateImageRequest) (*Image, error)
 	GetCareGuide(ctx context.Context, plantID int64) (*CareGuide, error)
+	GetNamesByLanguage(ctx context.Context, plantIDs []int64, langCode string) (map[int64]string, error)
 	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 }
 
@@ -450,6 +451,42 @@ func (r *PostgresRepository) replaceCategories(ctx context.Context, tx *sql.Tx, 
 		}
 	}
 	return nil
+}
+
+func (r *PostgresRepository) GetNamesByLanguage(ctx context.Context, plantIDs []int64, langCode string) (map[int64]string, error) {
+	if len(plantIDs) == 0 {
+		return map[int64]string{}, nil
+	}
+	placeholders := make([]string, len(plantIDs))
+	args := make([]interface{}, len(plantIDs)+1)
+	args[0] = langCode
+	for i, id := range plantIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args[i+1] = id
+	}
+	query := fmt.Sprintf(`
+		SELECT pn.plant_id, pn.plant_name
+		FROM public.plant_names pn
+		JOIN public.languages l ON l.language_id = pn.language_id
+		WHERE l.language_code = $1
+		  AND pn.plant_id IN (%s)
+		  AND pn.is_active = true
+	`, strings.Join(placeholders, ", "))
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[int64]string, len(plantIDs))
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		result[id] = name
+	}
+	return result, rows.Err()
 }
 
 func (r *PostgresRepository) upsertEnglishName(ctx context.Context, tx *sql.Tx, plantID int64, commonName *string, description *string) error {

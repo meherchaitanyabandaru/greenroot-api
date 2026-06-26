@@ -105,6 +105,56 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, MessageResponse{Message: "Driver deactivated successfully"})
 }
 
+// Apply allows a logged-in user to self-register as a driver (V1 flow).
+func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	var req ApplyDriverRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	driver, err := h.service.Apply(r.Context(), actor, req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusCreated, DriverResponse{Driver: driver})
+}
+
+// GetMine returns the current user's driver profile.
+func (h *Handler) GetMine(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	driver, err := h.service.GetMine(r.Context(), actor)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, DriverResponse{Driver: driver})
+}
+
+// ApproveDriver approves a driver profile (admin only).
+func (h *Handler) ApproveDriver(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	driverUserID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	driver, err := h.service.Approve(r.Context(), actor, driverUserID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, DriverResponse{Driver: driver})
+}
+
 func (h *Handler) CreateLocation(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {

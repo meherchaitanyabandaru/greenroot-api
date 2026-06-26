@@ -32,7 +32,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	response.JSON(w, 201, PointResponse{Tracking: p})
+	response.JSON(w, 201, PointResponse{Tracking: &p})
 }
 func (h *Handler) ListDispatch(w http.ResponseWriter, r *http.Request) {
 	h.list(w, r, "dispatch_id", "dispatchId")

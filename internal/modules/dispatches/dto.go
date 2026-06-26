@@ -54,3 +54,19 @@ type DispatchResponse struct {
 type DispatchItemResponse struct {
 	Item DispatchItem `json:"item"`
 }
+
+type CreateTripEventRequest struct {
+	EventType string   `json:"event_type"`
+	Latitude  *float64 `json:"latitude"`
+	Longitude *float64 `json:"longitude"`
+	PhotoURL  *string  `json:"photo_url"`
+	Remarks   *string  `json:"remarks"`
+}
+
+type TripEventResponse struct {
+	Event TripEvent `json:"event"`
+}
+
+type PublicTrackingResponse struct {
+	Dispatch Dispatch `json:"dispatch"`
+}

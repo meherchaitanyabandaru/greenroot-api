@@ -18,6 +18,9 @@ type Repository interface {
 	FindByID(ctx context.Context, orderID int64) (*Order, error)
 	Create(ctx context.Context, actorID int64, input CreateOrderRequest, orderNumber string) (*Order, error)
 	UpdateStatus(ctx context.Context, actorID int64, orderID int64, status string) (*Order, error)
+	UpdateStatusWithLoading(ctx context.Context, actorID int64, orderID int64, status string, phase string) (*Order, error)
+	Cancel(ctx context.Context, actorID int64, orderID int64, reason string) (*Order, error)
+	AssignManager(ctx context.Context, orderID int64, managerUserID int64) (*Order, error)
 	Delete(ctx context.Context, orderID int64) error
 	ListItems(ctx context.Context, orderID int64) ([]OrderItem, error)
 	FindItem(ctx context.Context, itemID int64) (*OrderItem, error)
@@ -25,6 +28,9 @@ type Repository interface {
 	UpdateItem(ctx context.Context, itemID int64, input OrderItemRequest) (*OrderItem, error)
 	DeleteItem(ctx context.Context, itemID int64) error
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
+	IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error)
+	GetUserNurseryIDs(ctx context.Context, userID int64) ([]int64, error)
+	GetOwnedNurseryID(ctx context.Context, userID int64) (*int64, error)
 	FindOrCreateBuyerByMobile(ctx context.Context, mobile string, name string) (int64, error)
 	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 }
@@ -106,10 +112,10 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 
 	const query = `
 		INSERT INTO public.orders (
-			order_code, order_number, buyer_user_id, seller_nursery_id, order_status, total_amount,
+			order_code, order_number, buyer_user_id, seller_nursery_id, buyer_nursery_id, order_status, total_amount,
 			notes, order_date, created_at, updated_at, created_by, updated_by
 		)
-		VALUES ($1, $2, $3, $4, $5, 0, NULLIF($6, ''), $7, $7, $7, $8, $8)
+		VALUES ($1, $2, $3, $4, $9, $5, 0, NULLIF($6, ''), $7, $7, $7, $8, $8)
 		RETURNING order_id
 	`
 	var orderID int64
@@ -124,6 +130,7 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 		stringOrEmpty(input.Notes),
 		now,
 		actorID,
+		int64OrNil(input.BuyerNurseryID),
 	).Scan(&orderID); err != nil {
 		return nil, err
 	}
@@ -291,8 +298,117 @@ func (r *PostgresRepository) DeleteItem(ctx context.Context, itemID int64) error
 
 func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error) {
 	var exists bool
-	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM public.nursery_users WHERE nursery_id = $1 AND user_id = $2 AND COALESCE(is_active, true) = true)`, nurseryID, userID).Scan(&exists)
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM public.nursery_users
+		WHERE nursery_id = $1 AND user_id = $2 AND COALESCE(is_active, true) = true
+		UNION ALL
+		SELECT 1 FROM public.nurseries
+		WHERE nursery_id = $1 AND owner_user_id = $2 AND COALESCE(status::text, '') <> 'DELETED'
+	)`, nurseryID, userID).Scan(&exists)
 	return exists, err
+}
+
+func (r *PostgresRepository) IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM public.nurseries WHERE nursery_id = $1 AND owner_user_id = $2)`,
+		nurseryID, userID,
+	).Scan(&exists)
+	return exists, err
+}
+
+func (r *PostgresRepository) GetUserNurseryIDs(ctx context.Context, userID int64) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT DISTINCT nursery_id FROM (
+			SELECT nursery_id FROM public.nurseries
+				WHERE owner_user_id = $1 AND COALESCE(status::text, '') <> 'DELETED'
+			UNION ALL
+			SELECT nursery_id FROM public.nursery_users
+				WHERE user_id = $1 AND COALESCE(is_active, true) = true
+		) AS combined
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (r *PostgresRepository) GetOwnedNurseryID(ctx context.Context, userID int64) (*int64, error) {
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT nursery_id FROM public.nurseries
+		WHERE owner_user_id = $1 AND COALESCE(status::text, '') <> 'DELETED'
+		LIMIT 1
+	`, userID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
+func (r *PostgresRepository) UpdateStatusWithLoading(ctx context.Context, actorID int64, orderID int64, status string, phase string) (*Order, error) {
+	var query string
+	switch phase {
+	case "start":
+		query = `UPDATE public.orders SET order_status = $2, loading_started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE order_id = $1`
+	case "complete":
+		query = `UPDATE public.orders SET order_status = $2, loading_completed_at = CURRENT_TIMESTAMP, loading_completed_by_user_id = $3, updated_at = CURRENT_TIMESTAMP WHERE order_id = $1`
+	default:
+		query = `UPDATE public.orders SET order_status = $2, updated_at = CURRENT_TIMESTAMP WHERE order_id = $1`
+	}
+	if phase == "complete" {
+		if _, err := r.db.ExecContext(ctx, query, orderID, status, actorID); err != nil {
+			return nil, err
+		}
+	} else {
+		if _, err := r.db.ExecContext(ctx, query, orderID, status); err != nil {
+			return nil, err
+		}
+	}
+	return r.FindByID(ctx, orderID)
+}
+
+func (r *PostgresRepository) Cancel(ctx context.Context, actorID int64, orderID int64, reason string) (*Order, error) {
+	const query = `
+		UPDATE public.orders
+		SET order_status = 'CANCELLED', cancelled_by_user_id = $2, cancelled_at = CURRENT_TIMESTAMP,
+		    cancel_reason = NULLIF($3, ''), updated_at = CURRENT_TIMESTAMP
+		WHERE order_id = $1
+	`
+	result, err := r.db.ExecContext(ctx, query, orderID, actorID, reason)
+	if err != nil {
+		return nil, err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return nil, ErrNotFound
+	}
+	return r.FindByID(ctx, orderID)
+}
+
+func (r *PostgresRepository) AssignManager(ctx context.Context, orderID int64, managerUserID int64) (*Order, error) {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE public.orders SET assigned_manager_user_id = $2, updated_at = CURRENT_TIMESTAMP WHERE order_id = $1`,
+		orderID, managerUserID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return nil, ErrNotFound
+	}
+	return r.FindByID(ctx, orderID)
 }
 
 func (r *PostgresRepository) FindOrCreateBuyerByMobile(ctx context.Context, mobile string, name string) (int64, error) {
@@ -388,12 +504,20 @@ func (r *PostgresRepository) findItem(ctx context.Context, itemID int64) (*Order
 
 func baseSelect() string {
 	return `
-		SELECT o.order_id, o.order_code, o.order_number, o.buyer_user_id, bu.first_name, o.seller_nursery_id,
-			n.nursery_name, o.order_status::text, COALESCE(o.total_amount, 0), o.notes, o.order_date,
-			o.created_at, o.updated_at, o.created_by, o.updated_by
+		SELECT o.order_id, o.order_code, o.order_number,
+			o.buyer_user_id, bu.first_name,
+			o.seller_nursery_id, n.nursery_name,
+			o.order_status::text, COALESCE(o.total_amount, 0), o.notes, o.order_date,
+			o.created_at, o.updated_at,
+			o.created_by, o.updated_by,
+			o.nursery_id, o.quotation_id, o.customer_user_id, o.customer_name, o.customer_mobile,
+			o.assigned_manager_user_id, o.created_by_user_id,
+			o.cancelled_by_user_id, o.cancelled_at, o.cancel_reason,
+			o.loading_started_at, o.loading_completed_at, o.loading_completed_by_user_id,
+			o.buyer_nursery_id
 		FROM public.orders o
 		LEFT JOIN public.users bu ON bu.user_id = o.buyer_user_id
-		LEFT JOIN public.nurseries n ON n.nursery_id = o.seller_nursery_id
+		LEFT JOIN public.nurseries n ON n.nursery_id = COALESCE(o.nursery_id, o.seller_nursery_id)
 	`
 }
 
@@ -420,13 +544,31 @@ func itemSelect() string {
 func buildWhere(input ListOrdersRequest) (string, []any) {
 	clauses := []string{"1 = 1"}
 	args := make([]any, 0)
-	if input.BuyerID > 0 {
-		args = append(args, input.BuyerID)
-		clauses = append(clauses, fmt.Sprintf("o.buyer_user_id = $%d", len(args)))
-	}
-	if input.NurseryID > 0 {
-		args = append(args, input.NurseryID)
-		clauses = append(clauses, fmt.Sprintf("o.seller_nursery_id = $%d", len(args)))
+
+	if input.Buying {
+		// Buyer perspective: orders where this user or their nursery is buyer
+		buyerClauses := make([]string, 0)
+		if input.BuyerID > 0 {
+			args = append(args, input.BuyerID)
+			buyerClauses = append(buyerClauses, fmt.Sprintf("o.buyer_user_id = $%d", len(args)))
+		}
+		if input.NurseryID > 0 {
+			args = append(args, input.NurseryID)
+			buyerClauses = append(buyerClauses, fmt.Sprintf("o.buyer_nursery_id = $%d", len(args)))
+		}
+		if len(buyerClauses) > 0 {
+			clauses = append(clauses, "("+strings.Join(buyerClauses, " OR ")+")")
+		}
+	} else {
+		// Seller perspective (default)
+		if input.BuyerID > 0 {
+			args = append(args, input.BuyerID)
+			clauses = append(clauses, fmt.Sprintf("o.buyer_user_id = $%d", len(args)))
+		}
+		if input.NurseryID > 0 {
+			args = append(args, input.NurseryID)
+			clauses = append(clauses, fmt.Sprintf("o.seller_nursery_id = $%d", len(args)))
+		}
 	}
 	if input.Status != "" {
 		args = append(args, input.Status)
@@ -482,34 +624,58 @@ func scanOrderRows(rows *sql.Rows) (Order, error) {
 
 func scanOrder(row interface{ Scan(dest ...any) error }) (Order, error) {
 	var order Order
-	var buyerID, nurseryID, createdBy, updatedBy sql.NullInt64
+	var buyerID, sellerNurseryID, createdBy, updatedBy sql.NullInt64
 	var buyerName, nurseryName, notes sql.NullString
+	// V1 fields
+	var nurseryID, quotationID, customerUserID sql.NullInt64
+	var customerName, customerMobile sql.NullString
+	var assignedManagerUserID, createdByUserID sql.NullInt64
+	var cancelledByUserID sql.NullInt64
+	var cancelledAt, loadingStartedAt, loadingCompletedAt sql.NullTime
+	var cancelReason sql.NullString
+	var loadingCompletedByUserID sql.NullInt64
+	var buyerNurseryID sql.NullInt64
 	if err := row.Scan(
-		&order.ID,
-		&order.OrderCode,
-		&order.OrderNumber,
-		&buyerID,
-		&buyerName,
-		&nurseryID,
-		&nurseryName,
-		&order.Status,
-		&order.TotalAmount,
-		&notes,
-		&order.OrderDate,
-		&order.CreatedAt,
-		&order.UpdatedAt,
-		&createdBy,
-		&updatedBy,
+		&order.ID, &order.OrderCode, &order.OrderNumber,
+		&buyerID, &buyerName,
+		&sellerNurseryID, &nurseryName,
+		&order.Status, &order.TotalAmount, &notes, &order.OrderDate,
+		&order.CreatedAt, &order.UpdatedAt,
+		&createdBy, &updatedBy,
+		&nurseryID, &quotationID, &customerUserID, &customerName, &customerMobile,
+		&assignedManagerUserID, &createdByUserID,
+		&cancelledByUserID, &cancelledAt, &cancelReason,
+		&loadingStartedAt, &loadingCompletedAt, &loadingCompletedByUserID,
+		&buyerNurseryID,
 	); err != nil {
 		return Order{}, err
 	}
+	order.BuyerNurseryID = nullableInt64(buyerNurseryID)
 	order.BuyerUserID = nullableInt64(buyerID)
 	order.BuyerName = nullableString(buyerName)
-	order.SellerNurseryID = nullableInt64(nurseryID)
+	order.SellerNurseryID = nullableInt64(sellerNurseryID)
 	order.SellerNursery = nullableString(nurseryName)
+	order.NurseryName = nullableString(nurseryName)
 	order.Notes = nullableString(notes)
-	order.CreatedBy = nullableInt64(createdBy)
-	order.UpdatedBy = nullableInt64(updatedBy)
+	order.NurseryID = nullableInt64(nurseryID)
+	order.QuotationID = nullableInt64(quotationID)
+	order.CustomerUserID = nullableInt64(customerUserID)
+	order.CustomerName = nullableString(customerName)
+	order.CustomerMobile = nullableString(customerMobile)
+	order.AssignedManagerUserID = nullableInt64(assignedManagerUserID)
+	order.CreatedByUserID = nullableInt64(createdByUserID)
+	order.CancelledByUserID = nullableInt64(cancelledByUserID)
+	if cancelledAt.Valid {
+		order.CancelledAt = &cancelledAt.Time
+	}
+	order.CancelReason = nullableString(cancelReason)
+	if loadingStartedAt.Valid {
+		order.LoadingStartedAt = &loadingStartedAt.Time
+	}
+	if loadingCompletedAt.Valid {
+		order.LoadingCompletedAt = &loadingCompletedAt.Time
+	}
+	order.LoadingCompletedByUserID = nullableInt64(loadingCompletedByUserID)
 	return order, nil
 }
 

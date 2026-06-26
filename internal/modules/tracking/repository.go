@@ -3,6 +3,7 @@ package tracking
 import (
 	"context"
 	"database/sql"
+	"errors"
 )
 
 type Repository interface {
@@ -39,6 +40,9 @@ func (r *PostgresRepository) ListBy(ctx context.Context, col string, id int64) (
 }
 func (r *PostgresRepository) LatestBy(ctx context.Context, col string, id int64) (*TrackingPoint, error) {
 	p, err := scan(r.db.QueryRowContext(ctx, `SELECT tracking_id,vehicle_id,driver_id,dispatch_id,latitude,longitude,tracked_at,notes FROM public.vehicle_tracking WHERE `+col+`=$1 ORDER BY tracked_at DESC LIMIT 1`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

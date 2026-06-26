@@ -23,6 +23,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Post("/", m.handler.Create)
 		r.Get("/{id}", m.handler.Get)
 		r.Put("/{id}", m.handler.Update)
+		r.Put("/{id}/status", m.handler.UpdateStatus)
 		r.Delete("/{id}", m.handler.Delete)
 		r.Get("/{id}/responses", m.handler.ListResponses)
 		r.Post("/{id}/responses", m.handler.CreateResponse)

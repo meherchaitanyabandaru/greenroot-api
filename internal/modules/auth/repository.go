@@ -26,6 +26,8 @@ type Repository interface {
 	LogoutSession(ctx context.Context, sessionID int64) error
 	CreateUserActivity(ctx context.Context, input CreateActivityInput) error
 	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
+	GetWorkspaces(ctx context.Context, userID int64) ([]Workspace, error)
+	GetOwnerDashboard(ctx context.Context, userID int64) (*OwnerDashboard, error)
 }
 
 type CreateSessionInput struct {
@@ -350,4 +352,224 @@ func nullableText(value string) any {
 		return nil
 	}
 	return value
+}
+
+// GetWorkspaces returns all workspaces the user can operate in.
+// Always includes PERSONAL. Also includes OWNED_NURSERY (via nurseries.owner_user_id),
+// MANAGER_NURSERY (via nursery_users.status='ACTIVE'), and DRIVER (via drivers.approval_status).
+func (r *PostgresRepository) GetWorkspaces(ctx context.Context, userID int64) ([]Workspace, error) {
+	workspaces := []Workspace{
+		{Type: "PERSONAL", Role: "CUSTOMER"},
+	}
+
+	// Nursery owned by this user — V1 tracks ownership via nurseries.owner_user_id
+	const ownedQuery = `
+		SELECT nursery_id, nursery_name
+		FROM public.nurseries
+		WHERE owner_user_id = $1
+		  AND status NOT IN ('DELETED', 'SUSPENDED')
+		ORDER BY nursery_id
+		LIMIT 1
+	`
+	var ownedNurseryID int64
+	var ownedNurseryName string
+	if err := r.db.QueryRowContext(ctx, ownedQuery, userID).Scan(&ownedNurseryID, &ownedNurseryName); err == nil {
+		workspaces = append(workspaces, Workspace{
+			Type:        "OWNED_NURSERY",
+			Role:        "OWNER",
+			NurseryID:   &ownedNurseryID,
+			NurseryName: &ownedNurseryName,
+		})
+	}
+
+	// Nurseries where this user is an active manager — V1 tracks via nursery_users.status
+	const managerQuery = `
+		SELECT n.nursery_id, n.nursery_name, nu.role
+		FROM public.nursery_users nu
+		JOIN public.nurseries n ON n.nursery_id = nu.nursery_id
+		WHERE nu.user_id = $1
+		  AND nu.status = 'ACTIVE'
+		  AND n.status NOT IN ('DELETED', 'SUSPENDED')
+		ORDER BY n.nursery_id
+	`
+	rows, err := r.db.QueryContext(ctx, managerQuery, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var nid int64
+		var nname, role string
+		if err := rows.Scan(&nid, &nname, &role); err != nil {
+			return nil, err
+		}
+		workspaces = append(workspaces, Workspace{
+			Type:        "MANAGER_NURSERY",
+			Role:        role,
+			NurseryID:   &nid,
+			NurseryName: &nname,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Driver workspace
+	const driverQuery = `
+		SELECT 1 FROM public.drivers
+		WHERE user_id = $1 AND approval_status = 'APPROVED'
+		LIMIT 1
+	`
+	var exists int
+	if err := r.db.QueryRowContext(ctx, driverQuery, userID).Scan(&exists); err == nil {
+		workspaces = append(workspaces, Workspace{Type: "DRIVER", Role: "DRIVER"})
+	}
+
+	return workspaces, nil
+}
+
+func (r *PostgresRepository) GetOwnerDashboard(ctx context.Context, userID int64) (*OwnerDashboard, error) {
+	d := &OwnerDashboard{}
+
+	// Resolve owned nursery
+	var nurseryID int64
+	var nurseryName string
+	err := r.db.QueryRowContext(ctx, `
+		SELECT nursery_id, nursery_name FROM public.nurseries
+		WHERE owner_user_id = $1 AND COALESCE(status::text,'') <> 'DELETED'
+		LIMIT 1
+	`, userID).Scan(&nurseryID, &nurseryName)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	if err == nil {
+		d.NurseryID = &nurseryID
+		d.NurseryName = &nurseryName
+	}
+
+	// Sell orders (nursery is seller)
+	if nurseryID > 0 {
+		rows, _ := r.db.QueryContext(ctx, `
+			SELECT COALESCE(order_status,'PENDING'), COUNT(*) FROM public.orders
+			WHERE nursery_id = $1 GROUP BY order_status
+		`, nurseryID)
+		if rows != nil {
+			for rows.Next() {
+				var status string
+				var cnt int
+				if err := rows.Scan(&status, &cnt); err == nil {
+					d.SellOrders.Total += cnt
+					switch status {
+					case "PENDING":
+						d.SellOrders.Pending += cnt
+					case "CONFIRMED":
+						d.SellOrders.Confirmed += cnt
+					case "DELIVERED":
+						d.SellOrders.Delivered += cnt
+					case "CANCELLED":
+						d.SellOrders.Cancelled += cnt
+					}
+				}
+			}
+			rows.Close()
+		}
+
+		// Buy orders (nursery is buyer)
+		rows2, _ := r.db.QueryContext(ctx, `
+			SELECT COALESCE(order_status,'PENDING'), COUNT(*) FROM public.orders
+			WHERE buyer_nursery_id = $1 GROUP BY order_status
+		`, nurseryID)
+		if rows2 != nil {
+			for rows2.Next() {
+				var status string
+				var cnt int
+				if err := rows2.Scan(&status, &cnt); err == nil {
+					d.BuyOrders.Total += cnt
+					switch status {
+					case "PENDING":
+						d.BuyOrders.Pending += cnt
+					case "CONFIRMED":
+						d.BuyOrders.Confirmed += cnt
+					case "DELIVERED":
+						d.BuyOrders.Delivered += cnt
+					case "CANCELLED":
+						d.BuyOrders.Cancelled += cnt
+					}
+				}
+			}
+			rows2.Close()
+		}
+
+		// Sell quotations
+		rows3, _ := r.db.QueryContext(ctx, `
+			SELECT COALESCE(status,'PENDING'), COUNT(*) FROM public.quotations
+			WHERE nursery_id = $1 GROUP BY status
+		`, nurseryID)
+		if rows3 != nil {
+			for rows3.Next() {
+				var status string
+				var cnt int
+				if err := rows3.Scan(&status, &cnt); err == nil {
+					d.SellQuotes.Total += cnt
+					switch status {
+					case "PENDING", "SENT":
+						d.SellQuotes.Pending += cnt
+					case "APPROVED":
+						d.SellQuotes.Approved += cnt
+					case "REJECTED":
+						d.SellQuotes.Rejected += cnt
+					}
+				}
+			}
+			rows3.Close()
+		}
+
+		// Buy quotations
+		rows4, _ := r.db.QueryContext(ctx, `
+			SELECT COALESCE(status,'PENDING'), COUNT(*) FROM public.quotations
+			WHERE buyer_nursery_id = $1 GROUP BY status
+		`, nurseryID)
+		if rows4 != nil {
+			for rows4.Next() {
+				var status string
+				var cnt int
+				if err := rows4.Scan(&status, &cnt); err == nil {
+					d.BuyQuotes.Total += cnt
+					switch status {
+					case "PENDING", "SENT":
+						d.BuyQuotes.Pending += cnt
+					case "APPROVED":
+						d.BuyQuotes.Approved += cnt
+					case "REJECTED":
+						d.BuyQuotes.Rejected += cnt
+					}
+				}
+			}
+			rows4.Close()
+		}
+
+		// Inventory
+		_ = r.db.QueryRowContext(ctx, `
+			SELECT COUNT(*), COALESCE(SUM(CASE WHEN COALESCE(status::text,'') = 'AVAILABLE' THEN 1 ELSE 0 END), 0)
+			FROM public.nursery_inventory WHERE nursery_id = $1
+		`, nurseryID).Scan(&d.Inventory.TotalItems, &d.Inventory.Available)
+
+		// Connections
+		_ = r.db.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM public.nursery_users
+			WHERE nursery_id = $1 AND role = 'MANAGER' AND status = 'ACTIVE'
+		`, nurseryID).Scan(&d.Connections.Managers)
+
+		_ = r.db.QueryRowContext(ctx, `
+			SELECT COUNT(DISTINCT driver_id) FROM public.dispatches
+			WHERE nursery_id = $1 AND driver_id IS NOT NULL
+		`, nurseryID).Scan(&d.Connections.Drivers)
+
+		_ = r.db.QueryRowContext(ctx, `
+			SELECT COUNT(DISTINCT buyer_user_id) FROM public.orders
+			WHERE nursery_id = $1 AND buyer_user_id IS NOT NULL
+		`, nurseryID).Scan(&d.Connections.Customers)
+	}
+
+	return d, nil
 }

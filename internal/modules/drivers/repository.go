@@ -16,10 +16,13 @@ var ErrNotFound = errors.New("not found")
 type Repository interface {
 	List(ctx context.Context, input ListDriversRequest) ([]Driver, int64, error)
 	FindByID(ctx context.Context, driverID int64) (*Driver, error)
+	FindByUserID(ctx context.Context, userID int64) (*Driver, error)
 	HasDuplicate(ctx context.Context, input DriverInput, excludeDriverID int64) (bool, error)
 	Create(ctx context.Context, input DriverInput) (*Driver, error)
 	Update(ctx context.Context, driverID int64, input DriverInput) (*Driver, error)
 	Delete(ctx context.Context, driverID int64) error
+	Upsert(ctx context.Context, userID int64, req ApplyDriverRequest) (*Driver, error)
+	Approve(ctx context.Context, driverUserID int64, approvedByUserID int64) (*Driver, error)
 	CreateLocation(ctx context.Context, driverID int64, actorID int64, input LocationRequest) (*DriverLocation, error)
 	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 }
@@ -156,6 +159,64 @@ func (r *PostgresRepository) Delete(ctx context.Context, driverID int64) error {
 	return nil
 }
 
+func (r *PostgresRepository) FindByUserID(ctx context.Context, userID int64) (*Driver, error) {
+	driver, err := scanDriver(r.db.QueryRowContext(ctx, baseSelect()+" WHERE d.user_id = $1 AND COALESCE(d.status::text,'') <> 'DELETED' LIMIT 1", userID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &driver, err
+}
+
+func (r *PostgresRepository) Upsert(ctx context.Context, userID int64, req ApplyDriverRequest) (*Driver, error) {
+	const query = `
+		INSERT INTO public.drivers (driver_code, user_id, license_number, licence_photo_url, vehicle_number, vehicle_type, profile_status, approval_status, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, 'COMPLETE', 'PENDING', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT (user_id) DO UPDATE
+		SET license_number = EXCLUDED.license_number,
+			licence_photo_url = EXCLUDED.licence_photo_url,
+			vehicle_number = EXCLUDED.vehicle_number,
+			vehicle_type = EXCLUDED.vehicle_type,
+			profile_status = 'COMPLETE',
+			updated_at = CURRENT_TIMESTAMP
+		RETURNING driver_id
+	`
+	driverCode, err := publiccode.Next(ctx, r.db, publiccode.Drivers, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	var driverID int64
+	if err := r.db.QueryRowContext(ctx, query, driverCode, userID, req.LicenceNumber, req.LicencePhotoURL, req.VehicleNumber, req.VehicleType).Scan(&driverID); err != nil {
+		return nil, err
+	}
+	return r.FindByID(ctx, driverID)
+}
+
+func (r *PostgresRepository) Approve(ctx context.Context, driverUserID int64, approvedByUserID int64) (*Driver, error) {
+	const query = `
+		UPDATE public.drivers
+		SET approval_status = 'APPROVED', approved_by_user_id = $2, approved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		WHERE driver_id = $1 AND COALESCE(status::text, '') <> 'DELETED'
+		RETURNING driver_id, user_id
+	`
+	var driverID int64
+	var userID sql.NullInt64
+	if err := r.db.QueryRowContext(ctx, query, driverUserID, approvedByUserID).Scan(&driverID, &userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	// Grant DRIVER role so the JWT includes it and API hasRole checks pass.
+	if userID.Valid {
+		_, _ = r.db.ExecContext(ctx, `
+			INSERT INTO public.user_roles (user_id, role_id)
+			SELECT $1, role_id FROM public.roles WHERE role_code = 'DRIVER'
+			ON CONFLICT DO NOTHING
+		`, userID.Int64)
+	}
+	return r.FindByID(ctx, driverID)
+}
+
 func (r *PostgresRepository) CreateLocation(ctx context.Context, driverID int64, actorID int64, input LocationRequest) (*DriverLocation, error) {
 	const query = `
 		INSERT INTO public.driver_locations (driver_id, latitude, longitude, recorded_at, created_by)
@@ -180,7 +241,10 @@ func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAud
 func baseSelect() string {
 	return `
 		SELECT d.driver_id, d.driver_code, d.user_id, u.first_name, u.mobile, d.license_number, d.license_expiry_date,
-			d.emergency_contact, COALESCE(d.status::text, ''), d.created_at, d.updated_at
+			d.emergency_contact, COALESCE(d.status::text, ''), d.created_at, d.updated_at,
+			d.licence_photo_url, d.vehicle_number, d.vehicle_type,
+			COALESCE(d.profile_status, 'INCOMPLETE'), COALESCE(d.approval_status, 'PENDING'),
+			d.approved_by_user_id, d.approved_at
 		FROM public.drivers d
 		LEFT JOIN public.users u ON u.user_id = d.user_id
 	`
@@ -228,10 +292,18 @@ func sortClause(input ListDriversRequest) string {
 
 func scanDriver(row interface{ Scan(dest ...any) error }) (Driver, error) {
 	var driver Driver
-	var userID sql.NullInt64
+	var userID, approvedByUserID sql.NullInt64
 	var name, mobile, license, emergency, status sql.NullString
-	var licenseExpiry, updatedAt sql.NullTime
-	if err := row.Scan(&driver.ID, &driver.DriverCode, &userID, &name, &mobile, &license, &licenseExpiry, &emergency, &status, &driver.CreatedAt, &updatedAt); err != nil {
+	var licencePhoto, vehicleNumber, vehicleType sql.NullString
+	var profileStatus, approvalStatus sql.NullString
+	var licenseExpiry, updatedAt, approvedAt sql.NullTime
+	if err := row.Scan(
+		&driver.ID, &driver.DriverCode, &userID, &name, &mobile, &license, &licenseExpiry,
+		&emergency, &status, &driver.CreatedAt, &updatedAt,
+		&licencePhoto, &vehicleNumber, &vehicleType,
+		&profileStatus, &approvalStatus,
+		&approvedByUserID, &approvedAt,
+	); err != nil {
 		return Driver{}, err
 	}
 	driver.UserID = nullableInt64(userID)
@@ -245,6 +317,15 @@ func scanDriver(row interface{ Scan(dest ...any) error }) (Driver, error) {
 	driver.Status = status.String
 	if updatedAt.Valid {
 		driver.UpdatedAt = &updatedAt.Time
+	}
+	driver.LicencePhotoURL = nullableString(licencePhoto)
+	driver.VehicleNumber = nullableString(vehicleNumber)
+	driver.VehicleType = nullableString(vehicleType)
+	driver.ProfileStatus = profileStatus.String
+	driver.ApprovalStatus = approvalStatus.String
+	driver.ApprovedByUserID = nullableInt64(approvedByUserID)
+	if approvedAt.Valid {
+		driver.ApprovedAt = &approvedAt.Time
 	}
 	return driver, nil
 }

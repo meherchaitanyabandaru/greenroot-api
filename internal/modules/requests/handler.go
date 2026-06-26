@@ -96,6 +96,27 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, RequestResponse{Request: request})
 }
 
+func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	requestID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req UpdateStatusRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	plantRequest, err := h.service.UpdateStatus(r.Context(), actor, requestID, req)
+	if err != nil {
+		writeRequestsError(w, err)
+		return
+	}
+	response.OK(w, RequestResponse{Request: plantRequest})
+}
+
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {
@@ -227,6 +248,8 @@ func writeRequestsError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusNotFound, "not_found", "plant request resource not found")
 	case errors.Is(err, ErrInsufficientInventory):
 		response.Error(w, http.StatusConflict, "insufficient_inventory", "supplier inventory cannot satisfy this response")
+	case errors.Is(err, ErrInvalidTransition):
+		response.Error(w, http.StatusConflict, "invalid_transition", "invalid status transition for this request")
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid plant request input")
 	default:

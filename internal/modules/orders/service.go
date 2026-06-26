@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	ErrForbidden    = errors.New("forbidden")
-	ErrInvalidInput = errors.New("invalid input")
+	ErrForbidden       = errors.New("forbidden")
+	ErrInvalidInput    = errors.New("invalid input")
+	ErrInvalidStatus   = errors.New("invalid status transition")
 )
 
 type Service struct {
@@ -91,6 +92,93 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID 
 	}
 	s.audit(ctx, actor, "orders", order.ID, actionUpdate, map[string]any{"order_status": status})
 	return *order, nil
+}
+
+// StartLoading marks an order as LOADING (nursery owner or assigned manager only).
+func (s *Service) StartLoading(ctx context.Context, actor ActorContext, orderID int64) (Order, error) {
+	order, err := s.repository.FindByID(ctx, orderID)
+	if err != nil {
+		return Order{}, err
+	}
+	if order.Status != "CONFIRMED" && order.Status != "DRAFT" {
+		return Order{}, ErrInvalidStatus
+	}
+	if err := s.canManage(ctx, actor, *order); err != nil {
+		return Order{}, err
+	}
+	updated, err := s.repository.UpdateStatusWithLoading(ctx, actor.UserID, orderID, "LOADING", "start")
+	if err != nil {
+		return Order{}, err
+	}
+	s.audit(ctx, actor, "orders", orderID, actionUpdate, map[string]any{"order_status": "LOADING"})
+	return *updated, nil
+}
+
+// CompleteLoading marks an order as LOADED.
+func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, orderID int64) (Order, error) {
+	order, err := s.repository.FindByID(ctx, orderID)
+	if err != nil {
+		return Order{}, err
+	}
+	if order.Status != "LOADING" {
+		return Order{}, ErrInvalidStatus
+	}
+	if err := s.canManage(ctx, actor, *order); err != nil {
+		return Order{}, err
+	}
+	updated, err := s.repository.UpdateStatusWithLoading(ctx, actor.UserID, orderID, "LOADED", "complete")
+	if err != nil {
+		return Order{}, err
+	}
+	s.audit(ctx, actor, "orders", orderID, actionUpdate, map[string]any{"order_status": "LOADED"})
+	return *updated, nil
+}
+
+// Cancel cancels an order.
+func (s *Service) Cancel(ctx context.Context, actor ActorContext, orderID int64, reason string) (Order, error) {
+	order, err := s.repository.FindByID(ctx, orderID)
+	if err != nil {
+		return Order{}, err
+	}
+	if order.Status == "CANCELLED" || order.Status == "DELIVERED" {
+		return Order{}, ErrInvalidStatus
+	}
+	if err := s.canManage(ctx, actor, *order); err != nil {
+		return Order{}, err
+	}
+	updated, err := s.repository.Cancel(ctx, actor.UserID, orderID, reason)
+	if err != nil {
+		return Order{}, err
+	}
+	s.audit(ctx, actor, "orders", orderID, actionUpdate, map[string]any{"order_status": "CANCELLED", "reason": reason})
+	return *updated, nil
+}
+
+// AssignManager assigns a manager to an order (owner or admin only).
+func (s *Service) AssignManager(ctx context.Context, actor ActorContext, orderID int64, managerUserID int64) (Order, error) {
+	order, err := s.repository.FindByID(ctx, orderID)
+	if err != nil {
+		return Order{}, err
+	}
+	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+		nurseryID := order.NurseryID
+		if nurseryID == nil {
+			nurseryID = order.SellerNurseryID
+		}
+		if nurseryID == nil {
+			return Order{}, ErrForbidden
+		}
+		owner, err := s.repository.IsNurseryOwner(ctx, *nurseryID, actor.UserID)
+		if err != nil || !owner {
+			return Order{}, ErrForbidden
+		}
+	}
+	updated, err := s.repository.AssignManager(ctx, orderID, managerUserID)
+	if err != nil {
+		return Order{}, err
+	}
+	s.audit(ctx, actor, "orders", orderID, actionUpdate, map[string]any{"assigned_manager_user_id": managerUserID})
+	return *updated, nil
 }
 
 func (s *Service) Delete(ctx context.Context, actor ActorContext, orderID int64) error {
@@ -184,25 +272,66 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 	if hasRole(actor, "ADMIN") {
 		return nil
 	}
+	if input.Buying {
+		// Buyer perspective: filter by buyer_user_id OR buyer_nursery_id
+		input.BuyerID = actor.UserID
+		if hasRole(actor, "NURSERY_OWNER") {
+			nurseryID, _ := s.repository.GetOwnedNurseryID(ctx, actor.UserID)
+			if nurseryID != nil {
+				input.NurseryID = *nurseryID
+			}
+		}
+		return nil
+	}
 	if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
-		if input.NurseryID <= 0 {
+		if input.NurseryID > 0 {
+			return s.mustBeNurseryMember(ctx, actor, input.NurseryID)
+		}
+		nurseryIDs, err := s.repository.GetUserNurseryIDs(ctx, actor.UserID)
+		if err != nil {
+			return err
+		}
+		if len(nurseryIDs) == 0 {
 			return ErrForbidden
 		}
-		return s.mustBeNurseryMember(ctx, actor, input.NurseryID)
+		input.NurseryID = nurseryIDs[0]
+		return nil
 	}
 	input.BuyerID = actor.UserID
 	return nil
 }
 
 func (s *Service) canView(ctx context.Context, actor ActorContext, order Order) error {
-	if hasRole(actor, "ADMIN") {
+	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+		return nil
+	}
+	if order.CustomerUserID != nil && *order.CustomerUserID == actor.UserID {
 		return nil
 	}
 	if order.BuyerUserID != nil && *order.BuyerUserID == actor.UserID {
 		return nil
 	}
-	if (hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER")) && order.SellerNurseryID != nil {
-		return s.mustBeNurseryMember(ctx, actor, *order.SellerNurseryID)
+	if order.BuyerNurseryID != nil {
+		isOwner, _ := s.repository.IsNurseryOwner(ctx, *order.BuyerNurseryID, actor.UserID)
+		if isOwner {
+			return nil
+		}
+	}
+	if order.AssignedManagerUserID != nil && *order.AssignedManagerUserID == actor.UserID {
+		return nil
+	}
+	nurseryID := order.NurseryID
+	if nurseryID == nil {
+		nurseryID = order.SellerNurseryID
+	}
+	if nurseryID != nil {
+		owner, _ := s.repository.IsNurseryOwner(ctx, *nurseryID, actor.UserID)
+		if owner {
+			return nil
+		}
+		if err := s.mustBeNurseryMember(ctx, actor, *nurseryID); err == nil {
+			return nil
+		}
 	}
 	return ErrForbidden
 }
@@ -225,11 +354,24 @@ func (s *Service) canCreate(ctx context.Context, actor ActorContext, input Creat
 }
 
 func (s *Service) canManage(ctx context.Context, actor ActorContext, order Order) error {
-	if hasRole(actor, "ADMIN") {
+	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
 		return nil
 	}
-	if (hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER")) && order.SellerNurseryID != nil {
-		return s.mustBeNurseryMember(ctx, actor, *order.SellerNurseryID)
+	if order.AssignedManagerUserID != nil && *order.AssignedManagerUserID == actor.UserID {
+		return nil
+	}
+	nurseryID := order.NurseryID
+	if nurseryID == nil {
+		nurseryID = order.SellerNurseryID
+	}
+	if nurseryID != nil {
+		owner, _ := s.repository.IsNurseryOwner(ctx, *nurseryID, actor.UserID)
+		if owner {
+			return nil
+		}
+		if err := s.mustBeNurseryMember(ctx, actor, *nurseryID); err == nil {
+			return nil
+		}
 	}
 	return ErrForbidden
 }

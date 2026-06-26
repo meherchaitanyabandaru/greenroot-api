@@ -17,6 +17,13 @@ type Driver struct {
 	LicenseNumber     *string    `json:"license_number,omitempty"`
 	LicenseExpiryDate *time.Time `json:"license_expiry_date,omitempty"`
 	EmergencyContact  *string    `json:"emergency_contact,omitempty"`
+	LicencePhotoURL   *string    `json:"licence_photo_url,omitempty"`
+	VehicleNumber     *string    `json:"vehicle_number,omitempty"`
+	VehicleType       *string    `json:"vehicle_type,omitempty"`
+	ProfileStatus     string     `json:"profile_status"`
+	ApprovalStatus    string     `json:"approval_status"`
+	ApprovedByUserID  *int64     `json:"approved_by_user_id,omitempty"`
+	ApprovedAt        *time.Time `json:"approved_at,omitempty"`
 	Status            string     `json:"status"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         *time.Time `json:"updated_at,omitempty"`

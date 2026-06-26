@@ -17,6 +17,7 @@ type CreateRequest struct {
 	SizeID              *int16     `json:"size_id"`
 	QuantityRequired    int        `json:"quantity_required"`
 	RadiusKM            int        `json:"radius_km"`
+	RequiredByDate      *time.Time `json:"required_by_date"`
 	Notes               *string    `json:"notes"`
 	Status              string     `json:"status"`
 	ExpiresAt           *time.Time `json:"expires_at"`
@@ -24,6 +25,13 @@ type CreateRequest struct {
 
 type UpdateRequest = CreateRequest
 
+// UpdateStatusRequest is used by PUT /{id}/status — manager advances request lifecycle.
+type UpdateStatusRequest struct {
+	Status string `json:"status"`
+}
+
+// CreateResponseRequest is submitted by the supplier nursery with their availability.
+// Status must be AVAILABLE, PARTIAL, or NOT_AVAILABLE.
 type CreateResponseRequest struct {
 	SupplierNurseryID int64   `json:"supplier_nursery_id"`
 	AvailableQuantity int     `json:"available_quantity"`
@@ -31,10 +39,10 @@ type CreateResponseRequest struct {
 	Status            string  `json:"status"`
 }
 
+// UpdateResponseRequest is used by the requesting manager to select or reject a supplier.
+// Status must be ACCEPTED or REJECTED.
 type UpdateResponseRequest struct {
-	AvailableQuantity int     `json:"available_quantity"`
-	Remarks           *string `json:"remarks"`
-	Status            string  `json:"status"`
+	Status string `json:"status"`
 }
 
 type Pagination struct {

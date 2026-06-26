@@ -30,6 +30,7 @@ type AuthResponse struct {
 	RefreshToken string `json:"refresh_token"`
 	TokenType    string `json:"token_type"`
 	User         User   `json:"user"`
+	IsNewUser    bool   `json:"is_new_user"`
 }
 
 type MeResponse struct {

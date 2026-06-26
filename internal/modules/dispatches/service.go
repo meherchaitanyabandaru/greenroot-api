@@ -11,9 +11,10 @@ import (
 )
 
 var (
-	ErrForbidden    = errors.New("forbidden")
-	ErrInvalidInput = errors.New("invalid input")
-	ErrDuplicate    = errors.New("duplicate dispatch")
+	ErrForbidden       = errors.New("forbidden")
+	ErrInvalidInput    = errors.New("invalid input")
+	ErrDuplicate       = errors.New("duplicate dispatch")
+	ErrAlreadyAccepted = errors.New("dispatch already accepted")
 )
 
 type Service struct {
@@ -119,11 +120,83 @@ func (s *Service) CreateItem(ctx context.Context, actor ActorContext, dispatchID
 	return *item, nil
 }
 
+// CreateTripEvent records a trip event (driver only, or admin).
+func (s *Service) CreateTripEvent(ctx context.Context, actor ActorContext, dispatchID int64, req CreateTripEventRequest) (TripEvent, error) {
+	dispatch, err := s.repository.FindByID(ctx, dispatchID)
+	if err != nil {
+		return TripEvent{}, err
+	}
+	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+		// Must be the assigned driver
+		isDriver := false
+		if dispatch.DriverUserID != nil && *dispatch.DriverUserID == actor.UserID {
+			isDriver = true
+		}
+		if dispatch.DriverID != nil {
+			if ok, _ := s.repository.IsDispatchDriver(ctx, *dispatch.DriverID, actor.UserID); ok {
+				isDriver = true
+			}
+		}
+		if !isDriver {
+			return TripEvent{}, ErrForbidden
+		}
+	}
+	event, err := s.repository.CreateTripEvent(ctx, CreateTripEventInput{
+		DispatchID:      dispatchID,
+		EventType:       strings.ToUpper(strings.TrimSpace(req.EventType)),
+		Latitude:        req.Latitude,
+		Longitude:       req.Longitude,
+		PhotoURL:        req.PhotoURL,
+		Remarks:         req.Remarks,
+		CreatedByUserID: actor.UserID,
+	})
+	if err != nil {
+		return TripEvent{}, err
+	}
+	s.audit(ctx, actor, "trip_events", event.ID, actionInsert, req)
+	return *event, nil
+}
+
+// GetPublicTracking returns dispatch info for a public tracking UUID (no auth required).
+func (s *Service) GetByCode(ctx context.Context, code string) (Dispatch, error) {
+	dispatch, err := s.repository.FindByCode(ctx, code)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	return *dispatch, nil
+}
+
+func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispatchID int64) (Dispatch, error) {
+	dispatch, err := s.repository.FindByID(ctx, dispatchID)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if dispatch.Status != "PENDING" {
+		return Dispatch{}, ErrForbidden
+	}
+	if dispatch.DriverID != nil || dispatch.DriverUserID != nil {
+		return Dispatch{}, ErrAlreadyAccepted
+	}
+	updated, err := s.repository.SetDriverUser(ctx, dispatchID, actor.UserID)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	return *updated, nil
+}
+
+func (s *Service) GetPublicTracking(ctx context.Context, uuid string) (Dispatch, error) {
+	dispatch, err := s.repository.FindByTrackingUUID(ctx, uuid)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	return *dispatch, nil
+}
+
 func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *ListDispatchesRequest) error {
 	if hasRole(actor, "ADMIN") {
 		return nil
 	}
-	if hasRole(actor, "NURSERY_OWNER") {
+	if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
 		if input.OrderID > 0 {
 			access, err := s.repository.OrderAccess(ctx, input.OrderID)
 			if err != nil {
@@ -131,16 +204,27 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 			}
 			return s.canAccessOrder(ctx, actor, access)
 		}
-		if input.NurseryID <= 0 {
-			return ErrForbidden
+		if input.NurseryID > 0 {
+			// Explicit nursery_id: verify the user is a member/owner of that nursery.
+			member, err := s.repository.IsNurseryMember(ctx, input.NurseryID, actor.UserID)
+			if err != nil {
+				return err
+			}
+			if !member {
+				return ErrForbidden
+			}
+			return nil
 		}
-		member, err := s.repository.IsNurseryMember(ctx, input.NurseryID, actor.UserID)
+		// No nursery_id given: auto-scope to all nurseries this user owns/manages.
+		nurseryIDs, err := s.repository.GetUserNurseryIDs(ctx, actor.UserID)
 		if err != nil {
 			return err
 		}
-		if !member {
+		if len(nurseryIDs) == 0 {
 			return ErrForbidden
 		}
+		// Use first nursery; multi-nursery support can extend this later.
+		input.NurseryID = nurseryIDs[0]
 		return nil
 	}
 	if hasRole(actor, "DRIVER") {
@@ -163,10 +247,15 @@ func (s *Service) canAccess(ctx context.Context, actor ActorContext, dispatch Di
 			return nil
 		}
 	}
-	if hasRole(actor, "DRIVER") && dispatch.DriverID != nil {
-		isDriver, err := s.repository.IsDispatchDriver(ctx, *dispatch.DriverID, actor.UserID)
-		if err == nil && isDriver {
+	if hasRole(actor, "DRIVER") {
+		if dispatch.DriverUserID != nil && *dispatch.DriverUserID == actor.UserID {
 			return nil
+		}
+		if dispatch.DriverID != nil {
+			isDriver, err := s.repository.IsDispatchDriver(ctx, *dispatch.DriverID, actor.UserID)
+			if err == nil && isDriver {
+				return nil
+			}
 		}
 	}
 	return ErrForbidden

@@ -32,6 +32,7 @@ var (
 	Attachments       = Spec{Key: "attachments", Prefix: "ATT", Width: 6}
 	Notifications     = Spec{Key: "notifications", Prefix: "NTF", Width: 6}
 	UserSubscriptions = Spec{Key: "user_subscriptions", Prefix: "SUB", Width: 6}
+	Quotations        = Spec{Key: "quotations", Prefix: "QUO", Width: 4, DateBased: true}
 )
 
 func Format(spec Spec, seq int64, at time.Time) string {

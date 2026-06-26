@@ -17,12 +17,15 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/drivers"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/health"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/inventory"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/invites"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/notifications"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/nurseries"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/orders"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/quotations"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/payments"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/plants"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/requests"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/storage"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/subscriptions"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/tracking"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/users"
@@ -58,12 +61,15 @@ func NewRouter(deps Dependencies) chi.Router {
 		dispatches.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		drivers.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		inventory.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
+		invites.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		notifications.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		nurseries.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		orders.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
+		quotations.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		payments.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		plants.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		requests.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
+		storage.NewModule(deps.DB, deps.JWT, deps.Storage).RegisterRoutes(r)
 		subscriptions.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		tracking.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		vehicles.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)

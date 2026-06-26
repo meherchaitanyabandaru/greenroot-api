@@ -10,6 +10,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/logger"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/database"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
+	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 )
 
 type App struct {
@@ -35,12 +36,27 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		return nil, err
 	}
 
+	storageClient, err := storage.New(storage.Config{
+		Endpoint:        cfg.Storage.Endpoint,
+		AccessKeyID:     cfg.Storage.AccessKeyID,
+		SecretAccessKey: cfg.Storage.SecretAccessKey,
+		UseSSL:          cfg.Storage.UseSSL,
+		Region:          cfg.Storage.Region,
+		PublicURL:       cfg.Storage.PublicURL,
+	})
+	if err != nil {
+		_ = logManager.Close()
+		_ = db.Close()
+		return nil, err
+	}
+
 	deps := Dependencies{
 		Config:     cfg,
 		Logger:     logManager.Logger(),
 		LogManager: logManager,
 		DB:         db,
 		JWT:        jwtplatform.NewService(cfg.JWT),
+		Storage:    storageClient,
 	}
 
 	server := &http.Server{

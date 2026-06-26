@@ -46,8 +46,10 @@ func (s *Service) VerifyOTP(ctx context.Context, req VerifyOTPRequest, client Cl
 	}
 
 	now := time.Now()
+	isNewUser := false
 	user, err := s.repository.FindUserByMobile(ctx, req.Mobile)
 	if errors.Is(err, ErrUserNotFound) {
+		isNewUser = true
 		user, err = s.repository.CreateUser(ctx, req.Mobile)
 		if err != nil {
 			return AuthResponse{}, err
@@ -129,6 +131,7 @@ func (s *Service) VerifyOTP(ctx context.Context, req VerifyOTPRequest, client Cl
 		RefreshToken: refreshToken,
 		TokenType:    "Bearer",
 		User:         *user,
+		IsNewUser:    isNewUser,
 	}, nil
 }
 
@@ -206,6 +209,30 @@ func (s *Service) Me(ctx context.Context, accessToken string) (User, error) {
 		return User{}, err
 	}
 	return *user, nil
+}
+
+func (s *Service) Workspaces(ctx context.Context, accessToken string) ([]Workspace, error) {
+	claims, err := s.jwt.VerifyAccessToken(accessToken)
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+	userID, err := parseUserID(claims.UserID)
+	if err != nil {
+		return nil, err
+	}
+	return s.repository.GetWorkspaces(ctx, userID)
+}
+
+func (s *Service) OwnerDashboard(ctx context.Context, accessToken string) (*OwnerDashboard, error) {
+	claims, err := s.jwt.VerifyAccessToken(accessToken)
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+	userID, err := parseUserID(claims.UserID)
+	if err != nil {
+		return nil, err
+	}
+	return s.repository.GetOwnerDashboard(ctx, userID)
 }
 
 func mustJSON(value any) string {

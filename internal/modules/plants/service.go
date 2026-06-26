@@ -36,6 +36,10 @@ func (s *Service) List(ctx context.Context, input ListPlantsRequest) ([]Plant, P
 	}, nil
 }
 
+func (s *Service) GetNamesByLanguage(ctx context.Context, plantIDs []int64, langCode string) (map[int64]string, error) {
+	return s.repository.GetNamesByLanguage(ctx, plantIDs, langCode)
+}
+
 func (s *Service) Get(ctx context.Context, plantID int64) (Plant, error) {
 	plant, err := s.repository.FindByID(ctx, plantID)
 	if err != nil {

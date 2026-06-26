@@ -146,7 +146,13 @@ func (r *PostgresRepository) Delete(ctx context.Context, inventoryID int64) erro
 
 func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error) {
 	var exists bool
-	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM public.nursery_users WHERE nursery_id = $1 AND user_id = $2 AND COALESCE(is_active, true) = true)`, nurseryID, userID).Scan(&exists)
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM public.nursery_users
+		WHERE nursery_id = $1 AND user_id = $2 AND COALESCE(is_active, true) = true
+		UNION ALL
+		SELECT 1 FROM public.nurseries
+		WHERE nursery_id = $1 AND owner_user_id = $2 AND COALESCE(status::text, '') <> 'DELETED'
+	)`, nurseryID, userID).Scan(&exists)
 	return exists, err
 }
 

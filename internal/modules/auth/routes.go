@@ -25,4 +25,8 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Post("/logout", m.handler.Logout)
 		r.Get("/me", m.handler.Me)
 	})
+
+	// Workspace endpoint lives under /me for cleaner mobile routing
+	router.Get("/me/workspaces", m.handler.Workspaces)
+	router.Get("/me/owner-dashboard", m.handler.OwnerDashboard)
 }
