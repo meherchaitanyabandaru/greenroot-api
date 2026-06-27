@@ -25,6 +25,7 @@ type CreateDispatchRequest struct {
 
 type UpdateStatusRequest struct {
 	Status       string  `json:"dispatch_status"`
+	StatusAlias  string  `json:"status"`
 	DeliveryDate *string `json:"delivery_date"`
 	Notes        *string `json:"notes"`
 }

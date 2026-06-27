@@ -10,6 +10,7 @@ const (
 type Dispatch struct {
 	ID                      int64          `json:"id"`
 	DispatchCode            string         `json:"dispatch_code"`
+	TripUUID                *string        `json:"trip_uuid,omitempty"`
 	OrderID                 int64          `json:"order_id"`
 	OrderNumber             *string        `json:"order_number,omitempty"`
 	SellerNurseryID         *int64         `json:"seller_nursery_id,omitempty"`

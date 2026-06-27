@@ -137,6 +137,9 @@ func (s *Service) CreateResponse(ctx context.Context, actor ActorContext, reques
 	if err != nil {
 		return Response{}, err
 	}
+	if request.RequestingNurseryID == input.SupplierNurseryID {
+		return Response{}, ErrInvalidInput
+	}
 	if err := validateNewResponse(input); err != nil {
 		return Response{}, err
 	}

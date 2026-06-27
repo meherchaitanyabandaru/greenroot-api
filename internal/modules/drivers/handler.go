@@ -229,6 +229,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid driver input")
 	case errors.Is(err, ErrDuplicate):
 		response.Error(w, http.StatusConflict, "duplicate_driver", "driver already exists for this user or license number")
+	case errors.Is(err, ErrOwnerCannotBeDriver):
+		response.Error(w, http.StatusConflict, "owner_conflict", "nursery owners cannot register as a driver")
 	default:
 		response.Error(w, http.StatusInternalServerError, "drivers_error", "driver request failed")
 	}

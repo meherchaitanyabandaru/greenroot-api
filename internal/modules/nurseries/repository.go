@@ -19,6 +19,7 @@ type Repository interface {
 	FindOwnedByUser(ctx context.Context, ownerUserID int64) (*Nursery, error)
 	UserOwnsANursery(ctx context.Context, userID int64) (bool, error)
 	UserIsManager(ctx context.Context, userID int64) (bool, error)
+	UserIsApprovedDriver(ctx context.Context, userID int64) (bool, error)
 	IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	Create(ctx context.Context, actorID int64, input CreateNurseryRequest) (*Nursery, error)
 	Update(ctx context.Context, actorID int64, nurseryID int64, input UpdateNurseryRequest) (*Nursery, error)
@@ -142,6 +143,18 @@ func (r *PostgresRepository) UserIsManager(ctx context.Context, userID int64) (b
 			SELECT 1 FROM public.nursery_users
 			WHERE user_id = $1 AND nursery_role_id = 3
 			  AND COALESCE(is_active, true) = true
+		)`,
+		userID,
+	).Scan(&exists)
+	return exists, err
+}
+
+func (r *PostgresRepository) UserIsApprovedDriver(ctx context.Context, userID int64) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS (
+			SELECT 1 FROM public.drivers
+			WHERE user_id = $1 AND approval_status = 'APPROVED'
 		)`,
 		userID,
 	).Scan(&exists)
@@ -463,15 +476,36 @@ func (r *PostgresRepository) AddManager(ctx context.Context, nurseryID int64, in
 	if role == "" {
 		role = "MANAGER"
 	}
+	roleID, err := r.roleID(ctx, AddUserRequest{UserID: input.UserID, RoleCode: role})
+	if err != nil {
+		return nil, err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if role == "MANAGER" {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE public.nursery_users
+			SET status = 'INACTIVE', is_active = false, updated_at = CURRENT_TIMESTAMP
+			WHERE user_id = $1 AND nursery_id <> $2 AND COALESCE(status, 'ACTIVE') = 'ACTIVE'
+		`, input.UserID, nurseryID); err != nil {
+			return nil, err
+		}
+	}
 	const query = `
-		INSERT INTO public.nursery_users (nursery_id, user_id, role, status, invited_by_user_id, joined_at, is_active)
-		VALUES ($1, $2, $3, 'ACTIVE', $4, CURRENT_TIMESTAMP, true)
+		INSERT INTO public.nursery_users (nursery_id, user_id, nursery_role_id, role, status, invited_by_user_id, joined_at, is_active)
+		VALUES ($1, $2, $3, $4, 'ACTIVE', $5, CURRENT_TIMESTAMP, true)
 		ON CONFLICT (nursery_id, user_id, nursery_role_id)
-		DO UPDATE SET role = $3, status = 'ACTIVE', is_active = true, updated_at = CURRENT_TIMESTAMP
+		DO UPDATE SET role = $4, status = 'ACTIVE', is_active = true, updated_at = CURRENT_TIMESTAMP
 		RETURNING nursery_user_id
 	`
 	var nurseryUserID int64
-	if err := r.db.QueryRowContext(ctx, query, nurseryID, input.UserID, role, invitedByUserID).Scan(&nurseryUserID); err != nil {
+	if err := tx.QueryRowContext(ctx, query, nurseryID, input.UserID, roleID, role, invitedByUserID).Scan(&nurseryUserID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return r.findManagerLink(ctx, nurseryUserID)

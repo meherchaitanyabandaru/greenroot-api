@@ -449,6 +449,8 @@ func writeNurseriesError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusConflict, "already_owner", "user already owns a nursery; create a new account to own another nursery")
 	case errors.Is(err, ErrManagerCannotOwnNursery):
 		response.Error(w, http.StatusConflict, "manager_conflict", "managers cannot register a nursery; remove your manager role first")
+	case errors.Is(err, ErrDriverCannotOwnNursery):
+		response.Error(w, http.StatusConflict, "driver_conflict", "approved drivers cannot register a nursery")
 	case errors.Is(err, ErrNotFound):
 		response.Error(w, http.StatusNotFound, "not_found", "nursery resource not found")
 	case errors.Is(err, ErrInvalidAddress):

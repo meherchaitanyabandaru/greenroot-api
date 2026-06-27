@@ -22,6 +22,7 @@ type Repository interface {
 	Update(ctx context.Context, driverID int64, input DriverInput) (*Driver, error)
 	Delete(ctx context.Context, driverID int64) error
 	Upsert(ctx context.Context, userID int64, req ApplyDriverRequest) (*Driver, error)
+	UserOwnsANursery(ctx context.Context, userID int64) (bool, error)
 	Approve(ctx context.Context, driverUserID int64, approvedByUserID int64) (*Driver, error)
 	CreateLocation(ctx context.Context, driverID int64, actorID int64, input LocationRequest) (*DriverLocation, error)
 	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
@@ -165,6 +166,19 @@ func (r *PostgresRepository) FindByUserID(ctx context.Context, userID int64) (*D
 		return nil, ErrNotFound
 	}
 	return &driver, err
+}
+
+func (r *PostgresRepository) UserOwnsANursery(ctx context.Context, userID int64) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS (
+			SELECT 1 FROM public.nurseries
+			WHERE owner_user_id = $1
+			  AND COALESCE(status::text, '') <> 'DELETED'
+		)`,
+		userID,
+	).Scan(&exists)
+	return exists, err
 }
 
 func (r *PostgresRepository) Upsert(ctx context.Context, userID int64, req ApplyDriverRequest) (*Driver, error) {

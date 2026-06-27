@@ -16,6 +16,7 @@ var (
 	ErrAlreadyOwner           = errors.New("user already owns a nursery")
 	ErrNotNurseryOwner        = errors.New("only the nursery owner can perform this action")
 	ErrManagerCannotOwnNursery = errors.New("managers cannot register a nursery")
+	ErrDriverCannotOwnNursery  = errors.New("approved drivers cannot register a nursery")
 )
 
 type Service struct {
@@ -139,6 +140,13 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateNu
 		}
 		if isManager {
 			return Nursery{}, ErrManagerCannotOwnNursery
+		}
+		isDriver, err := s.repository.UserIsApprovedDriver(ctx, actor.UserID)
+		if err != nil {
+			return Nursery{}, err
+		}
+		if isDriver {
+			return Nursery{}, ErrDriverCannotOwnNursery
 		}
 	}
 	input = normalizeNursery(input)

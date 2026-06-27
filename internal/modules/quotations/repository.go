@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -128,10 +129,10 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 			quotation_code, created_by_user_id, created_by_name,
 			nursery_id, nursery_name, nursery_phone,
 			recipient_name, recipient_mobile, notes,
-			buyer_nursery_id, quotation_type,
+			buyer_nursery_id,
 			total_amount, status, created_at, updated_at
 		)
-		VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),$10,$11,0,$12,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+		VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),$10,0,$11,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
 		RETURNING quotation_id
 	`
 	var id int64
@@ -146,7 +147,6 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 		stringOrEmpty(input.RecipientMobile),
 		stringOrEmpty(input.Notes),
 		int64OrNil(input.BuyerNurseryID),
-		quotationType,
 		initialStatus,
 	).Scan(&id); err != nil {
 		return nil, err
@@ -500,7 +500,11 @@ func (r *PostgresRepository) refreshTotalTx(ctx context.Context, tx *sql.Tx, qID
 func baseSelect() string {
 	return `
 		SELECT q.quotation_id, q.quotation_code,
-		       COALESCE(q.quotation_type, 'CUSTOMER'),
+		       CASE
+		         WHEN LEFT(q.status, 9) = 'INTERNAL' THEN 'INTERNAL'
+		         WHEN q.recipient_name IS NULL AND q.recipient_mobile IS NULL AND q.customer_user_id IS NULL AND q.buyer_nursery_id IS NULL THEN 'INTERNAL'
+		         ELSE 'CUSTOMER'
+		       END,
 		       q.created_by_user_id, q.created_by_name,
 		       q.nursery_id, q.nursery_name, q.nursery_phone,
 		       q.customer_user_id, q.assigned_manager_user_id, q.converted_order_id,
@@ -612,6 +616,7 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 		notes                 sql.NullString
 		deletedAt             sql.NullTime
 		buyerNurseryID        sql.NullInt64
+		totalAmount           sql.NullString
 	)
 	if err := row.Scan(
 		&q.ID, &q.QuotationCode, &q.QuotationType,
@@ -619,10 +624,13 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 		&nurseryID, &nurseryName, &nurseryPhone,
 		&customerUserID, &assignedManagerUserID, &convertedOrderID,
 		&recipientName, &recipientMobile, &notes,
-		&q.TotalAmount, &q.Status, &deletedAt, &q.CreatedAt, &q.UpdatedAt,
+		&totalAmount, &q.Status, &deletedAt, &q.CreatedAt, &q.UpdatedAt,
 		&buyerNurseryID,
 	); err != nil {
 		return Quotation{}, err
+	}
+	if totalAmount.Valid && totalAmount.String != "" {
+		q.TotalAmount, _ = strconv.ParseFloat(totalAmount.String, 64)
 	}
 	q.CreatedByName = nullableString(createdByName)
 	q.NurseryID = nullableInt64(nurseryID)
@@ -648,12 +656,22 @@ func scanItemRows(rows *sql.Rows) (QuotationItem, error) {
 func scanItem(row interface{ Scan(dest ...any) error }) (QuotationItem, error) {
 	var item QuotationItem
 	var commonName, description sql.NullString
+	var quantity, unitPrice, totalPrice sql.NullString
 	if err := row.Scan(
 		&item.ID, &item.QuotationID, &item.PlantID,
 		&item.ScientificName, &commonName, &description,
-		&item.Quantity, &item.UnitPrice, &item.TotalPrice, &item.CreatedAt,
+		&quantity, &unitPrice, &totalPrice, &item.CreatedAt,
 	); err != nil {
 		return QuotationItem{}, err
+	}
+	if quantity.Valid && quantity.String != "" {
+		item.Quantity, _ = strconv.ParseFloat(quantity.String, 64)
+	}
+	if unitPrice.Valid && unitPrice.String != "" {
+		item.UnitPrice, _ = strconv.ParseFloat(unitPrice.String, 64)
+	}
+	if totalPrice.Valid && totalPrice.String != "" {
+		item.TotalPrice, _ = strconv.ParseFloat(totalPrice.String, 64)
 	}
 	item.CommonName = nullableString(commonName)
 	item.Description = nullableString(description)

@@ -17,6 +17,7 @@ var (
 	ErrUserNotFound        = errors.New("user not found")
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 	ErrInvalidToken        = errors.New("invalid token")
+	ErrForbidden           = errors.New("forbidden")
 )
 
 type Service struct {
@@ -232,7 +233,21 @@ func (s *Service) OwnerDashboard(ctx context.Context, accessToken string) (*Owne
 	if err != nil {
 		return nil, err
 	}
+	if !hasAnyRole(claims.Roles, "NURSERY_OWNER") {
+		return nil, ErrForbidden
+	}
 	return s.repository.GetOwnerDashboard(ctx, userID)
+}
+
+func hasAnyRole(roles []string, allowed ...string) bool {
+	for _, role := range roles {
+		for _, item := range allowed {
+			if strings.EqualFold(role, item) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func mustJSON(value any) string {

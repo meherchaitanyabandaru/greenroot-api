@@ -262,6 +262,8 @@ func writeAuthError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusUnauthorized, "invalid_refresh_token", "invalid refresh token")
 	case errors.Is(err, ErrInvalidToken):
 		response.Error(w, http.StatusUnauthorized, "invalid_token", "invalid access token")
+	case errors.Is(err, ErrForbidden):
+		response.Error(w, http.StatusForbidden, "forbidden", "not allowed")
 	case errors.Is(err, ErrUserNotFound):
 		response.Error(w, http.StatusNotFound, "user_not_found", "user not found")
 	default:

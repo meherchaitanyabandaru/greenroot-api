@@ -139,7 +139,7 @@ func (r *PostgresRepository) FindByID(ctx context.Context, dispatchID int64) (*D
 }
 
 func (r *PostgresRepository) FindByCode(ctx context.Context, code string) (*Dispatch, error) {
-	dispatch, err := scanDispatch(r.db.QueryRowContext(ctx, baseSelect()+" WHERE UPPER(d.dispatch_code) = UPPER($1)", code))
+	dispatch, err := scanDispatch(r.db.QueryRowContext(ctx, baseSelect()+" WHERE UPPER(d.dispatch_code) = UPPER($1) OR LOWER(d.trip_uuid::text) = LOWER($1)", code))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -158,11 +158,11 @@ func (r *PostgresRepository) SetDriverUser(ctx context.Context, dispatchID int64
 	var err error
 	if driverID > 0 {
 		_, err = r.db.ExecContext(ctx,
-			`UPDATE public.dispatches SET driver_user_id = $1, driver_id = $2, updated_at = CURRENT_TIMESTAMP WHERE dispatch_id = $3`,
+			`UPDATE public.dispatches SET driver_user_id = $1, driver_id = $2, dispatch_status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP WHERE dispatch_id = $3`,
 			userID, driverID, dispatchID)
 	} else {
 		_, err = r.db.ExecContext(ctx,
-			`UPDATE public.dispatches SET driver_user_id = $1, updated_at = CURRENT_TIMESTAMP WHERE dispatch_id = $2`,
+			`UPDATE public.dispatches SET driver_user_id = $1, dispatch_status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP WHERE dispatch_id = $2`,
 			userID, dispatchID)
 	}
 	if err != nil {
@@ -249,7 +249,8 @@ func (r *PostgresRepository) createItemTx(ctx context.Context, q interface {
 
 func (r *PostgresRepository) ListItems(ctx context.Context, dispatchID int64) ([]DispatchItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT di.dispatch_item_id, di.dispatch_id, di.order_item_id, oi.plant_id, p.scientific_name,
+		SELECT di.dispatch_item_id, di.dispatch_id, di.order_item_id, oi.plant_id,
+			COALESCE(NULLIF(p.common_name,''), p.scientific_name),
 			di.quantity, di.notes, di.created_at
 		FROM public.dispatch_items di
 		LEFT JOIN public.order_items oi ON oi.order_item_id = di.order_item_id
@@ -428,7 +429,8 @@ func baseSelect() string {
 			d.owner_user_id_snapshot, d.customer_user_id,
 			d.customer_name_snapshot, d.customer_mobile_snapshot,
 			d.trip_started_at, d.trip_started_by_user_id, d.completed_at,
-			tl.tracking_uuid::text
+			tl.tracking_uuid::text,
+			d.trip_uuid::text
 		FROM public.dispatches d
 		JOIN public.orders o ON o.order_id = d.order_id
 		LEFT JOIN public.vehicles v ON v.vehicle_id = d.vehicle_id
@@ -515,7 +517,7 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 	var customerNameSnapshot, customerMobileSnapshot sql.NullString
 	var tripStartedAt, completedAt sql.NullTime
 	var tripStartedByUserID sql.NullInt64
-	var trackingUUID sql.NullString
+	var trackingUUID, tripUUID sql.NullString
 	if err := row.Scan(
 		&dispatch.ID, &dispatch.DispatchCode, &dispatch.OrderID, &orderNumber,
 		&nurseryID, &dispatchNumber,
@@ -526,7 +528,7 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 		&ownerUserIDSnapshot, &customerUserID,
 		&customerNameSnapshot, &customerMobileSnapshot,
 		&tripStartedAt, &tripStartedByUserID, &completedAt,
-		&trackingUUID,
+		&trackingUUID, &tripUUID,
 	); err != nil {
 		return Dispatch{}, err
 	}
@@ -564,6 +566,7 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 		dispatch.CompletedAt = &completedAt.Time
 	}
 	dispatch.TrackingUUID = nullableString(trackingUUID)
+	dispatch.TripUUID = nullableString(tripUUID)
 	return dispatch, nil
 }
 

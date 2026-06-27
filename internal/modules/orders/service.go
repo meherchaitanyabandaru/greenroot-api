@@ -11,9 +11,9 @@ import (
 )
 
 var (
-	ErrForbidden       = errors.New("forbidden")
-	ErrInvalidInput    = errors.New("invalid input")
-	ErrInvalidStatus   = errors.New("invalid status transition")
+	ErrForbidden     = errors.New("forbidden")
+	ErrInvalidInput  = errors.New("invalid input")
+	ErrInvalidStatus = errors.New("invalid status transition")
 )
 
 type Service struct {
@@ -48,6 +48,9 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, orderID int64) (O
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateOrderRequest) (Order, error) {
+	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+		return Order{}, ErrForbidden
+	}
 	if input.BuyerMobile != nil && *input.BuyerMobile != "" {
 		buyerID, err := s.repository.FindOrCreateBuyerByMobile(ctx, *input.BuyerMobile, stringOrEmpty(input.BuyerName))
 		if err != nil {
@@ -337,8 +340,8 @@ func (s *Service) canView(ctx context.Context, actor ActorContext, order Order) 
 }
 
 func (s *Service) canCreate(ctx context.Context, actor ActorContext, input CreateOrderRequest) error {
-	if hasRole(actor, "ADMIN") {
-		return nil
+	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+		return ErrForbidden
 	}
 	if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
 		if input.SellerNurseryID == nil {

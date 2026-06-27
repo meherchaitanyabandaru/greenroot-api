@@ -10,9 +10,10 @@ import (
 )
 
 var (
-	ErrForbidden    = errors.New("forbidden")
-	ErrInvalidInput = errors.New("invalid input")
-	ErrDuplicate    = errors.New("duplicate driver")
+	ErrForbidden           = errors.New("forbidden")
+	ErrInvalidInput        = errors.New("invalid input")
+	ErrDuplicate           = errors.New("duplicate driver")
+	ErrOwnerCannotBeDriver = errors.New("nursery owners cannot register as a driver")
 )
 
 type Service struct {
@@ -107,6 +108,13 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, driverID int64
 func (s *Service) Apply(ctx context.Context, actor ActorContext, req ApplyDriverRequest) (Driver, error) {
 	if strings.TrimSpace(req.LicenceNumber) == "" || strings.TrimSpace(req.VehicleNumber) == "" {
 		return Driver{}, ErrInvalidInput
+	}
+	ownsNursery, err := s.repository.UserOwnsANursery(ctx, actor.UserID)
+	if err != nil {
+		return Driver{}, err
+	}
+	if ownsNursery {
+		return Driver{}, ErrOwnerCannotBeDriver
 	}
 	driver, err := s.repository.Upsert(ctx, actor.UserID, req)
 	if err != nil {

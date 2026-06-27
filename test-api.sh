@@ -639,7 +639,7 @@ r=$(req POST /inventory "$MANAGER_TOKEN" "{
   \"available_quantity\": 15,
   \"inventory_status\": \"AVAILABLE\"
 }")
-check "POST /inventory as MANAGER → 201" "$r" "201"
+check "POST /inventory as MANAGER → 403" "$r" "403"
 
 if [[ -n "$INVENTORY_ID" && "$INVENTORY_ID" != "null" ]]; then
   r=$(req GET "/inventory/${INVENTORY_ID}" "$OWNER_TOKEN")
@@ -824,14 +824,14 @@ if [[ -n "$ORDER_ID" && "$ORDER_ID" != "null" ]]; then
   check "POST /orders/:id/assign-manager as OWNER → 200" "$r" "200"
 fi
 
-subsection "RBAC: Admin can create orders (code allows it); Driver cannot"
+subsection "RBAC: Admin/Driver cannot create orders"
 r=$(req POST /orders "$ADMIN_TOKEN" "{
   \"seller_nursery_id\": ${NURSERY_ID},
   \"buyer_name\": \"Admin Order\",
   \"order_status\": \"PENDING\",
   \"items\": [{\"plant_id\":${PLANT_ID},\"size_id\":1,\"quantity\":1,\"unit_price\":100,\"total_price\":100}]
 }")
-check_any "POST /orders as ADMIN → 201 (admin allowed per code)" "$r" "200" "201"
+check "POST /orders as ADMIN → 403 (business rule: admin cannot transact)" "$r" "403"
 
 r=$(req POST /orders "$DRIVER_TOKEN" "{
   \"seller_nursery_id\": ${NURSERY_ID},
@@ -1535,7 +1535,7 @@ if [[ -n "$POST_ID" && "$POST_ID" != "null" ]]; then
     \"available_quantity\": 50,
     \"notes\": \"We can supply\"
   }")
-  check_any "POST /sourcing-posts/:id/responses as MANAGER → 201" "$r" "200" "201"
+  check "POST /sourcing-posts/:id/responses as MANAGER from same nursery → 400" "$r" "400"
 
   r=$(req PUT "/sourcing-posts/${POST_ID}" "$OWNER_TOKEN" '{
     "plant_name": "Rosa indica",
@@ -1602,7 +1602,7 @@ if [[ -n "$REQUEST_ID" && "$REQUEST_ID" != "null" ]]; then
     \"remarks\": \"We can source this\",
     \"status\": \"AVAILABLE\"
   }")
-  check_any "POST /plant-requests/:id/responses as MANAGER → 201" "$r" "200" "201"
+  check "POST /plant-requests/:id/responses as MANAGER from same nursery → 400" "$r" "400"
 
   r=$(req PUT "/plant-requests/${REQUEST_ID}/status" "$OWNER_TOKEN" '{"status":"OPEN"}')
   check "PUT /plant-requests/:id/status as OWNER → 200" "$r" "200"
@@ -1667,7 +1667,7 @@ r=$(req GET /me/owner-dashboard "$OWNER_TOKEN")
 check "GET /me/owner-dashboard as OWNER → 200" "$r" "200"
 
 r=$(req GET /me/owner-dashboard "$MANAGER_TOKEN")
-check_any "GET /me/owner-dashboard as MANAGER" "$r" "200" "404"
+check "GET /me/owner-dashboard as MANAGER → 403" "$r" "403"
 
 subsection "RBAC: no auth"
 r=$(req GET /me/workspaces "")

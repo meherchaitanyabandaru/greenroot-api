@@ -187,6 +187,11 @@ func (s *Service) GetPost(ctx context.Context, actor ActorContext, postID int64)
 }
 
 func (s *Service) CreatePost(ctx context.Context, actor ActorContext, req CreatePostRequest) (SourcingPost, error) {
+	req.PostType = strings.ToUpper(strings.TrimSpace(req.PostType))
+	req.Urgency = strings.ToUpper(strings.TrimSpace(req.Urgency))
+	if req.Urgency == "NORMAL" {
+		req.Urgency = "FLEXIBLE"
+	}
 	if err := s.canManageNursery(ctx, actor, req.NurseryID); err != nil {
 		return SourcingPost{}, err
 	}
@@ -212,6 +217,13 @@ func (s *Service) UpdatePost(ctx context.Context, actor ActorContext, postID int
 	req.Status = strings.ToUpper(strings.TrimSpace(req.Status))
 	if req.Status == "" {
 		req.Status = existing.Status
+	}
+	req.Urgency = strings.ToUpper(strings.TrimSpace(req.Urgency))
+	if req.Urgency == "NORMAL" {
+		req.Urgency = "FLEXIBLE"
+	}
+	if req.Urgency == "HIGH" {
+		req.Urgency = "URGENT"
 	}
 	if !isAllowedPostStatus(req.Status) {
 		return SourcingPost{}, ErrInvalidInput
@@ -306,7 +318,7 @@ func validatePostRequest(req CreatePostRequest) error {
 		return ErrInvalidInput
 	}
 	urgency := strings.ToUpper(req.Urgency)
-	if urgency != "" && urgency != "TODAY" && urgency != "URGENT" && urgency != "FLEXIBLE" {
+	if urgency != "" && urgency != "TODAY" && urgency != "URGENT" && urgency != "FLEXIBLE" && urgency != "NORMAL" {
 		return ErrInvalidInput
 	}
 	return nil

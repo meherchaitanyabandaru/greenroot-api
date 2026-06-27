@@ -90,6 +90,9 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 		return Dispatch{}, err
 	}
 	status := strings.ToUpper(strings.TrimSpace(req.Status))
+	if status == "" {
+		status = strings.ToUpper(strings.TrimSpace(req.StatusAlias))
+	}
 	if !isAllowedStatus(status) {
 		return Dispatch{}, ErrInvalidInput
 	}
@@ -174,6 +177,10 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 	dispatch, err := s.repository.FindByID(ctx, dispatchID)
 	if err != nil {
 		return Dispatch{}, err
+	}
+	// If already accepted by this same driver, return the dispatch (idempotent).
+	if dispatch.Status == "ACCEPTED" && dispatch.DriverUserID != nil && *dispatch.DriverUserID == actor.UserID {
+		return *dispatch, nil
 	}
 	if dispatch.Status != "PENDING" {
 		return Dispatch{}, ErrForbidden
@@ -338,7 +345,7 @@ func parseOptionalTime(value *string) (*time.Time, error) {
 
 func isAllowedStatus(status string) bool {
 	switch status {
-	case "PENDING", "DISPATCHED", "IN_TRANSIT", "DELIVERED", "CANCELLED":
+	case "PENDING", "ACCEPTED", "DISPATCHED", "IN_TRANSIT", "DELIVERED", "CANCELLED":
 		return true
 	default:
 		return false
