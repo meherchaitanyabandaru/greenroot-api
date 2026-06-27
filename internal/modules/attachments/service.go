@@ -32,6 +32,11 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, id int64) (Attach
 	return *item, nil
 }
 func (s *Service) Create(ctx context.Context, actor ActorContext, input AttachmentRequest) (Attachment, error) {
+	// Only nursery staff and admins may upload attachments; buyers and unauthenticated users cannot
+	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") &&
+		!hasRole(actor, "NURSERY_OWNER") && !hasRole(actor, "MANAGER") && !hasRole(actor, "DRIVER") {
+		return Attachment{}, ErrForbidden
+	}
 	if strings.TrimSpace(input.EntityType) == "" || input.EntityID <= 0 || strings.TrimSpace(input.FileName) == "" || strings.TrimSpace(input.FileURL) == "" {
 		return Attachment{}, ErrInvalidInput
 	}

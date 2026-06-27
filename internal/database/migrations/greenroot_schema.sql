@@ -10,7 +10,7 @@
 -- → orders, orders.quotation_id → quotations). One FK is added at the end — it is
 -- the only ALTER TABLE in this file, and it is structurally unavoidable.
 --
--- Tables: 49  |  Sections: DDL → Constraints → Indexes → Reference seed data
+-- Tables: 54  |  Sections: DDL → Constraints → Indexes → Reference seed data
 -- Gap fixes applied: otp_requests, platform_config, nursery_applications added;
 --   nurseries/orders/dispatches/attachments got deleted_at; nurseries got
 --   approval columns; dispatches got driver acceptance columns;
@@ -838,6 +838,126 @@ CREATE TABLE public.plant_request_responses (
 
 
 -- =============================================================================
+-- SECTION 6B: PLANT SOURCING NETWORK
+-- Separate opt-in discovery module. Nurseries join voluntarily.
+-- Managers and owners discover nearby nurseries, post NEED / AVAILABLE
+-- announcements, and browse featured plant lists.
+-- Never exposes customer data, orders, or quotations.
+-- =============================================================================
+
+/*
+ * sourcing_network_members
+ * Tracks which nurseries have opted into the Plant Sourcing Network.
+ * Only member nurseries appear in nearby-nursery discovery and receive
+ * notifications for new sourcing posts within their service_radius_km.
+ */
+CREATE TABLE public.sourcing_network_members (
+    member_id           BIGSERIAL    PRIMARY KEY,
+    nursery_id          BIGINT       NOT NULL UNIQUE,
+    is_active           BOOLEAN      NOT NULL DEFAULT true,
+    road_accessible     BOOLEAN      NOT NULL DEFAULT true,
+    lorry_accessible    BOOLEAN      NOT NULL DEFAULT true,
+    contact_visible     BOOLEAN      NOT NULL DEFAULT false,
+    service_radius_km   INTEGER      NOT NULL DEFAULT 50,
+    joined_by_user_id   BIGINT,
+    joined_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deactivated_at      TIMESTAMP,
+    updated_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+/*
+ * nursery_featured_plants
+ * Each network member may showcase up to 20 plants they usually grow.
+ * NOT inventory — approximate quantities only. Photos stored as JSONB URLs.
+ * display_order enforced 1–20 via CHECK constraint.
+ */
+CREATE TABLE public.nursery_featured_plants (
+    featured_id             BIGSERIAL    PRIMARY KEY,
+    nursery_id              BIGINT       NOT NULL,
+    plant_id                BIGINT       NOT NULL,
+    display_order           SMALLINT     NOT NULL DEFAULT 1,
+    approximate_quantity    INTEGER,
+    approximate_size        VARCHAR(50),
+    quality_notes           TEXT,
+    photos                  JSONB        NOT NULL DEFAULT '[]',
+    is_active               BOOLEAN      NOT NULL DEFAULT true,
+    added_by_user_id        BIGINT,
+    created_at              TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at              TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_nursery_featured_plant UNIQUE (nursery_id, plant_id),
+    CONSTRAINT chk_featured_display_order CHECK (display_order BETWEEN 1 AND 20)
+);
+
+/*
+ * sourcing_posts
+ * NEED or AVAILABLE announcement posted by a nursery owner or manager.
+ * Nearby network members receive push notifications on creation.
+ * Statuses: OPEN → CLOSED (manual) / EXPIRED (cron after expires_at).
+ * plant_name is always stored in full so the post survives catalogue changes.
+ */
+CREATE TABLE public.sourcing_posts (
+    post_id             BIGSERIAL    PRIMARY KEY,
+    post_code           VARCHAR(30)  NOT NULL UNIQUE
+                            DEFAULT public.next_public_code('sourcing_posts', 'SRC', 4, true),
+    nursery_id          BIGINT       NOT NULL,
+    posted_by_user_id   BIGINT       NOT NULL,
+    post_type           VARCHAR(20)  NOT NULL,
+    plant_id            BIGINT,
+    plant_name          VARCHAR(255) NOT NULL,
+    size_description    VARCHAR(100),
+    quantity            INTEGER,
+    urgency             VARCHAR(20)  NOT NULL DEFAULT 'FLEXIBLE',
+    needed_by_date      DATE,
+    notes               TEXT,
+    radius_km           INTEGER      NOT NULL DEFAULT 50,
+    response_count      INTEGER      NOT NULL DEFAULT 0,
+    status              VARCHAR(20)  NOT NULL DEFAULT 'OPEN',
+    expires_at          TIMESTAMP,
+    closed_at           TIMESTAMP,
+    deleted_at          TIMESTAMP,
+    created_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_sourcing_post_type CHECK (post_type IN ('NEED','AVAILABLE')),
+    CONSTRAINT chk_sourcing_urgency   CHECK (urgency   IN ('TODAY','URGENT','FLEXIBLE'))
+);
+
+/*
+ * sourcing_post_responses
+ * Response from another network member to an open sourcing post.
+ * One response per nursery per post (unique constraint).
+ * Statuses: PENDING → ACCEPTED | DECLINED by the posting nursery.
+ */
+CREATE TABLE public.sourcing_post_responses (
+    response_id             BIGSERIAL    PRIMARY KEY,
+    post_id                 BIGINT       NOT NULL,
+    responder_nursery_id    BIGINT       NOT NULL,
+    responded_by_user_id    BIGINT       NOT NULL,
+    available_quantity      INTEGER,
+    notes                   TEXT,
+    contact_info            VARCHAR(255),
+    status                  VARCHAR(20)  NOT NULL DEFAULT 'PENDING',
+    responded_at            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at              TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_post_response UNIQUE (post_id, responder_nursery_id)
+);
+
+/*
+ * sourcing_post_photos
+ * Photos attached to a sourcing post to show what is needed or available.
+ * Cascade-deletes when the parent post is deleted.
+ */
+CREATE TABLE public.sourcing_post_photos (
+    photo_id            BIGSERIAL    PRIMARY KEY,
+    post_id             BIGINT       NOT NULL,
+    photo_url           VARCHAR(500) NOT NULL,
+    display_order       SMALLINT     NOT NULL DEFAULT 0,
+    uploaded_by_user_id BIGINT,
+    created_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- =============================================================================
 -- SECTION 7: QUOTATIONS
 -- Note: quotations.converted_order_id → orders FK is added AFTER orders is created.
 -- =============================================================================
@@ -1618,6 +1738,47 @@ ALTER TABLE public.notifications ADD CONSTRAINT notifications_template_id_fkey F
 -- attachments
 ALTER TABLE public.attachments ADD CONSTRAINT attachments_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES public.users(user_id);
 
+-- sourcing_network_members
+ALTER TABLE public.sourcing_network_members
+    ADD CONSTRAINT sourcing_network_members_nursery_id_fkey
+        FOREIGN KEY (nursery_id) REFERENCES public.nurseries(nursery_id),
+    ADD CONSTRAINT sourcing_network_members_joined_by_fkey
+        FOREIGN KEY (joined_by_user_id) REFERENCES public.users(user_id) ON DELETE SET NULL;
+
+-- nursery_featured_plants
+ALTER TABLE public.nursery_featured_plants
+    ADD CONSTRAINT nursery_featured_plants_nursery_id_fkey
+        FOREIGN KEY (nursery_id) REFERENCES public.nurseries(nursery_id),
+    ADD CONSTRAINT nursery_featured_plants_plant_id_fkey
+        FOREIGN KEY (plant_id) REFERENCES public.plants(plant_id),
+    ADD CONSTRAINT nursery_featured_plants_added_by_fkey
+        FOREIGN KEY (added_by_user_id) REFERENCES public.users(user_id) ON DELETE SET NULL;
+
+-- sourcing_posts
+ALTER TABLE public.sourcing_posts
+    ADD CONSTRAINT sourcing_posts_nursery_id_fkey
+        FOREIGN KEY (nursery_id) REFERENCES public.nurseries(nursery_id),
+    ADD CONSTRAINT sourcing_posts_posted_by_fkey
+        FOREIGN KEY (posted_by_user_id) REFERENCES public.users(user_id),
+    ADD CONSTRAINT sourcing_posts_plant_id_fkey
+        FOREIGN KEY (plant_id) REFERENCES public.plants(plant_id) ON DELETE SET NULL;
+
+-- sourcing_post_responses
+ALTER TABLE public.sourcing_post_responses
+    ADD CONSTRAINT sourcing_post_responses_post_id_fkey
+        FOREIGN KEY (post_id) REFERENCES public.sourcing_posts(post_id),
+    ADD CONSTRAINT sourcing_post_responses_nursery_id_fkey
+        FOREIGN KEY (responder_nursery_id) REFERENCES public.nurseries(nursery_id),
+    ADD CONSTRAINT sourcing_post_responses_user_id_fkey
+        FOREIGN KEY (responded_by_user_id) REFERENCES public.users(user_id);
+
+-- sourcing_post_photos
+ALTER TABLE public.sourcing_post_photos
+    ADD CONSTRAINT sourcing_post_photos_post_id_fkey
+        FOREIGN KEY (post_id) REFERENCES public.sourcing_posts(post_id) ON DELETE CASCADE,
+    ADD CONSTRAINT sourcing_post_photos_uploaded_by_fkey
+        FOREIGN KEY (uploaded_by_user_id) REFERENCES public.users(user_id) ON DELETE SET NULL;
+
 
 -- =============================================================================
 -- SECTION 17: INDEXES
@@ -1792,6 +1953,27 @@ CREATE INDEX idx_otp_mobile_active
 
 -- platform_config
 CREATE INDEX idx_platform_config_active ON public.platform_config (config_key) WHERE is_active = true;
+
+-- sourcing_network_members
+CREATE INDEX idx_sourcing_members_nursery ON public.sourcing_network_members (nursery_id);
+CREATE INDEX idx_sourcing_members_active  ON public.sourcing_network_members (nursery_id) WHERE is_active = true;
+
+-- nursery_featured_plants
+CREATE INDEX idx_nursery_featured_nursery ON public.nursery_featured_plants (nursery_id, display_order);
+CREATE INDEX idx_nursery_featured_plant   ON public.nursery_featured_plants (plant_id);
+
+-- sourcing_posts
+CREATE INDEX idx_sourcing_posts_nursery   ON public.sourcing_posts (nursery_id);
+CREATE INDEX idx_sourcing_posts_plant     ON public.sourcing_posts (plant_id) WHERE plant_id IS NOT NULL;
+CREATE INDEX idx_sourcing_posts_open      ON public.sourcing_posts (post_type, created_at DESC)
+    WHERE status = 'OPEN' AND deleted_at IS NULL;
+
+-- sourcing_post_responses
+CREATE INDEX idx_sourcing_responses_post  ON public.sourcing_post_responses (post_id);
+CREATE INDEX idx_sourcing_responses_nursery ON public.sourcing_post_responses (responder_nursery_id);
+
+-- sourcing_post_photos
+CREATE INDEX idx_sourcing_photos_post     ON public.sourcing_post_photos (post_id);
 
 
 -- =============================================================================

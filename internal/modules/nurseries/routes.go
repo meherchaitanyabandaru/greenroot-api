@@ -39,11 +39,6 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Post("/{id}/managers", m.handler.AddManager)
 		r.Delete("/{id}/managers/{userId}", m.handler.RemoveUser)
 
-		// Legacy users endpoints (still supported)
-		r.Get("/{id}/users", m.handler.ListUsers)
-		r.Post("/{id}/users", m.handler.AddUser)
-		r.Delete("/{id}/users/{userId}", m.handler.RemoveUser)
-
 		// Driver connections
 		r.Get("/{id}/drivers", m.handler.ListDrivers)
 		r.Post("/{id}/drivers", m.handler.ConnectDriver)

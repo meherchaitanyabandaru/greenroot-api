@@ -31,12 +31,34 @@ var allowedInviteTypes = map[string]bool{
 	"TRIP_SHARE_INVITE":       true,
 }
 
+// inviteTypeAllowedRoles maps each invite type to the roles that may create it.
+var inviteTypeAllowedRoles = map[string][]string{
+	"MANAGER_INVITE":            {"ADMIN", "SUPER_ADMIN", "NURSERY_OWNER"},
+	"DRIVER_INVITE":             {"ADMIN", "SUPER_ADMIN", "NURSERY_OWNER", "MANAGER"},
+	"CUSTOMER_INVITE":           {"ADMIN", "SUPER_ADMIN", "NURSERY_OWNER", "MANAGER"},
+	"NURSERY_ONBOARDING_INVITE": {"ADMIN", "SUPER_ADMIN"},
+	"TRIP_SHARE_INVITE":         {"ADMIN", "SUPER_ADMIN", "NURSERY_OWNER", "MANAGER"},
+}
+
 func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateInviteRequest) (Invite, error) {
 	inviteType := strings.ToUpper(strings.TrimSpace(req.InviteType))
 	if !allowedInviteTypes[inviteType] {
 		return Invite{}, ErrInvalidInput
 	}
 	req.InviteType = inviteType
+
+	// Enforce role-based invite creation: only allowed roles may create each type
+	allowed := false
+	for _, role := range inviteTypeAllowedRoles[inviteType] {
+		if hasRole(actor, role) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return Invite{}, ErrForbidden
+	}
+
 	if (req.TargetMobile == nil || *req.TargetMobile == "") && (req.TargetEmail == nil || *req.TargetEmail == "") {
 		return Invite{}, ErrInvalidInput
 	}

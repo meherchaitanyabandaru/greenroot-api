@@ -178,10 +178,11 @@ func (s *Service) UpdateResponse(ctx context.Context, actor ActorContext, respon
 }
 
 func (s *Service) canManageNursery(ctx context.Context, actor ActorContext, nurseryID int64) error {
-	if hasRole(actor, "ADMIN") {
+	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
 		return nil
 	}
-	if hasRole(actor, "NURSERY_OWNER") {
+	// Per business rules: both NURSERY_OWNER and MANAGER perform sourcing work
+	if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
 		member, err := s.repository.IsNurseryMember(ctx, nurseryID, actor.UserID)
 		if err != nil {
 			return err
@@ -194,7 +195,9 @@ func (s *Service) canManageNursery(ctx context.Context, actor ActorContext, nurs
 }
 
 func canUseRequests(actor ActorContext) bool {
-	return hasRole(actor, "ADMIN") || hasRole(actor, "NURSERY_OWNER")
+	// Per business rules: managers usually perform sourcing work and need full access
+	return hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") ||
+		hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER")
 }
 
 func normalizeList(input ListRequestsRequest) ListRequestsRequest {

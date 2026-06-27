@@ -100,7 +100,7 @@ func (s *Service) ListCategories(ctx context.Context) ([]Category, error) {
 }
 
 func (s *Service) CreateCategory(ctx context.Context, actor ActorContext, input CreateCategoryRequest) (Category, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
 		return Category{}, ErrForbidden
 	}
 	name := strings.TrimSpace(input.Name)
@@ -111,14 +111,14 @@ func (s *Service) CreateCategory(ctx context.Context, actor ActorContext, input 
 }
 
 func (s *Service) UpdateCategory(ctx context.Context, actor ActorContext, categoryID int64, input UpdateCategoryRequest) (Category, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
 		return Category{}, ErrForbidden
 	}
 	return s.repository.UpdateCategory(ctx, categoryID, input)
 }
 
 func (s *Service) DeleteCategory(ctx context.Context, actor ActorContext, categoryID int64) error {
-	if !hasRole(actor, "ADMIN") {
+	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
 		return ErrForbidden
 	}
 	return s.repository.DeleteCategory(ctx, categoryID)
@@ -204,7 +204,7 @@ func validatePlantInput(input CreatePlantRequest) error {
 }
 
 func canManagePlants(actor ActorContext) bool {
-	return hasRole(actor, "ADMIN") || hasRole(actor, "NURSERY_OWNER")
+	return hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN")
 }
 
 func hasRole(actor ActorContext, role string) bool {

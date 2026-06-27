@@ -54,7 +54,8 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, id int64) (Quotat
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQuotationRequest) (Quotation, error) {
-	if hasRole(actor, "DRIVER") {
+	// Business rule: admin cannot participate in business transactions
+	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") || hasRole(actor, "DRIVER") {
 		return Quotation{}, ErrForbidden
 	}
 	// Normalize type

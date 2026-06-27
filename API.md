@@ -1,6 +1,6 @@
 # GreenRoot — API Reference
 
-> Last updated: 2026-06-26
+> Last updated: 2026-06-27
 
 ---
 
@@ -16,6 +16,15 @@ DATABASE_URL='postgres:///greenroot?host=/tmp' JWT_SECRET='local-dev-change-me' 
 
 Swagger: `http://localhost:8080/swagger/`  
 OpenAPI spec (source of truth): `docs/swagger/openapi.yaml`
+
+Current registered route count from chi route definitions:
+
+| Scope | Count |
+|---|---:|
+| `/api/v1` module routes | 174 |
+| Health routes | 3 |
+| Docs/Swagger routes | 4 |
+| **Total registered APIs** | **181** |
 
 ---
 
@@ -60,7 +69,8 @@ POST /api/v1/auth/send-otp
 POST /api/v1/auth/verify-otp
 POST /api/v1/auth/refresh-token
 POST /api/v1/auth/logout
-GET  /api/v1/auth/me
+GET  /api/v1/me/workspaces
+GET  /api/v1/me/owner-dashboard
 ```
 
 Dev OTP: `123456` hardcoded (mock). Mobile: `9000000777` = Admin.
@@ -142,6 +152,38 @@ Dev OTP: `123456` hardcoded (mock). Mobile: `9000000777` = Admin.
 | quotations | `POST /quotations/:id/approve` · `POST /quotations/:id/convert-to-order` |
 | invites | `POST /invites` · `GET /invites/:uuid` · accept, cancel · nursery invites + managers |
 | me/workspaces | `GET /me/workspaces` — returns PERSONAL, OWNED_NURSERY, MANAGER_NURSERY, DRIVER workspaces |
+
+---
+
+## Registered API Inventory
+
+All module routes below are mounted under `/api/v1` unless noted.
+
+| Module | Count | Registered routes |
+|---|---:|---|
+| Health | 3 | `GET /health`, `GET /healthz`, `GET /readyz` |
+| Docs/Swagger | 4 | `GET /openapi.yaml`, `GET /swagger`, `GET /swagger/`, `GET /swagger/index.html` |
+| Auth | 6 | `POST /api/v1/auth/send-otp`, `POST /api/v1/auth/verify-otp`, `POST /api/v1/auth/refresh-token`, `POST /api/v1/auth/logout`, `GET /api/v1/me/workspaces`, `GET /api/v1/me/owner-dashboard` |
+| Admin | 2 | `GET /api/v1/admin/dashboard`, `GET /api/v1/admin/users` |
+| Users | 9 | `GET /api/v1/users/me`, `PUT /api/v1/users/me`, `GET /api/v1/users/{id}`, `GET /api/v1/users/{id}/addresses`, `POST /api/v1/users/{id}/addresses`, `PUT /api/v1/users/addresses/{addressId}`, `DELETE /api/v1/users/addresses/{addressId}`, `GET /api/v1/users/{id}/roles`, `GET /api/v1/users/{id}/sessions` |
+| Plants | 13 | `GET /api/v1/plants`, `POST /api/v1/plants`, `GET /api/v1/plants/sizes`, `GET /api/v1/plants/categories`, `POST /api/v1/plants/categories`, `PUT /api/v1/plants/categories/{categoryId}`, `DELETE /api/v1/plants/categories/{categoryId}`, `GET /api/v1/plants/names`, `GET /api/v1/plants/{id}`, `PUT /api/v1/plants/{id}`, `DELETE /api/v1/plants/{id}`, `POST /api/v1/plants/{id}/images`, `GET /api/v1/plants/{id}/care-guide` |
+| Nurseries | 18 | `GET /api/v1/nurseries`, `POST /api/v1/nurseries`, `GET /api/v1/nurseries/mine`, `GET /api/v1/nurseries/owned`, `GET /api/v1/nurseries/{id}`, `PUT /api/v1/nurseries/{id}`, `PUT /api/v1/nurseries/{id}/status`, `DELETE /api/v1/nurseries/{id}`, `GET /api/v1/nurseries/{id}/addresses`, `POST /api/v1/nurseries/{id}/addresses`, `PUT /api/v1/nurseries/addresses/{addressId}`, `DELETE /api/v1/nurseries/addresses/{addressId}`, `GET /api/v1/nurseries/{id}/managers`, `POST /api/v1/nurseries/{id}/managers`, `DELETE /api/v1/nurseries/{id}/managers/{userId}`, `GET /api/v1/nurseries/{id}/drivers`, `POST /api/v1/nurseries/{id}/drivers`, `POST /api/v1/nurseries/{id}/drivers/{driverUserId}/approve` |
+| Inventory | 7 | `GET /api/v1/inventory`, `POST /api/v1/inventory`, `GET /api/v1/inventory/{id}`, `PUT /api/v1/inventory/{id}`, `DELETE /api/v1/inventory/{id}`, `GET /api/v1/nurseries/{nurseryId}/inventory`, `GET /api/v1/plants/{plantId}/inventory` |
+| Plant Requests | 9 | `GET /api/v1/plant-requests`, `POST /api/v1/plant-requests`, `GET /api/v1/plant-requests/{id}`, `PUT /api/v1/plant-requests/{id}`, `PUT /api/v1/plant-requests/{id}/status`, `DELETE /api/v1/plant-requests/{id}`, `GET /api/v1/plant-requests/{id}/responses`, `POST /api/v1/plant-requests/{id}/responses`, `PUT /api/v1/plant-requests/responses/{responseId}` |
+| Orders | 13 | `GET /api/v1/orders`, `POST /api/v1/orders`, `GET /api/v1/orders/{id}`, `PUT /api/v1/orders/{id}/status`, `DELETE /api/v1/orders/{id}`, `POST /api/v1/orders/{id}/start-loading`, `POST /api/v1/orders/{id}/complete-loading`, `POST /api/v1/orders/{id}/cancel`, `POST /api/v1/orders/{id}/assign-manager`, `GET /api/v1/orders/{id}/items`, `POST /api/v1/orders/{id}/items`, `PUT /api/v1/orders/items/{itemId}`, `DELETE /api/v1/orders/items/{itemId}` |
+| Quotations | 10 | `GET /api/v1/quotations`, `POST /api/v1/quotations`, `GET /api/v1/quotations/{id}`, `PUT /api/v1/quotations/{id}`, `DELETE /api/v1/quotations/{id}`, `POST /api/v1/quotations/{id}/assign-manager`, `POST /api/v1/quotations/{id}/approve`, `POST /api/v1/quotations/{id}/convert-to-order`, `POST /api/v1/quotations/{id}/buyer-accept`, `POST /api/v1/quotations/{id}/buyer-reject` |
+| Payments | 6 | `GET /api/v1/payments`, `POST /api/v1/payments/manual`, `GET /api/v1/payments/{id}`, `PUT /api/v1/payments/{id}/status`, `GET /api/v1/orders/{orderId}/payments`, `GET /api/v1/subscriptions/{subscriptionId}/payments` |
+| Subscriptions | 9 | `GET /api/v1/subscription-plans`, `GET /api/v1/subscription-plans/{id}`, `GET /api/v1/subscriptions`, `POST /api/v1/subscriptions`, `GET /api/v1/subscriptions/me`, `GET /api/v1/subscriptions/{id}`, `PUT /api/v1/subscriptions/{id}/status`, `POST /api/v1/subscriptions/{id}/renew`, `POST /api/v1/subscriptions/{id}/cancel` |
+| Dispatches | 10 | `GET /api/v1/track/{uuid}`, `GET /api/v1/dispatches`, `POST /api/v1/dispatches`, `GET /api/v1/dispatches/code/{code}`, `GET /api/v1/dispatches/{id}`, `PUT /api/v1/dispatches/{id}/status`, `POST /api/v1/dispatches/{id}/accept`, `POST /api/v1/dispatches/{id}/items`, `POST /api/v1/dispatches/{id}/trip-events`, `GET /api/v1/orders/{orderId}/dispatches` |
+| Drivers | 9 | `POST /api/v1/drivers/apply`, `GET /api/v1/drivers/me`, `GET /api/v1/drivers`, `POST /api/v1/drivers`, `GET /api/v1/drivers/{id}`, `PUT /api/v1/drivers/{id}`, `DELETE /api/v1/drivers/{id}`, `POST /api/v1/drivers/{id}/approve`, `POST /api/v1/drivers/{id}/location` |
+| Vehicles | 5 | `GET /api/v1/vehicles`, `POST /api/v1/vehicles`, `GET /api/v1/vehicles/{id}`, `PUT /api/v1/vehicles/{id}`, `DELETE /api/v1/vehicles/{id}` |
+| Tracking | 7 | `POST /api/v1/tracking`, `GET /api/v1/dispatches/{dispatchId}/tracking`, `GET /api/v1/dispatches/{dispatchId}/tracking/latest`, `GET /api/v1/drivers/{driverId}/tracking`, `GET /api/v1/drivers/{driverId}/tracking/latest`, `GET /api/v1/vehicles/{vehicleId}/tracking`, `GET /api/v1/vehicles/{vehicleId}/tracking/latest` |
+| Notifications | 13 | `GET /api/v1/notifications`, `POST /api/v1/notifications`, `PUT /api/v1/notifications/read-all`, `GET /api/v1/notifications/devices`, `POST /api/v1/notifications/devices`, `DELETE /api/v1/notifications/devices/{id}`, `GET /api/v1/notifications/templates`, `POST /api/v1/notifications/templates`, `PUT /api/v1/notifications/templates/{id}`, `DELETE /api/v1/notifications/templates/{id}`, `GET /api/v1/notifications/{id}`, `PUT /api/v1/notifications/{id}/read`, `DELETE /api/v1/notifications/{id}` |
+| Attachments | 4 | `GET /api/v1/attachments`, `POST /api/v1/attachments`, `GET /api/v1/attachments/{id}`, `DELETE /api/v1/attachments/{id}` |
+| Invites | 5 | `POST /api/v1/invites`, `GET /api/v1/invites/{uuid}`, `POST /api/v1/invites/{uuid}/accept`, `POST /api/v1/invites/{uuid}/cancel`, `GET /api/v1/nurseries/{nurseryId}/invites` |
+| Sourcing | 17 | `GET /api/v1/nurseries/{nurseryId}/sourcing-membership`, `POST /api/v1/nurseries/{nurseryId}/sourcing-membership`, `DELETE /api/v1/nurseries/{nurseryId}/sourcing-membership`, `GET /api/v1/nurseries/{nurseryId}/featured-plants`, `POST /api/v1/nurseries/{nurseryId}/featured-plants`, `PUT /api/v1/nurseries/{nurseryId}/featured-plants/{featuredId}`, `DELETE /api/v1/nurseries/{nurseryId}/featured-plants/{featuredId}`, `GET /api/v1/sourcing-network/nurseries`, `GET /api/v1/sourcing-network/nurseries/{nurseryId}`, `GET /api/v1/sourcing-posts`, `POST /api/v1/sourcing-posts`, `GET /api/v1/sourcing-posts/{id}`, `PUT /api/v1/sourcing-posts/{id}`, `DELETE /api/v1/sourcing-posts/{id}`, `GET /api/v1/sourcing-posts/{id}/responses`, `POST /api/v1/sourcing-posts/{id}/responses`, `PUT /api/v1/sourcing-posts/{id}/responses/{responseId}` |
+| Storage | 1 | `POST /api/v1/storage/presign` |
+| Audit | 1 | `GET /api/v1/audit-logs` |
 
 ---
 

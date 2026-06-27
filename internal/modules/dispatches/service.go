@@ -49,6 +49,10 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, dispatchID int64)
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateDispatchRequest) (Dispatch, error) {
+	// Business rule: admin monitors dispatches but cannot create them
+	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+		return Dispatch{}, ErrForbidden
+	}
 	input, err := normalizeCreate(req)
 	if err != nil {
 		return Dispatch{}, err

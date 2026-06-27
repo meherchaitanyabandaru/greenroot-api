@@ -12,14 +12,14 @@ type Service struct{ repository Repository }
 
 func NewService(r Repository) *Service { return &Service{repository: r} }
 func (s *Service) Dashboard(ctx context.Context, a ActorContext) (Summary, error) {
-	if !hasRole(a, "ADMIN") {
+	if !hasRole(a, "ADMIN") && !hasRole(a, "SUPER_ADMIN") {
 		return Summary{}, ErrForbidden
 	}
 	return s.repository.Summary(ctx)
 }
 
 func (s *Service) ListUsers(ctx context.Context, a ActorContext, input ListUsersRequest) ([]User, Pagination, error) {
-	if !hasRole(a, "ADMIN") {
+	if !hasRole(a, "ADMIN") && !hasRole(a, "SUPER_ADMIN") {
 		return nil, Pagination{}, ErrForbidden
 	}
 	users, total, err := s.repository.ListUsers(ctx, input)

@@ -1,13 +1,21 @@
 # GreenRoot — Database Reference
 
-> Last updated: 2026-06-26
+> Last updated: 2026-06-27
 
 ---
 
 ## Stack
 
-PostgreSQL. Schema owned by ordered migration files in `greenroot-api/internal/database/migrations/`.
+PostgreSQL. The current canonical application schema is `greenroot-api/internal/database/migrations/greenroot_schema.sql`.
 Demo/seed data lives in `greenroot-infra/db/postgresql/greenroot-seed.sql`.
+
+Current count from route/schema inspection:
+
+| Item | Count | Source |
+|---|---:|---|
+| Application tables | 54 | `CREATE TABLE public.*` in `greenroot_schema.sql` |
+| Migration bookkeeping table | 1 | `public.schema_migrations`, created by `scripts/migrate.sh` |
+| Total DB tables including migration bookkeeping | 55 | Application tables + migration table |
 
 ---
 
@@ -37,11 +45,7 @@ make migrate-down     # Roll back (DESTRUCTIVE — drops public schema)
 
 ```
 internal/database/migrations/
-├── 000001_greenroot_baseline.up.sql    # Full schema: enums, tables, sequences, indexes
-├── 000001_greenroot_baseline.down.sql  # Drops public schema — DESTRUCTIVE
-├── 000002_public_codes.up.sql          # Public code sequences
-├── 000002_public_codes.down.sql
-└── 000005_v1_refactor.up.sql           # owner_user_id on nurseries, invites table, driver columns
+└── greenroot_schema.sql    # Full schema: enums, functions, 54 tables, constraints, indexes, reference seeds
 ```
 
 ---
@@ -61,6 +65,43 @@ Adding a new migration:
 ```bash
 touch internal/database/migrations/000006_<description>.up.sql
 touch internal/database/migrations/000006_<description>.down.sql
+```
+
+---
+
+## SQL Schema Inventory
+
+The schema file is organized into DDL sections, then deferred constraints, indexes, and reference seed data. Application tables are:
+
+| Area | Tables |
+|---|---|
+| Sequence helper | `public_code_sequences` |
+| Reference / lookup | `roles`, `nursery_roles`, `languages`, `plant_sizes`, `plant_categories`, `subscription_plans`, `notification_templates`, `platform_config` |
+| Users & identity | `users`, `user_roles`, `user_sessions`, `otp_requests`, `user_activities`, `user_addresses`, `user_subscriptions`, `user_notification_devices` |
+| Nursery | `nurseries`, `nursery_applications`, `nursery_addresses`, `nursery_users`, `nursery_drivers`, `nursery_inventory` |
+| Plant catalogue | `plants`, `plant_names`, `plant_category_mapping`, `plant_images`, `plant_care_guides`, `plant_requests`, `plant_request_responses` |
+| Plant sourcing network | `sourcing_network_members`, `nursery_featured_plants`, `sourcing_posts`, `sourcing_post_responses`, `sourcing_post_photos` |
+| Quotations | `quotations`, `quotation_items` |
+| Orders | `orders`, `order_items` |
+| Dispatch & delivery | `dispatches`, `dispatch_items`, `dispatch_assignments`, `trip_events`, `trip_tracking_links` |
+| Vehicles & drivers | `vehicles`, `drivers`, `driver_locations`, `vehicle_locations`, `vehicle_tracking` |
+| Invites | `invites` |
+| Payments | `payments` |
+| Notifications | `notifications` |
+| Attachments & audit | `attachments`, `audit_logs` |
+
+Minimal schema application flow:
+
+```sql
+-- Applied by the migration script before running schema migrations.
+CREATE TABLE IF NOT EXISTS public.schema_migrations (
+    version BIGINT PRIMARY KEY,
+    dirty BOOLEAN NOT NULL
+);
+```
+
+```bash
+DATABASE_URL='postgres:///greenroot_dev?host=/tmp' make migrate-up
 ```
 
 ---
@@ -96,9 +137,34 @@ Three distinct ID types used across the platform:
 
 ## Seed Data
 
-The seed file includes:
-- Demo data for users, roles, nurseries, inventory, orders, payments, dispatches, requests, notifications, subscriptions, sessions, audit logs
-- 5 nurseries, 5 manager users (USR-000002..006), 5 vehicles
+There are two seed layers:
+
+| Layer | File | Purpose |
+|---|---|---|
+| Reference seed | `internal/database/migrations/greenroot_schema.sql` section 18 | Required lookup/config data; safe to re-run with `ON CONFLICT` |
+| Demo seed | `../greenroot-infra/db/postgresql/greenroot-seed.sql` | Local/dev sample users, nurseries, plants, quotations, sourcing records, and vehicles |
+
+Reference seed tables in the schema file:
+- `roles`
+- `nursery_roles`
+- `plant_sizes`
+- `plant_categories`
+- `languages`
+- `public_code_sequences`
+- `platform_config`
+- dev admin user `9000000777`
+
+The demo seed file includes:
+- Platform roles and admin user
+- Plant sizes, categories, sample plants, and plant-category mappings
+- 5 sample nurseries with addresses
+- Dev test users for buyer, owner, driver, and manager flows
+- 5 sample manager users linked to nurseries
+- 5 vehicles
+- Sample quotation and quotation items
+- Nursery application examples
+- Plant sourcing network membership and featured plants
+- Public code sequence synchronization
 
 **Important prerequisite:** English language record must exist for plant creation:
 ```sql
