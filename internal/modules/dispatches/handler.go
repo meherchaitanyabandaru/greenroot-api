@@ -253,6 +253,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusNotFound, "not_found", "dispatch resource not found")
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid dispatch input")
+	case errors.Is(err, ErrInvalidStatus):
+		response.Error(w, http.StatusUnprocessableEntity, "invalid_status_transition", "this status transition is not allowed")
 	case errors.Is(err, ErrDuplicate):
 		response.Error(w, http.StatusConflict, "duplicate_dispatch", "dispatch already exists with this dispatch number")
 	case errors.Is(err, ErrAlreadyAccepted):

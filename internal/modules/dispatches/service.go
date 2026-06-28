@@ -13,6 +13,7 @@ import (
 var (
 	ErrForbidden       = errors.New("forbidden")
 	ErrInvalidInput    = errors.New("invalid input")
+	ErrInvalidStatus   = errors.New("invalid status transition")
 	ErrDuplicate       = errors.New("duplicate dispatch")
 	ErrAlreadyAccepted = errors.New("dispatch already accepted")
 )
@@ -96,6 +97,9 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 	if !isAllowedStatus(status) {
 		return Dispatch{}, ErrInvalidInput
 	}
+	if !validTransition(current.Status, status) {
+		return Dispatch{}, ErrInvalidStatus
+	}
 	deliveryDate, err := parseOptionalTime(req.DeliveryDate)
 	if err != nil {
 		return Dispatch{}, ErrInvalidInput
@@ -174,6 +178,10 @@ func (s *Service) GetByCode(ctx context.Context, code string) (Dispatch, error) 
 }
 
 func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispatchID int64) (Dispatch, error) {
+	// Only drivers may accept dispatches.
+	if !hasRole(actor, "DRIVER") {
+		return Dispatch{}, ErrForbidden
+	}
 	dispatch, err := s.repository.FindByID(ctx, dispatchID)
 	if err != nil {
 		return Dispatch{}, err
@@ -249,13 +257,16 @@ func (s *Service) canAccess(ctx context.Context, actor ActorContext, dispatch Di
 	if hasRole(actor, "ADMIN") {
 		return nil
 	}
-	if hasRole(actor, "NURSERY_OWNER") && dispatch.SellerNurseryID != nil {
-		member, err := s.repository.IsNurseryMember(ctx, *dispatch.SellerNurseryID, actor.UserID)
-		if err != nil {
-			return err
-		}
-		if member {
-			return nil
+	if dispatch.SellerNurseryID != nil {
+		// Both owners and managers of the seller nursery can manage the dispatch.
+		if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
+			member, err := s.repository.IsNurseryMember(ctx, *dispatch.SellerNurseryID, actor.UserID)
+			if err != nil {
+				return err
+			}
+			if member {
+				return nil
+			}
 		}
 	}
 	if hasRole(actor, "DRIVER") {
@@ -341,6 +352,29 @@ func parseOptionalTime(value *string) (*time.Time, error) {
 		return nil, err
 	}
 	return &parsed, nil
+}
+
+// validTransition enforces the dispatch lifecycle state machine.
+//
+// PENDING → ACCEPTED only via /accept (driver QR scan).
+// PENDING → DISPATCHED | IN_TRANSIT | CANCELLED via PUT /status (owner pre-assigns driver).
+// ACCEPTED → DISPATCHED | IN_TRANSIT | CANCELLED via PUT /status.
+// DISPATCHED → IN_TRANSIT | CANCELLED via PUT /status.
+// IN_TRANSIT → DELIVERED | CANCELLED via PUT /status.
+// DELIVERED and CANCELLED are terminal — no further transitions allowed.
+func validTransition(from, to string) bool {
+	switch from {
+	case "PENDING":
+		return to == "DISPATCHED" || to == "IN_TRANSIT" || to == "CANCELLED"
+	case "ACCEPTED":
+		return to == "DISPATCHED" || to == "IN_TRANSIT" || to == "CANCELLED"
+	case "DISPATCHED":
+		return to == "IN_TRANSIT" || to == "CANCELLED"
+	case "IN_TRANSIT":
+		return to == "DELIVERED" || to == "CANCELLED"
+	default:
+		return false
+	}
 }
 
 func isAllowedStatus(status string) bool {
