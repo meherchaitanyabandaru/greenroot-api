@@ -1,6 +1,7 @@
 package authctx
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"strconv"
@@ -18,7 +19,19 @@ type Actor struct {
 	UserAgent string
 }
 
+type contextKey struct{}
+
+// StoreActor stores a pre-verified actor in the request context (used by EnrichActorMiddleware).
+func StoreActor(ctx context.Context, actor Actor) context.Context {
+	return context.WithValue(ctx, contextKey{}, actor)
+}
+
 func FromRequest(w http.ResponseWriter, r *http.Request, jwt *jwtplatform.Service) (Actor, bool) {
+	// Use actor pre-populated by EnrichActorMiddleware (roles are fresh from DB).
+	if actor, ok := r.Context().Value(contextKey{}).(Actor); ok && actor.UserID > 0 {
+		return actor, true
+	}
+	// Fallback: parse JWT directly (no middleware present).
 	token := BearerToken(r)
 	if token == "" {
 		response.Error(w, http.StatusUnauthorized, "missing_token", "missing bearer token")

@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	appmiddleware "github.com/meherchaitanyabandaru/greenroot-api/internal/middleware"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/admin"
@@ -55,6 +56,7 @@ func NewRouter(deps Dependencies) chi.Router {
 	registerDocsRoutes(router)
 
 	router.Route("/api/v1", func(r chi.Router) {
+		r.Use(authctx.EnrichActorMiddleware(deps.JWT, authctx.NewDBRoleFetcher(deps.DB)))
 		auth.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		admin.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		attachments.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)

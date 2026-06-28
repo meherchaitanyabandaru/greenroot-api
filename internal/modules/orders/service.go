@@ -89,6 +89,9 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID 
 	if err := s.canManage(ctx, actor, *current); err != nil {
 		return Order{}, err
 	}
+	if !validOrderTransition(current.Status, status) {
+		return Order{}, ErrInvalidStatus
+	}
 	order, err := s.repository.UpdateStatus(ctx, actor.UserID, orderID, status)
 	if err != nil {
 		return Order{}, err
@@ -446,6 +449,33 @@ func validateItem(input OrderItemRequest) error {
 		return ErrInvalidInput
 	}
 	return nil
+}
+
+// validOrderTransition enforces the order lifecycle state machine for the generic
+// PUT /orders/{id}/status endpoint. Dedicated endpoints (start-loading, complete-loading,
+// cancel) enforce their own transitions and bypass this function.
+//
+// PENDING → CONFIRMED | CANCELLED
+// CONFIRMED → COMPLETED | PARTIALLY_FULFILLED | CANCELLED
+// LOADING → CANCELLED (only cancel allowed during active loading)
+// LOADED → COMPLETED | PARTIALLY_FULFILLED | CANCELLED
+// PARTIALLY_FULFILLED → COMPLETED | CANCELLED
+// COMPLETED / CANCELLED → terminal
+func validOrderTransition(from, to string) bool {
+	switch from {
+	case "PENDING", "DRAFT":
+		return to == "CONFIRMED" || to == "CANCELLED"
+	case "CONFIRMED":
+		return to == "COMPLETED" || to == "PARTIALLY_FULFILLED" || to == "CANCELLED"
+	case "LOADING":
+		return to == "CANCELLED"
+	case "LOADED":
+		return to == "COMPLETED" || to == "PARTIALLY_FULFILLED" || to == "CANCELLED"
+	case "PARTIALLY_FULFILLED":
+		return to == "COMPLETED" || to == "CANCELLED"
+	default:
+		return false
+	}
 }
 
 func isAllowedStatus(value string) bool {
