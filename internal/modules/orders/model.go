@@ -44,18 +44,19 @@ type Order struct {
 }
 
 type OrderItem struct {
-	ID             int64     `json:"id"`
-	OrderID        int64     `json:"order_id"`
-	PlantID        int64     `json:"plant_id"`
-	ScientificName string    `json:"scientific_name"`
-	CommonName     *string   `json:"common_name,omitempty"`
-	SizeID         *int16    `json:"size_id,omitempty"`
-	SizeCode       *string   `json:"size_code,omitempty"`
-	SizeName       *string   `json:"size_name,omitempty"`
-	Quantity       float64   `json:"quantity"`
-	UnitPrice      float64   `json:"unit_price"`
-	TotalPrice     float64   `json:"total_price"`
-	Remarks        *string   `json:"remarks,omitempty"`
+	ID             int64    `json:"id"`
+	OrderID        int64    `json:"order_id"`
+	PlantID        int64    `json:"plant_id"`
+	ScientificName string   `json:"scientific_name"`
+	CommonName     *string  `json:"common_name,omitempty"`
+	SizeID         *int16   `json:"size_id,omitempty"`
+	SizeCode       *string  `json:"size_code,omitempty"`
+	SizeName       *string  `json:"size_name,omitempty"`
+	Quantity       float64  `json:"quantity"`
+	LoadedQuantity *float64 `json:"loaded_quantity,omitempty"`
+	UnitPrice      float64  `json:"unit_price"`
+	TotalPrice     float64  `json:"total_price"`
+	Remarks        *string  `json:"remarks,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 

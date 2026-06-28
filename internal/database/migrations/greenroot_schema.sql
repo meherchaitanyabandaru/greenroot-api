@@ -1109,6 +1109,7 @@ CREATE TABLE public.order_items (
     size_id              SMALLINT,
     size                 VARCHAR(100),
     quantity             NUMERIC(12,2) NOT NULL,
+    loaded_quantity      NUMERIC(12,2),
     unit_price           NUMERIC(15,2),
     total_price          NUMERIC(15,2),
     remarks              TEXT,

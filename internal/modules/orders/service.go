@@ -120,7 +120,8 @@ func (s *Service) StartLoading(ctx context.Context, actor ActorContext, orderID 
 	return *updated, nil
 }
 
-// CompleteLoading marks an order as LOADED.
+// CompleteLoading marks an order as LOADED or PARTIALLY_FULFILLED based on
+// whether any item's loaded_quantity is less than its ordered quantity.
 func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, orderID int64) (Order, error) {
 	order, err := s.repository.FindByID(ctx, orderID)
 	if err != nil {
@@ -132,11 +133,49 @@ func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, order
 	if err := s.canManage(ctx, actor, *order); err != nil {
 		return Order{}, err
 	}
-	updated, err := s.repository.UpdateStatusWithLoading(ctx, actor.UserID, orderID, "LOADED", "complete")
+	finalStatus := "LOADED"
+	for _, item := range order.Items {
+		if item.LoadedQuantity != nil && *item.LoadedQuantity < item.Quantity {
+			finalStatus = "PARTIALLY_FULFILLED"
+			break
+		}
+	}
+	updated, err := s.repository.UpdateStatusWithLoading(ctx, actor.UserID, orderID, finalStatus, "complete")
 	if err != nil {
 		return Order{}, err
 	}
-	s.audit(ctx, actor, "orders", orderID, actionUpdate, map[string]any{"order_status": "LOADED"})
+	s.audit(ctx, actor, "orders", orderID, actionUpdate, map[string]any{"order_status": finalStatus})
+	return *updated, nil
+}
+
+// SetLoadedQuantity records how many units were physically loaded for an item.
+// Only allowed while the order is in LOADING status.
+func (s *Service) SetLoadedQuantity(ctx context.Context, actor ActorContext, orderID int64, itemID int64, qty float64) (OrderItem, error) {
+	if qty < 0 {
+		return OrderItem{}, ErrInvalidInput
+	}
+	order, err := s.repository.FindByID(ctx, orderID)
+	if err != nil {
+		return OrderItem{}, err
+	}
+	if order.Status != "LOADING" {
+		return OrderItem{}, ErrInvalidStatus
+	}
+	if err := s.canManage(ctx, actor, *order); err != nil {
+		return OrderItem{}, err
+	}
+	item, err := s.repository.FindItem(ctx, itemID)
+	if err != nil {
+		return OrderItem{}, err
+	}
+	if item.OrderID != orderID {
+		return OrderItem{}, ErrForbidden
+	}
+	updated, err := s.repository.SetLoadedQuantity(ctx, itemID, qty)
+	if err != nil {
+		return OrderItem{}, err
+	}
+	s.audit(ctx, actor, "order_items", itemID, actionUpdate, map[string]any{"loaded_quantity": qty})
 	return *updated, nil
 }
 
@@ -221,6 +260,9 @@ func (s *Service) CreateItem(ctx context.Context, actor ActorContext, orderID in
 	if err := s.canManage(ctx, actor, *order); err != nil {
 		return OrderItem{}, err
 	}
+	if !isEditableStatus(order.Status) {
+		return OrderItem{}, ErrInvalidStatus
+	}
 	if err := validateItem(input); err != nil {
 		return OrderItem{}, err
 	}
@@ -247,6 +289,9 @@ func (s *Service) UpdateItem(ctx context.Context, actor ActorContext, itemID int
 	if err := s.canManage(ctx, actor, *order); err != nil {
 		return OrderItem{}, err
 	}
+	if !isEditableStatus(order.Status) {
+		return OrderItem{}, ErrInvalidStatus
+	}
 	item, err := s.repository.UpdateItem(ctx, itemID, input)
 	if err != nil {
 		return OrderItem{}, err
@@ -266,6 +311,9 @@ func (s *Service) DeleteItem(ctx context.Context, actor ActorContext, itemID int
 	}
 	if err := s.canManage(ctx, actor, *order); err != nil {
 		return err
+	}
+	if !isEditableStatus(order.Status) {
+		return ErrInvalidStatus
 	}
 	if err := s.repository.DeleteItem(ctx, itemID); err != nil {
 		return err
@@ -473,6 +521,17 @@ func validOrderTransition(from, to string) bool {
 		return to == "COMPLETED" || to == "PARTIALLY_FULFILLED" || to == "CANCELLED"
 	case "PARTIALLY_FULFILLED":
 		return to == "COMPLETED" || to == "CANCELLED"
+	default:
+		return false
+	}
+}
+
+// isEditableStatus returns true while order items can still be added/edited/deleted.
+// Items are locked once loading is completed (LOADED, PARTIALLY_FULFILLED, COMPLETED, CANCELLED).
+func isEditableStatus(status string) bool {
+	switch status {
+	case "PENDING", "CONFIRMED", "LOADING":
+		return true
 	default:
 		return false
 	}

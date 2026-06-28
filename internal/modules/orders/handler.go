@@ -245,6 +245,33 @@ func (h *Handler) CancelOrder(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, OrderResponse{Order: order})
 }
 
+// SetLoadedQuantity records the physically loaded quantity for an order item.
+// Only allowed while order is in LOADING status.
+func (h *Handler) SetLoadedQuantity(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	orderID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	itemID, ok := pathID(w, r, "itemId")
+	if !ok {
+		return
+	}
+	var req SetLoadedQuantityRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	item, err := h.service.SetLoadedQuantity(r.Context(), actor, orderID, itemID, req.LoadedQuantity)
+	if err != nil {
+		writeOrdersError(w, err)
+		return
+	}
+	response.OK(w, ItemResponse{Item: item})
+}
+
 // AssignManager assigns a manager to an order.
 func (h *Handler) AssignManager(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)

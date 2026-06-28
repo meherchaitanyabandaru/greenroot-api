@@ -27,6 +27,7 @@ type Repository interface {
 	CreateItem(ctx context.Context, orderID int64, input OrderItemRequest) (*OrderItem, error)
 	UpdateItem(ctx context.Context, itemID int64, input OrderItemRequest) (*OrderItem, error)
 	DeleteItem(ctx context.Context, itemID int64) error
+	SetLoadedQuantity(ctx context.Context, itemID int64, qty float64) (*OrderItem, error)
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	GetUserNurseryIDs(ctx context.Context, userID int64) ([]int64, error)
@@ -534,7 +535,7 @@ func itemSelect() string {
 	return `
 		SELECT oi.order_item_id, oi.order_id, oi.plant_id, p.scientific_name, p.common_name,
 			oi.size_id, ps.size_code, ps.display_name, oi.quantity, oi.unit_price, oi.total_price,
-			oi.remarks, oi.created_at
+			oi.remarks, oi.created_at, oi.loaded_quantity
 		FROM public.order_items oi
 		JOIN public.plants p ON p.plant_id = oi.plant_id
 		LEFT JOIN public.plant_sizes ps ON ps.size_id = oi.size_id
@@ -707,7 +708,8 @@ func scanItem(row interface{ Scan(dest ...any) error }) (OrderItem, error) {
 	var item OrderItem
 	var commonName, sizeCode, sizeName, remarks sql.NullString
 	var sizeID sql.NullInt16
-	if err := row.Scan(&item.ID, &item.OrderID, &item.PlantID, &item.ScientificName, &commonName, &sizeID, &sizeCode, &sizeName, &item.Quantity, &item.UnitPrice, &item.TotalPrice, &remarks, &item.CreatedAt); err != nil {
+	var loadedQty sql.NullFloat64
+	if err := row.Scan(&item.ID, &item.OrderID, &item.PlantID, &item.ScientificName, &commonName, &sizeID, &sizeCode, &sizeName, &item.Quantity, &item.UnitPrice, &item.TotalPrice, &remarks, &item.CreatedAt, &loadedQty); err != nil {
 		return OrderItem{}, err
 	}
 	item.CommonName = nullableString(commonName)
@@ -717,7 +719,21 @@ func scanItem(row interface{ Scan(dest ...any) error }) (OrderItem, error) {
 	item.SizeCode = nullableString(sizeCode)
 	item.SizeName = nullableString(sizeName)
 	item.Remarks = nullableString(remarks)
+	if loadedQty.Valid {
+		item.LoadedQuantity = &loadedQty.Float64
+	}
 	return item, nil
+}
+
+func (r *PostgresRepository) SetLoadedQuantity(ctx context.Context, itemID int64, qty float64) (*OrderItem, error) {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE public.order_items SET loaded_quantity = $2 WHERE order_item_id = $1`,
+		itemID, qty,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return r.findItem(ctx, itemID)
 }
 
 func nullableString(value sql.NullString) *string {

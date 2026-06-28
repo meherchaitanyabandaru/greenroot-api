@@ -61,6 +61,10 @@ type ItemResponse struct {
 	Item OrderItem `json:"item"`
 }
 
+type SetLoadedQuantityRequest struct {
+	LoadedQuantity float64 `json:"loaded_quantity"`
+}
+
 type MessageResponse struct {
 	Message string `json:"message"`
 }
