@@ -1,6 +1,6 @@
 # GreenRoot — Database Reference
 
-> Last updated: 2026-06-27
+> Last updated: 2026-06-28
 
 ---
 
@@ -22,20 +22,20 @@ Current count from route/schema inspection:
 ## Local Setup
 
 ```bash
-# Create DB and apply migrations
-createdb greenroot_dev
+# 1. Create DB and apply schema
+createdb greenroot
 cd greenroot-api
-DATABASE_URL='postgres:///greenroot_dev?host=/tmp' make migrate-up
+DATABASE_URL='postgres:///greenroot?host=/tmp' make migrate-up
 
-# Load demo seed data
-psql -v ON_ERROR_STOP=1 -d greenroot_dev \
+# 2. Load dev seed data (wipes all transactional data, reseeds 5 test users + 1 nursery)
+psql 'postgres:///greenroot?host=/tmp' -v ON_ERROR_STOP=1 \
   -f ../greenroot-infra/db/postgresql/greenroot-seed.sql
 ```
 
 Migration commands:
 ```bash
-make migrate-up       # Apply pending
-make migrate-status   # Check state
+make migrate-up       # Apply pending migrations
+make migrate-status   # Check current migration state
 make migrate-down     # Roll back (DESTRUCTIVE — drops public schema)
 ```
 
@@ -141,36 +141,35 @@ There are two seed layers:
 
 | Layer | File | Purpose |
 |---|---|---|
-| Reference seed | `internal/database/migrations/greenroot_schema.sql` section 18 | Required lookup/config data; safe to re-run with `ON CONFLICT` |
-| Demo seed | `../greenroot-infra/db/postgresql/greenroot-seed.sql` | Local/dev sample users, nurseries, plants, quotations, sourcing records, and vehicles |
+| Reference seed | Inside `greenroot_schema.sql` | Required lookup/config data; applied with every migration |
+| Dev seed | `greenroot-infra/db/postgresql/greenroot-seed.sql` | Full reset + 5 clean test users, 1 nursery, sample plants |
 
-Reference seed tables in the schema file:
-- `roles`
-- `nursery_roles`
-- `plant_sizes`
-- `plant_categories`
-- `languages`
-- `public_code_sequences`
-- `platform_config`
-- dev admin user `9000000777`
+**Dev seed resets all transactional data** (TRUNCATE with FK checks disabled), then inserts exactly:
 
-The demo seed file includes:
-- Platform roles and admin user
-- Plant sizes, categories, sample plants, and plant-category mappings
-- 5 sample nurseries with addresses
-- Dev test users for buyer, owner, driver, and manager flows
-- 5 sample manager users linked to nurseries
-- 5 vehicles
-- Sample quotation and quotation items
-- Nursery application examples
-- Plant sourcing network membership and featured plants
-- Public code sequence synchronization
+| What | Detail |
+|---|---|
+| 5 test users | One per role, easy mobile pattern `9X00000000` |
+| 1 nursery | `GreenRoot Dev Nursery`, status `ACTIVE`, owned by Priya Owner |
+| 2 nursery members | Owner (OWNER role) + Gumastha Manager (MANAGER role) |
+| 1 driver profile | Raju Driver, pre-approved |
+| 2 vehicles | Sample fleet |
+| 5 plants | Mango, Neem, Hibiscus, Coconut, Drumstick |
+| Platform config | 7 config keys (OTP expiry, min order, etc.) |
+| Sourcing network | Dev nursery enrolled, 3 featured plants |
 
-**Important prerequisite:** English language record must exist for plant creation:
-```sql
-INSERT INTO public.languages (language_id, language_code, language_name, is_active, created_at, updated_at)
-VALUES (1, 'en', 'English', true, NOW(), NOW())
-ON CONFLICT DO NOTHING;
+Dev credentials (OTP `123456` for all):
+
+| Mobile | Role | Name |
+|---|---|---|
+| `9000000000` | Admin + Super Admin | GreenRoot Admin |
+| `9100000000` | Nursery Owner | Priya Owner |
+| `9200000000` | Manager | Gumastha Manager |
+| `9300000000` | Buyer | Ravi Buyer |
+| `9400000000` | Driver | Raju Driver |
+
+To reset the dev database at any time:
+```bash
+psql 'postgres:///greenroot?host=/tmp' -f greenroot-infra/db/postgresql/greenroot-seed.sql
 ```
 
 ---
@@ -178,10 +177,12 @@ ON CONFLICT DO NOTHING;
 ## Business Rules Enforced in Schema
 
 - `uq_nurseries_owner_user_id` — one user can own at most one nursery (partial, WHERE NOT NULL)
-- `uq_drivers_user_id` — proper UNIQUE constraint (not partial index — needed for `ON CONFLICT`)
-- Manager membership: `nursery_users.status='ACTIVE'` scopes active memberships; one active per user
-- Orders are never hard-deleted — only cancelled (with reason)
+- `uq_manager_one_active_nursery` — one user can be ACTIVE in at most one nursery at a time
+- `uq_drivers_user_id` — unique constraint on `drivers(user_id)` (needed for `ON CONFLICT`)
+- Orders are never hard-deleted — only `PENDING` orders can be deleted; others must be cancelled
 - Audit logs are immutable — no UPDATE/DELETE through application
+
+See `greenroot-api/BUSINESS_RULES.md` for the full rule set.
 
 ---
 

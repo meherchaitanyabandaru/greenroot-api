@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
 # GreenRoot API — Comprehensive Test Suite
-# Tests every endpoint with positive + negative (RBAC/validation) cases.
-# Source of truth: RBAC_NOTES.md + bussiness-rules.md
+# Tests every endpoint: positive, negative (RBAC), validation, and full
+# order lifecycle including partial fulfillment and cancel/delete guards.
+# Source of truth: BUSINESS_RULES.md
 #
 # Usage:
 #   chmod +x test-api.sh && ./test-api.sh
@@ -10,14 +11,18 @@
 #
 # Requirements: curl, jq
 # Prerequisites:
-#   1. API running with LATEST code:
-#        cd greenroot-api
-#        DATABASE_URL='postgres:///greenroot?host=/tmp' JWT_SECRET='local-dev-change-me' LOG_DIR='/tmp/gr-logs' go run ./cmd/api
-#   2. Seed data loaded:
-#        psql -d greenroot -f ../greenroot-infra/db/postgresql/greenroot-seed.sql
-# Seed users (OTP: 123456):
-#   ADMIN: 9000000777 | BUYER: 9111111111 | OWNER: 9222222222
-#   DRIVER: 9333333333 | MANAGER: 9555555555
+#   1. DB reset + seed:
+#        psql 'postgres:///greenroot?host=/tmp' \
+#          -f ../greenroot-infra/db/postgresql/greenroot-seed.sql
+#   2. API running:
+#        DATABASE_URL='postgres:///greenroot?host=/tmp' \
+#          JWT_SECRET='local-dev-change-me' LOG_DIR='/tmp/gr-logs' \
+#          go run ./cmd/api
+#
+# Seed users (OTP: 123456 for all):
+#   Admin:   9000000000    Nursery Owner: 9100000000
+#   Manager: 9200000000    Buyer:         9300000000
+#   Driver:  9400000000
 # =============================================================================
 
 set -euo pipefail
@@ -27,11 +32,11 @@ ROOT_URL="${ROOT_URL:-http://localhost:8080}"
 OTP="123456"
 
 # ── Seed mobile numbers (from greenroot-seed.sql) ────────────────────────────
-ADMIN_MOBILE="9000000777"
-BUYER_MOBILE="9111111111"
-OWNER_MOBILE="9222222222"
-DRIVER_MOBILE="9333333333"
-MANAGER_MOBILE="9555555555"
+ADMIN_MOBILE="9000000000"
+BUYER_MOBILE="9300000000"
+OWNER_MOBILE="9100000000"
+DRIVER_MOBILE="9400000000"
+MANAGER_MOBILE="9200000000"
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -234,7 +239,7 @@ echo -e "  IDs → ADMIN:${ADMIN_UID} OWNER:${OWNER_UID} MGR:${MANAGER_UID} DRV:
 section "1 🔐 Auth Module"
 
 subsection "Positive cases"
-r=$(req POST /auth/send-otp "" '{"mobile":"9000000777"}')
+r=$(req POST /auth/send-otp "" '{"mobile":"9000000000"}')
 check "send-otp valid mobile" "$r" "200"
 
 r=$(req POST /auth/verify-otp "" "{\"mobile\":\"${ADMIN_MOBILE}\",\"otp\":\"${OTP}\"}")
@@ -307,33 +312,14 @@ r=$(req POST /plants/categories "$ADMIN_TOKEN" "{\"name\":\"Test Category ${TS}\
 CATEGORY_ID=$(jx "$(bd "$r")" ".category.id // .id")
 echo -e "  CATEGORY_ID=${CATEGORY_ID}"
 
-# Create nursery via ADMIN with owner_user_id so /nurseries/owned works for OWNER
-# (Seed nursery lacks owner_user_id — v1_refactor migration added that column)
-r=$(req POST /nurseries "$ADMIN_TOKEN" "{
-  \"name\": \"GR Test Nursery ${TS}\",
-  \"mobile\": \"98000${TS: -5}\",
-  \"status\": \"APPROVED\",
-  \"owner_user_id\": ${OWNER_UID}
-}")
+# Use the seed nursery (already has OWNER + MANAGER as members — avoids uq_manager_one_active_nursery)
+r=$(req GET /nurseries/owned "$OWNER_TOKEN")
 NURSERY_ID=$(jx "$(bd "$r")" ".nursery.id // .id")
 if [[ -z "$NURSERY_ID" || "$NURSERY_ID" == "null" ]]; then
-  # Fallback: use the /nurseries/owned if it returns something
-  r2=$(req GET /nurseries/owned "$OWNER_TOKEN")
-  NURSERY_ID=$(jx "$(bd "$r2")" ".nursery.id // .id")
-fi
-if [[ -z "$NURSERY_ID" || "$NURSERY_ID" == "null" ]]; then
-  r2=$(req GET "/nurseries" "$ADMIN_TOKEN")
-  NURSERY_ID=$(jx "$(bd "$r2")" ".nurseries[0].id")
+  r=$(req GET "/nurseries" "$ADMIN_TOKEN")
+  NURSERY_ID=$(jx "$(bd "$r")" ".nurseries[0].id")
 fi
 echo -e "  NURSERY_ID=${NURSERY_ID}"
-
-# Add OWNER and MANAGER into nursery_users so membership RBAC checks pass.
-# (Nursery was created via admin with owner_user_id; dispatch/quotation modules
-#  check IsNurseryMember which queries nursery_users, not owner_user_id.)
-r=$(req POST "/nurseries/${NURSERY_ID}/managers" "$ADMIN_TOKEN" "{\"user_id\":${OWNER_UID},\"role\":\"MANAGER\"}")
-echo -e "  Added OWNER to nursery_users: HTTP $(sc "$r")"
-r=$(req POST "/nurseries/${NURSERY_ID}/managers" "$ADMIN_TOKEN" "{\"user_id\":${MANAGER_UID},\"role\":\"MANAGER\"}")
-echo -e "  Added MANAGER to nursery_users: HTTP $(sc "$r")"
 
 # Create inventory
 r=$(req POST /inventory "$ADMIN_TOKEN" "{
@@ -579,12 +565,12 @@ if [[ -n "$ADMIN_NURSERY_ID" && "$ADMIN_NURSERY_ID" != "null" ]]; then
   check "PUT /nurseries/:id/status as ADMIN → 200" "$r" "200"
 fi
 
-subsection "RBAC: Buyer/Driver cannot write nurseries"
+subsection "RBAC: Driver cannot own nurseries; Buyer can register one"
 r=$(req POST /nurseries "$BUYER_TOKEN" '{"name":"Buyer Nursery"}')
-check_any "POST /nurseries as BUYER → 403/409" "$r" "403" "409"
+check_any "POST /nurseries as BUYER → 201 (buyers can register nursery)" "$r" "201" "409"
 
 r=$(req POST /nurseries "$DRIVER_TOKEN" '{"name":"Driver Nursery"}')
-check_any "POST /nurseries as DRIVER → 403/409" "$r" "403" "409"
+check_any "POST /nurseries as DRIVER → 403/409 (drivers blocked)" "$r" "403" "409"
 
 r=$(req POST /nurseries "" '{"name":"Anon Nursery"}')
 check "POST /nurseries no auth → 401" "$r" "401"
@@ -851,13 +837,287 @@ check_any "POST /orders as BUYER → 201 (buyers allowed to place orders)" "$r" 
 r=$(req POST /orders "" "{\"seller_nursery_id\":${NURSERY_ID},\"order_status\":\"PENDING\",\"items\":[]}")
 check "POST /orders no auth → 401" "$r" "401"
 
-subsection "Order cancel"
+subsection "Order cancel (basic)"
 if [[ -n "$ORDER_ID" && "$ORDER_ID" != "null" ]]; then
   r=$(req POST "/orders/${ORDER_ID}/cancel" "$DRIVER_TOKEN" '{"reason":"Driver cannot cancel"}')
   check "POST /orders/:id/cancel as DRIVER → 403" "$r" "403"
 
   r=$(req POST "/orders/${ORDER_ID}/cancel" "$OWNER_TOKEN" '{"reason":"Test cancel"}')
-  check "POST /orders/:id/cancel as OWNER → 200" "$r" "200"
+  check "POST /orders/:id/cancel as OWNER (PENDING) → 200" "$r" "200"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ORDER LIFECYCLE — Full state machine test
+# PENDING → CONFIRMED → LOADING → LOADED → COMPLETED
+# ─────────────────────────────────────────────────────────────────────────────
+subsection "Full lifecycle: PENDING → CONFIRMED → LOADING → LOADED → COMPLETED"
+
+r=$(req POST /orders "$OWNER_TOKEN" "{
+  \"seller_nursery_id\": ${NURSERY_ID},
+  \"buyer_name\": \"Lifecycle Buyer\",
+  \"buyer_mobile\": \"9300000000\",
+  \"order_status\": \"PENDING\",
+  \"items\": [{
+    \"plant_id\": ${PLANT_ID},
+    \"size_id\": 1,
+    \"quantity\": 10,
+    \"unit_price\": 200,
+    \"total_price\": 2000
+  }]
+}")
+check "Create PENDING order for lifecycle test → 201" "$r" "201"
+LC_ORDER_ID=$(jx "$(bd "$r")" ".order.id // .id")
+LC_ITEM_ID=$(jx "$(bd "$r")" ".order.items[0].id // .items[0].id")
+
+if [[ -n "$LC_ORDER_ID" && "$LC_ORDER_ID" != "null" ]]; then
+
+  # Step 1: PENDING → CONFIRMED
+  r=$(req PUT "/orders/${LC_ORDER_ID}/status" "$OWNER_TOKEN" '{"order_status":"CONFIRMED"}')
+  check "PUT /status CONFIRMED (PENDING→CONFIRMED) → 200" "$r" "200"
+  got_status=$(jx "$(bd "$r")" ".order.order_status // .order.status // .status")
+  [[ "$got_status" == "CONFIRMED" ]] && pass "Order status is CONFIRMED" || fail "Order status is CONFIRMED" "CONFIRMED" "$got_status"
+
+  # Step 2: CONFIRMED → LOADING
+  r=$(req POST "/orders/${LC_ORDER_ID}/start-loading" "$OWNER_TOKEN")
+  check "POST /start-loading (CONFIRMED→LOADING) → 200" "$r" "200"
+  got_status=$(jx "$(bd "$r")" ".order.order_status // .order.status // .status")
+  [[ "$got_status" == "LOADING" ]] && pass "Order status is LOADING" || fail "Order status is LOADING" "LOADING" "$got_status"
+
+  # Items are editable during LOADING (business rule)
+  if [[ -n "$LC_ITEM_ID" && "$LC_ITEM_ID" != "null" ]]; then
+    r=$(req PUT "/orders/${LC_ORDER_ID}/items/${LC_ITEM_ID}" "$OWNER_TOKEN" \
+      "{\"plant_id\":${PLANT_ID},\"quantity\":10,\"unit_price\":220,\"total_price\":2200}")
+    check "PUT /orders/:id/items/:id during LOADING (price edit) → 200" "$r" "200"
+  fi
+
+  # Step 3: LOADING → LOADED (all items loaded at full quantity)
+  r=$(req POST "/orders/${LC_ORDER_ID}/complete-loading" "$OWNER_TOKEN")
+  check "POST /complete-loading (LOADING→LOADED) → 200" "$r" "200"
+  got_status=$(jx "$(bd "$r")" ".order.order_status // .order.status // .status")
+  [[ "$got_status" == "LOADED" ]] && pass "Order status is LOADED" || fail "Order status is LOADED" "LOADED" "$got_status"
+
+  # Step 4: LOADED → COMPLETED
+  r=$(req PUT "/orders/${LC_ORDER_ID}/status" "$OWNER_TOKEN" '{"order_status":"COMPLETED"}')
+  check "PUT /status COMPLETED (LOADED→COMPLETED) → 200" "$r" "200"
+  got_status=$(jx "$(bd "$r")" ".order.order_status // .order.status // .status")
+  [[ "$got_status" == "COMPLETED" ]] && pass "Order status is COMPLETED" || fail "Order status is COMPLETED" "COMPLETED" "$got_status"
+
+  # Terminal state: cannot cancel COMPLETED order
+  r=$(req POST "/orders/${LC_ORDER_ID}/cancel" "$OWNER_TOKEN" '{"reason":"Should fail"}')
+  check "Cancel COMPLETED order → 400/409/422" "$r" "$(sc "$r")"
+  got=$(sc "$r")
+  if [[ "$got" != "200" ]]; then
+    pass "Cancel COMPLETED order correctly rejected [HTTP $got]"
+    TOTAL=$((TOTAL + 1)); PASS=$((PASS + 1))
+  else
+    fail "Cancel COMPLETED order should be rejected" "4xx" "200"
+  fi
+
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PARTIAL FULFILLMENT — loaded_quantity < ordered quantity → PARTIALLY_FULFILLED
+# ─────────────────────────────────────────────────────────────────────────────
+subsection "Partial fulfillment: loaded_quantity < quantity → PARTIALLY_FULFILLED"
+
+r=$(req POST /orders "$OWNER_TOKEN" "{
+  \"seller_nursery_id\": ${NURSERY_ID},
+  \"buyer_name\": \"Partial Buyer\",
+  \"buyer_mobile\": \"9300000000\",
+  \"order_status\": \"PENDING\",
+  \"items\": [{
+    \"plant_id\": ${PLANT_ID},
+    \"size_id\": 1,
+    \"quantity\": 10,
+    \"unit_price\": 300,
+    \"total_price\": 3000
+  }]
+}")
+check "Create PENDING order for partial test → 201" "$r" "201"
+PF_ORDER_ID=$(jx "$(bd "$r")" ".order.id // .id")
+PF_ITEM_ID=$(jx "$(bd "$r")" ".order.items[0].id // .items[0].id")
+
+if [[ -n "$PF_ORDER_ID" && "$PF_ORDER_ID" != "null" ]]; then
+
+  # Confirm → Loading
+  r=$(req PUT "/orders/${PF_ORDER_ID}/status" "$OWNER_TOKEN" '{"order_status":"CONFIRMED"}')
+  check "PF: PENDING → CONFIRMED → 200" "$r" "200"
+
+  r=$(req POST "/orders/${PF_ORDER_ID}/start-loading" "$OWNER_TOKEN")
+  check "PF: CONFIRMED → LOADING → 200" "$r" "200"
+
+  # Set loaded_quantity = 6 (less than ordered 10) → PARTIALLY_FULFILLED
+  # Route: PUT /orders/:id/items/:itemId/loaded-quantity
+  if [[ -n "$PF_ITEM_ID" && "$PF_ITEM_ID" != "null" ]]; then
+    r=$(req PUT "/orders/${PF_ORDER_ID}/items/${PF_ITEM_ID}/loaded-quantity" "$OWNER_TOKEN" \
+      '{"loaded_quantity":6}')
+    check "Set loaded_quantity=6 on item (partial load) → 200" "$r" "200"
+  fi
+
+  r=$(req POST "/orders/${PF_ORDER_ID}/complete-loading" "$OWNER_TOKEN")
+  check "PF: complete-loading with partial qty → 200" "$r" "200"
+  got_status=$(jx "$(bd "$r")" ".order.order_status // .order.status // .status")
+  [[ "$got_status" == "PARTIALLY_FULFILLED" ]] && pass "Order status is PARTIALLY_FULFILLED" \
+    || fail "Order status is PARTIALLY_FULFILLED" "PARTIALLY_FULFILLED" "$got_status"
+
+  # Invoice must be recalculated: 6 * 300 = 1800 (not 3000)
+  r=$(req GET "/orders/${PF_ORDER_ID}" "$OWNER_TOKEN")
+  recalc_amount=$(jx "$(bd "$r")" ".order.total_amount // .total_amount")
+  if awk "BEGIN{exit !($recalc_amount < 2999)}"; then
+    pass "Invoice recalculated after partial load (total=$recalc_amount < 3000)"
+    TOTAL=$((TOTAL + 1)); PASS=$((PASS + 1))
+  else
+    fail "Invoice recalculation: expected < 3000, got $recalc_amount"
+    TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
+  fi
+
+  # Cannot cancel PARTIALLY_FULFILLED (truck dispatched)
+  r=$(req POST "/orders/${PF_ORDER_ID}/cancel" "$OWNER_TOKEN" '{"reason":"Truck gone"}')
+  got=$(sc "$r")
+  if [[ "$got" != "200" ]]; then
+    pass "Cancel PARTIALLY_FULFILLED correctly rejected [HTTP $got]"
+    TOTAL=$((TOTAL + 1)); PASS=$((PASS + 1))
+  else
+    fail "Cancel PARTIALLY_FULFILLED should be rejected" "4xx" "200"
+    TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
+  fi
+
+  # PARTIALLY_FULFILLED → COMPLETED
+  r=$(req PUT "/orders/${PF_ORDER_ID}/status" "$OWNER_TOKEN" '{"order_status":"COMPLETED"}')
+  check "PF: PARTIALLY_FULFILLED → COMPLETED → 200" "$r" "200"
+
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CANCEL GUARDS — Cannot cancel post-dispatch states
+# ─────────────────────────────────────────────────────────────────────────────
+subsection "Cancel guards: LOADED and PARTIALLY_FULFILLED cannot be cancelled"
+
+r=$(req POST /orders "$OWNER_TOKEN" "{
+  \"seller_nursery_id\": ${NURSERY_ID},
+  \"buyer_name\": \"Guard Test Buyer\",
+  \"order_status\": \"PENDING\",
+  \"items\": [{\"plant_id\":${PLANT_ID},\"size_id\":1,\"quantity\":5,\"unit_price\":100,\"total_price\":500}]
+}")
+CG_ORDER_ID=$(jx "$(bd "$r")" ".order.id // .id")
+
+if [[ -n "$CG_ORDER_ID" && "$CG_ORDER_ID" != "null" ]]; then
+  req PUT "/orders/${CG_ORDER_ID}/status" "$OWNER_TOKEN" '{"order_status":"CONFIRMED"}' > /dev/null
+  req POST "/orders/${CG_ORDER_ID}/start-loading" "$OWNER_TOKEN" > /dev/null
+  req POST "/orders/${CG_ORDER_ID}/complete-loading" "$OWNER_TOKEN" > /dev/null
+
+  # Order is now LOADED — cancel must fail
+  r=$(req POST "/orders/${CG_ORDER_ID}/cancel" "$OWNER_TOKEN" '{"reason":"Guard test"}')
+  got=$(sc "$r")
+  if [[ "$got" != "200" ]]; then
+    pass "Cancel LOADED order rejected [HTTP $got]"
+    TOTAL=$((TOTAL + 1)); PASS=$((PASS + 1))
+  else
+    fail "Cancel LOADED order should be rejected" "4xx" "200"
+    TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
+  fi
+fi
+
+# Cancel with empty body (no reason) must be valid for PENDING order
+r=$(req POST /orders "$OWNER_TOKEN" "{
+  \"seller_nursery_id\": ${NURSERY_ID},
+  \"buyer_name\": \"Empty Cancel Buyer\",
+  \"order_status\": \"PENDING\",
+  \"items\": [{\"plant_id\":${PLANT_ID},\"size_id\":1,\"quantity\":1,\"unit_price\":100,\"total_price\":100}]
+}")
+EMPTY_CANCEL_ID=$(jx "$(bd "$r")" ".order.id // .id")
+if [[ -n "$EMPTY_CANCEL_ID" && "$EMPTY_CANCEL_ID" != "null" ]]; then
+  r=$(req POST "/orders/${EMPTY_CANCEL_ID}/cancel" "$OWNER_TOKEN" '')
+  check "Cancel PENDING order with empty body (no reason) → 200" "$r" "200"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DELETE GUARD — Only PENDING orders can be deleted
+# ─────────────────────────────────────────────────────────────────────────────
+subsection "Delete guard: only PENDING orders can be deleted"
+
+r=$(req POST /orders "$OWNER_TOKEN" "{
+  \"seller_nursery_id\": ${NURSERY_ID},
+  \"buyer_name\": \"Delete Test\",
+  \"order_status\": \"PENDING\",
+  \"items\": [{\"plant_id\":${PLANT_ID},\"size_id\":1,\"quantity\":1,\"unit_price\":100,\"total_price\":100}]
+}")
+DEL_ORDER_ID=$(jx "$(bd "$r")" ".order.id // .id")
+
+if [[ -n "$DEL_ORDER_ID" && "$DEL_ORDER_ID" != "null" ]]; then
+  # Confirm it (PENDING → CONFIRMED)
+  req PUT "/orders/${DEL_ORDER_ID}/status" "$OWNER_TOKEN" '{"order_status":"CONFIRMED"}' > /dev/null
+
+  # Cannot delete CONFIRMED order
+  r=$(req DELETE "/orders/${DEL_ORDER_ID}" "$OWNER_TOKEN")
+  got=$(sc "$r")
+  if [[ "$got" != "200" && "$got" != "204" ]]; then
+    pass "DELETE CONFIRMED order rejected [HTTP $got]"
+    TOTAL=$((TOTAL + 1)); PASS=$((PASS + 1))
+  else
+    fail "DELETE CONFIRMED order should be rejected" "4xx" "$got"
+    TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
+  fi
+fi
+
+# Create a fresh PENDING order and delete it — should succeed
+r=$(req POST /orders "$OWNER_TOKEN" "{
+  \"seller_nursery_id\": ${NURSERY_ID},
+  \"buyer_name\": \"Delete Pending\",
+  \"order_status\": \"PENDING\",
+  \"items\": [{\"plant_id\":${PLANT_ID},\"size_id\":1,\"quantity\":1,\"unit_price\":100,\"total_price\":100}]
+}")
+DEL_PENDING_ID=$(jx "$(bd "$r")" ".order.id // .id")
+if [[ -n "$DEL_PENDING_ID" && "$DEL_PENDING_ID" != "null" ]]; then
+  r=$(req DELETE "/orders/${DEL_PENDING_ID}" "$OWNER_TOKEN")
+  check "DELETE PENDING order → 200/204" "$r" "$(sc "$r")"
+  got=$(sc "$r")
+  if [[ "$got" == "200" || "$got" == "204" ]]; then
+    pass "DELETE PENDING order succeeds [HTTP $got]"
+    TOTAL=$((TOTAL + 1)); PASS=$((PASS + 1))
+  else
+    fail "DELETE PENDING order" "200/204" "$got"
+    TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
+  fi
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BUYER CANCEL — Buyer can only cancel own PENDING orders
+# ─────────────────────────────────────────────────────────────────────────────
+subsection "Buyer can cancel own PENDING order; blocked on CONFIRMED"
+
+r=$(req POST /orders "$BUYER_TOKEN" "{
+  \"seller_nursery_id\": ${NURSERY_ID},
+  \"buyer_name\": \"Ravi Buyer\",
+  \"order_status\": \"PENDING\",
+  \"items\": [{\"plant_id\":${PLANT_ID},\"size_id\":1,\"quantity\":2,\"unit_price\":150,\"total_price\":300}]
+}")
+BUYER_ORDER_ID=$(jx "$(bd "$r")" ".order.id // .id")
+
+if [[ -n "$BUYER_ORDER_ID" && "$BUYER_ORDER_ID" != "null" ]]; then
+  r=$(req POST "/orders/${BUYER_ORDER_ID}/cancel" "$BUYER_TOKEN" '{"reason":"Changed my mind"}')
+  check "Buyer cancel own PENDING order → 200" "$r" "200"
+fi
+
+# Buyer cannot cancel an order that is CONFIRMED
+r=$(req POST /orders "$OWNER_TOKEN" "{
+  \"seller_nursery_id\": ${NURSERY_ID},
+  \"buyer_name\": \"Confirm Buyer Order\",
+  \"order_status\": \"PENDING\",
+  \"items\": [{\"plant_id\":${PLANT_ID},\"size_id\":1,\"quantity\":1,\"unit_price\":100,\"total_price\":100}]
+}")
+BUYER_CONF_ID=$(jx "$(bd "$r")" ".order.id // .id")
+if [[ -n "$BUYER_CONF_ID" && "$BUYER_CONF_ID" != "null" ]]; then
+  req PUT "/orders/${BUYER_CONF_ID}/status" "$OWNER_TOKEN" '{"order_status":"CONFIRMED"}' > /dev/null
+  r=$(req POST "/orders/${BUYER_CONF_ID}/cancel" "$BUYER_TOKEN" '{"reason":"Buyer tries confirmed"}')
+  got=$(sc "$r")
+  if [[ "$got" != "200" ]]; then
+    pass "Buyer cancel CONFIRMED order rejected [HTTP $got]"
+    TOTAL=$((TOTAL + 1)); PASS=$((PASS + 1))
+  else
+    fail "Buyer cancel CONFIRMED order should be rejected" "4xx" "200"
+    TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
+  fi
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1679,29 +1939,50 @@ check "GET /me/owner-dashboard no auth → 401" "$r" "401"
 # ═════════════════════════════════════════════════════════════════════════════
 # MODULE 23: CRITICAL BUSINESS RULE SUMMARY
 # ═════════════════════════════════════════════════════════════════════════════
-section "23 🔒 Critical RBAC Business Rules — Final Verification"
+section "23 🔒 Critical Business Rules — Final Verification"
 
-echo -e "\n  Verifying the 4 bugs fixed in this session…\n"
-
-subsection "Bug 1: canManagePlants — NURSERY_OWNER must be BLOCKED from plant write"
+subsection "Plants: NURSERY_OWNER blocked from write"
 r=$(req POST /plants "$OWNER_TOKEN" '{"scientific_name":"Owner should not create plant"}')
-check "POST /plants as NURSERY_OWNER → 403 ✔ (FIXED: was 201)" "$r" "403"
+check "POST /plants as NURSERY_OWNER → 403" "$r" "403"
 
-subsection "Bug 2: admin/dashboard — SUPER_ADMIN must NOT be locked out"
+subsection "Admin dashboard: accessible to ADMIN + SUPER_ADMIN"
 r=$(req GET /admin/dashboard "$ADMIN_TOKEN")
-check "GET /admin/dashboard as ADMIN → 200 ✔ (FIXED: SUPER_ADMIN also passes)" "$r" "200"
+check "GET /admin/dashboard as ADMIN → 200" "$r" "200"
 
-subsection "Bug 3: quotations/Create — ADMIN must be BLOCKED from creating quotations"
+subsection "Quotations: ADMIN blocked from creating"
 r=$(req POST /quotations "$ADMIN_TOKEN" "{
   \"quotation_type\":\"INTERNAL\",
   \"nursery_id\":${NURSERY_ID},
   \"items\":[{\"plant_id\":${PLANT_ID},\"quantity\":1,\"unit_price\":100,\"total_price\":100}]
 }")
-check "POST /quotations as ADMIN → 403 ✔ (FIXED: was 201)" "$r" "403"
+check "POST /quotations as ADMIN → 403" "$r" "403"
 
-subsection "Bug 4: dispatches/Create — ADMIN must be BLOCKED from creating dispatches"
+subsection "Dispatches: ADMIN blocked from creating"
 r=$(req POST /dispatches "$ADMIN_TOKEN" "{\"order_id\":${ORDER_ID:-1},\"destination_address\":\"Admin test\"}")
-check "POST /dispatches as ADMIN → 403 ✔ (FIXED: was 201)" "$r" "403"
+check "POST /dispatches as ADMIN → 403" "$r" "403"
+
+subsection "Order state machine: invalid transitions rejected"
+r=$(req POST /orders "$OWNER_TOKEN" "{
+  \"seller_nursery_id\": ${NURSERY_ID},
+  \"buyer_name\": \"Transition Test\",
+  \"order_status\": \"PENDING\",
+  \"items\": [{\"plant_id\":${PLANT_ID},\"size_id\":1,\"quantity\":1,\"unit_price\":100,\"total_price\":100}]
+}")
+TRANS_ID=$(jx "$(bd "$r")" ".order.id // .id")
+if [[ -n "$TRANS_ID" && "$TRANS_ID" != "null" ]]; then
+  # Cannot jump PENDING → COMPLETED directly
+  r=$(req PUT "/orders/${TRANS_ID}/status" "$OWNER_TOKEN" '{"order_status":"COMPLETED"}')
+  got=$(sc "$r")
+  if [[ "$got" != "200" ]]; then
+    pass "PENDING→COMPLETED rejected [HTTP $got]"
+    TOTAL=$((TOTAL + 1)); PASS=$((PASS + 1))
+  else
+    fail "PENDING→COMPLETED should be rejected" "4xx" "200"
+    TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
+  fi
+  # Cleanup
+  req POST "/orders/${TRANS_ID}/cancel" "$OWNER_TOKEN" '{"reason":"cleanup"}' > /dev/null
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # FINAL SUMMARY

@@ -193,8 +193,12 @@ func (s *Service) Cancel(ctx context.Context, actor ActorContext, orderID int64,
 	if order.Status == "CANCELLED" || order.Status == "COMPLETED" || order.Status == "LOADED" || order.Status == "PARTIALLY_FULFILLED" {
 		return Order{}, ErrInvalidStatus
 	}
-	if err := s.canManage(ctx, actor, *order); err != nil {
-		return Order{}, err
+	// Buyer may cancel their own PENDING order; all other cancellations require nursery management access.
+	isBuyerSelfCancel := order.BuyerUserID != nil && *order.BuyerUserID == actor.UserID && order.Status == "PENDING"
+	if !isBuyerSelfCancel {
+		if err := s.canManage(ctx, actor, *order); err != nil {
+			return Order{}, err
+		}
 	}
 	updated, err := s.repository.Cancel(ctx, actor.UserID, orderID, reason)
 	if err != nil {

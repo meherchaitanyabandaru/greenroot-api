@@ -32,8 +32,8 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		// Items
 		r.Get("/{id}/items", m.handler.ListItems)
 		r.Post("/{id}/items", m.handler.CreateItem)
-		r.Put("/items/{itemId}", m.handler.UpdateItem)
-		r.Delete("/items/{itemId}", m.handler.DeleteItem)
+		r.Put("/{id}/items/{itemId}", m.handler.UpdateItem)
+		r.Delete("/{id}/items/{itemId}", m.handler.DeleteItem)
 		r.Put("/{id}/items/{itemId}/loaded-quantity", m.handler.SetLoadedQuantity)
 	})
 }

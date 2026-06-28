@@ -1,6 +1,6 @@
 # GreenRoot — API Reference
 
-> Last updated: 2026-06-27
+> Last updated: 2026-06-28
 
 ---
 
@@ -21,10 +21,10 @@ Current registered route count from chi route definitions:
 
 | Scope | Count |
 |---|---:|
-| `/api/v1` module routes | 174 |
+| `/api/v1` module routes | 175 |
 | Health routes | 3 |
 | Docs/Swagger routes | 4 |
-| **Total registered APIs** | **181** |
+| **Total registered APIs** | **182** |
 
 ---
 
@@ -73,7 +73,17 @@ GET  /api/v1/me/workspaces
 GET  /api/v1/me/owner-dashboard
 ```
 
-Dev OTP: `123456` hardcoded (mock). Mobile: `9000000777` = Admin.
+Dev OTP: `123456` hardcoded (mock).
+
+Dev credentials:
+
+| Mobile | Role |
+|---|---|
+| `9000000000` | Admin + Super Admin |
+| `9100000000` | Nursery Owner |
+| `9200000000` | Manager |
+| `9300000000` | Buyer |
+| `9400000000` | Driver |
 
 ---
 
@@ -116,13 +126,19 @@ Dev OTP: `123456` hardcoded (mock). Mobile: `9000000777` = Admin.
 
 ## Business Rules (API Enforced)
 
+See `BUSINESS_RULES.md` for the full rule set. Key enforcements:
+
 - **One owner → one nursery.** Shared/partner ownership not supported.
-- **Manager exclusivity.** MANAGER_INVITE rejected if user owns nursery. NURSERY_ONBOARDING_INVITE rejected if user is manager.
+- **Manager exclusivity.** MANAGER_INVITE rejected if user owns nursery. NURSERY_ONBOARDING_INVITE rejected if user is manager. `uq_manager_one_active_nursery` DB constraint enforces single active nursery per user.
 - **Driver independence.** Drivers join individual trips via UUID/QR; no nursery ownership.
-- **Orders never hard-deleted.** Use cancellation (captures: cancelled_by, cancelled_at, reason).
+- **Order state machine.** `PENDING → CONFIRMED → LOADING → LOADED/PARTIALLY_FULFILLED → COMPLETED`. Cancel goes via `POST /orders/:id/cancel` (not a status update). Invalid direct transitions are blocked.
+- **Order item editing window.** Items (add/edit/remove) allowed in `PENDING`, `CONFIRMED`, `LOADING`. Locked at `LOADED`, `PARTIALLY_FULFILLED`, `COMPLETED`.
+- **Loaded quantities.** `PUT /orders/:id/items/:itemId/loaded-quantity` sets actual loaded amount during `LOADING`. If any item is under-loaded at `complete-loading`, order moves to `PARTIALLY_FULFILLED` and invoice is recalculated.
+- **Cancel guards.** `LOADED` and `PARTIALLY_FULFILLED` orders cannot be cancelled. Buyers can cancel their own `PENDING` orders without management access.
+- **Delete guards.** Only `PENDING` orders can be hard-deleted.
+- **Nursery registration.** Any authenticated user (except drivers) may register a nursery. Drivers get `403`.
 - **Audit trail mandatory.** Every significant action writes an audit log — immutable.
-- **Nursery activation requires approval.** Until APPROVED, owners cannot create quotations, orders, or invites.
-- **Order editing window.** Items editable ONLY while status is `LOADING_STARTED` or `LOADING_IN_PROGRESS`. After `LOADING_COMPLETED`, items are locked.
+- **Nursery activation requires approval.** Until `ACTIVE`, owners cannot create quotations, orders, or send invites.
 - **Invite side-effects.** MANAGER_INVITE accepted → inserts `nursery_users` row. NURSERY_ONBOARDING_INVITE accepted → grants NURSERY_OWNER role in `user_roles`.
 
 ---
@@ -137,7 +153,7 @@ Dev OTP: `123456` hardcoded (mock). Mobile: `9000000777` = Admin.
 | nurseries | `GET/POST /nurseries` · `GET/PUT/DELETE /nurseries/:id` · addresses, users |
 | inventory | `GET/POST /inventory` · `GET/PUT/DELETE /inventory/:id` · by nursery, by plant |
 | requests | `GET/POST /plant-requests` · `GET/PUT/DELETE /plant-requests/:id` · responses, cancel |
-| orders | `GET/POST /orders` · `GET/DELETE /orders/:id` · status, items, dispatches |
+| orders | `GET/POST /orders` · `GET/DELETE /orders/:id` · status, items, loaded-quantity, start-loading, complete-loading, cancel, assign-manager |
 | payments | `GET/POST /payments` · manual, status · by order, by subscription |
 | subscriptions | `GET /subscription-plans` · `GET/POST /subscriptions` · renew, cancel, status |
 | vehicles | `GET/POST /vehicles` · `GET/PUT/DELETE /vehicles/:id` |
@@ -170,7 +186,7 @@ All module routes below are mounted under `/api/v1` unless noted.
 | Nurseries | 18 | `GET /api/v1/nurseries`, `POST /api/v1/nurseries`, `GET /api/v1/nurseries/mine`, `GET /api/v1/nurseries/owned`, `GET /api/v1/nurseries/{id}`, `PUT /api/v1/nurseries/{id}`, `PUT /api/v1/nurseries/{id}/status`, `DELETE /api/v1/nurseries/{id}`, `GET /api/v1/nurseries/{id}/addresses`, `POST /api/v1/nurseries/{id}/addresses`, `PUT /api/v1/nurseries/addresses/{addressId}`, `DELETE /api/v1/nurseries/addresses/{addressId}`, `GET /api/v1/nurseries/{id}/managers`, `POST /api/v1/nurseries/{id}/managers`, `DELETE /api/v1/nurseries/{id}/managers/{userId}`, `GET /api/v1/nurseries/{id}/drivers`, `POST /api/v1/nurseries/{id}/drivers`, `POST /api/v1/nurseries/{id}/drivers/{driverUserId}/approve` |
 | Inventory | 7 | `GET /api/v1/inventory`, `POST /api/v1/inventory`, `GET /api/v1/inventory/{id}`, `PUT /api/v1/inventory/{id}`, `DELETE /api/v1/inventory/{id}`, `GET /api/v1/nurseries/{nurseryId}/inventory`, `GET /api/v1/plants/{plantId}/inventory` |
 | Plant Requests | 9 | `GET /api/v1/plant-requests`, `POST /api/v1/plant-requests`, `GET /api/v1/plant-requests/{id}`, `PUT /api/v1/plant-requests/{id}`, `PUT /api/v1/plant-requests/{id}/status`, `DELETE /api/v1/plant-requests/{id}`, `GET /api/v1/plant-requests/{id}/responses`, `POST /api/v1/plant-requests/{id}/responses`, `PUT /api/v1/plant-requests/responses/{responseId}` |
-| Orders | 13 | `GET /api/v1/orders`, `POST /api/v1/orders`, `GET /api/v1/orders/{id}`, `PUT /api/v1/orders/{id}/status`, `DELETE /api/v1/orders/{id}`, `POST /api/v1/orders/{id}/start-loading`, `POST /api/v1/orders/{id}/complete-loading`, `POST /api/v1/orders/{id}/cancel`, `POST /api/v1/orders/{id}/assign-manager`, `GET /api/v1/orders/{id}/items`, `POST /api/v1/orders/{id}/items`, `PUT /api/v1/orders/items/{itemId}`, `DELETE /api/v1/orders/items/{itemId}` |
+| Orders | 14 | `GET /api/v1/orders`, `POST /api/v1/orders`, `GET /api/v1/orders/{id}`, `PUT /api/v1/orders/{id}/status`, `DELETE /api/v1/orders/{id}`, `POST /api/v1/orders/{id}/start-loading`, `POST /api/v1/orders/{id}/complete-loading`, `POST /api/v1/orders/{id}/cancel`, `POST /api/v1/orders/{id}/assign-manager`, `GET /api/v1/orders/{id}/items`, `POST /api/v1/orders/{id}/items`, `PUT /api/v1/orders/{id}/items/{itemId}`, `DELETE /api/v1/orders/{id}/items/{itemId}`, `PUT /api/v1/orders/{id}/items/{itemId}/loaded-quantity` |
 | Quotations | 10 | `GET /api/v1/quotations`, `POST /api/v1/quotations`, `GET /api/v1/quotations/{id}`, `PUT /api/v1/quotations/{id}`, `DELETE /api/v1/quotations/{id}`, `POST /api/v1/quotations/{id}/assign-manager`, `POST /api/v1/quotations/{id}/approve`, `POST /api/v1/quotations/{id}/convert-to-order`, `POST /api/v1/quotations/{id}/buyer-accept`, `POST /api/v1/quotations/{id}/buyer-reject` |
 | Payments | 6 | `GET /api/v1/payments`, `POST /api/v1/payments/manual`, `GET /api/v1/payments/{id}`, `PUT /api/v1/payments/{id}/status`, `GET /api/v1/orders/{orderId}/payments`, `GET /api/v1/subscriptions/{subscriptionId}/payments` |
 | Subscriptions | 9 | `GET /api/v1/subscription-plans`, `GET /api/v1/subscription-plans/{id}`, `GET /api/v1/subscriptions`, `POST /api/v1/subscriptions`, `GET /api/v1/subscriptions/me`, `GET /api/v1/subscriptions/{id}`, `PUT /api/v1/subscriptions/{id}/status`, `POST /api/v1/subscriptions/{id}/renew`, `POST /api/v1/subscriptions/{id}/cancel` |
@@ -205,13 +221,14 @@ All module routes below are mounted under `/api/v1` unless noted.
 | Smoke | `make smoke` | Non-destructive, uses local `greenroot` DB |
 | Integration | `make integration` | Disposable DB, applies migrations + seed, runs full flows |
 
-Integration test users (OTP `123456` for all):
-| Role | Mobile |
-|---|---|
-| ADMIN | `9100000001` |
-| BUYER | `9100000002` |
-| NURSERY_OWNER | `9100000003` |
-| DRIVER | `9100000004` |
+Dev / integration test users (OTP `123456` for all):
+| Role | Mobile | Name |
+|---|---|---|
+| ADMIN + SUPER_ADMIN | `9000000000` | GreenRoot Admin |
+| NURSERY_OWNER | `9100000000` | Priya Owner |
+| MANAGER | `9200000000` | Gumastha Manager |
+| BUYER | `9300000000` | Ravi Buyer |
+| DRIVER | `9400000000` | Raju Driver |
 
 Results: `test-log/smoke/results.log` and `test-log/integration/`.
 
