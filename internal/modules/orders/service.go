@@ -144,6 +144,11 @@ func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, order
 	if err != nil {
 		return Order{}, err
 	}
+	_ = s.repository.RecalculateTotalFromLoaded(ctx, orderID)
+	if finalStatus == "PARTIALLY_FULFILLED" && order.BuyerUserID != nil {
+		msg := fmt.Sprintf("Order %s was loaded with reduced quantities. Please review your updated order.", updated.OrderCode)
+		_ = s.repository.CreateNotification(ctx, *order.BuyerUserID, "ORDER_PARTIAL", "Partial Delivery Notice", msg)
+	}
 	s.audit(ctx, actor, "orders", orderID, actionUpdate, map[string]any{"order_status": finalStatus})
 	return *updated, nil
 }
@@ -185,7 +190,7 @@ func (s *Service) Cancel(ctx context.Context, actor ActorContext, orderID int64,
 	if err != nil {
 		return Order{}, err
 	}
-	if order.Status == "CANCELLED" || order.Status == "DELIVERED" {
+	if order.Status == "CANCELLED" || order.Status == "COMPLETED" || order.Status == "LOADED" || order.Status == "PARTIALLY_FULFILLED" {
 		return Order{}, ErrInvalidStatus
 	}
 	if err := s.canManage(ctx, actor, *order); err != nil {
@@ -230,6 +235,9 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, orderID int64)
 	order, err := s.repository.FindByID(ctx, orderID)
 	if err != nil {
 		return err
+	}
+	if order.Status != "PENDING" {
+		return ErrInvalidStatus
 	}
 	if err := s.canManage(ctx, actor, *order); err != nil {
 		return err
@@ -503,24 +511,22 @@ func validateItem(input OrderItemRequest) error {
 // PUT /orders/{id}/status endpoint. Dedicated endpoints (start-loading, complete-loading,
 // cancel) enforce their own transitions and bypass this function.
 //
-// PENDING → CONFIRMED | CANCELLED
-// CONFIRMED → COMPLETED | PARTIALLY_FULFILLED | CANCELLED
-// LOADING → CANCELLED (only cancel allowed during active loading)
-// LOADED → COMPLETED | PARTIALLY_FULFILLED | CANCELLED
-// PARTIALLY_FULFILLED → COMPLETED | CANCELLED
+// PENDING   → CONFIRMED              (cancel via POST /cancel only)
+// CONFIRMED → COMPLETED              (cancel via POST /cancel only)
+// LOADING   → (no generic transition; cancel via POST /cancel only)
+// LOADED    → COMPLETED              (no cancel — truck dispatched)
+// PARTIALLY_FULFILLED → COMPLETED    (no cancel — truck dispatched)
 // COMPLETED / CANCELLED → terminal
 func validOrderTransition(from, to string) bool {
 	switch from {
 	case "PENDING", "DRAFT":
-		return to == "CONFIRMED" || to == "CANCELLED"
+		return to == "CONFIRMED"
 	case "CONFIRMED":
-		return to == "COMPLETED" || to == "PARTIALLY_FULFILLED" || to == "CANCELLED"
-	case "LOADING":
-		return to == "CANCELLED"
+		return to == "COMPLETED"
 	case "LOADED":
-		return to == "COMPLETED" || to == "PARTIALLY_FULFILLED" || to == "CANCELLED"
+		return to == "COMPLETED"
 	case "PARTIALLY_FULFILLED":
-		return to == "COMPLETED" || to == "CANCELLED"
+		return to == "COMPLETED"
 	default:
 		return false
 	}

@@ -223,7 +223,7 @@ func (h *Handler) CompleteLoading(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, OrderResponse{Order: order})
 }
 
-// CancelOrder cancels an order.
+// CancelOrder cancels an order. Reason is optional — empty body is valid.
 func (h *Handler) CancelOrder(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {
@@ -236,7 +236,9 @@ func (h *Handler) CancelOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Reason string `json:"reason"`
 	}
-	_ = decodeJSON(w, r, &req)
+	// reason is optional — ignore decode errors (empty body is fine)
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	r.Body.Close()
 	order, err := h.service.Cancel(r.Context(), actor, orderID, req.Reason)
 	if err != nil {
 		writeOrdersError(w, err)

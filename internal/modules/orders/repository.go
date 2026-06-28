@@ -28,6 +28,8 @@ type Repository interface {
 	UpdateItem(ctx context.Context, itemID int64, input OrderItemRequest) (*OrderItem, error)
 	DeleteItem(ctx context.Context, itemID int64) error
 	SetLoadedQuantity(ctx context.Context, itemID int64, qty float64) (*OrderItem, error)
+	RecalculateTotalFromLoaded(ctx context.Context, orderID int64) error
+	CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	GetUserNurseryIDs(ctx context.Context, userID int64) ([]int64, error)
@@ -734,6 +736,26 @@ func (r *PostgresRepository) SetLoadedQuantity(ctx context.Context, itemID int64
 		return nil, err
 	}
 	return r.findItem(ctx, itemID)
+}
+
+func (r *PostgresRepository) RecalculateTotalFromLoaded(ctx context.Context, orderID int64) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE public.orders SET total_amount = (
+			SELECT COALESCE(SUM(COALESCE(loaded_quantity, quantity) * COALESCE(unit_price, 0)), 0)
+			FROM public.order_items WHERE order_id = $1
+		) WHERE order_id = $1`,
+		orderID,
+	)
+	return err
+}
+
+func (r *PostgresRepository) CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO public.notifications (user_id, notification_type, title, message, channel, notification_status)
+		 VALUES ($1, $2, $3, $4, 'IN_APP', 'PENDING')`,
+		userID, notifType, title, message,
+	)
+	return err
 }
 
 func nullableString(value sql.NullString) *string {
