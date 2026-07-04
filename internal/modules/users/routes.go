@@ -5,15 +5,16 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
+	platformstorage "github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 )
 
 type Module struct {
 	handler *Handler
 }
 
-func NewModule(db *sql.DB, jwt *jwtplatform.Service) Module {
+func NewModule(db *sql.DB, jwt *jwtplatform.Service, storage *platformstorage.Client) Module {
 	repository := NewRepository(db)
-	service := NewService(repository)
+	service := NewService(repository, storage)
 	return Module{handler: NewHandler(service, jwt)}
 }
 
@@ -21,6 +22,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 	router.Route("/users", func(r chi.Router) {
 		r.Get("/me", m.handler.Me)
 		r.Put("/me", m.handler.UpdateMe)
+		r.Post("/me/avatar", m.handler.UploadAvatar)
 		r.Get("/{id}", m.handler.GetUser)
 		r.Get("/{id}/addresses", m.handler.ListAddresses)
 		r.Post("/{id}/addresses", m.handler.CreateAddress)

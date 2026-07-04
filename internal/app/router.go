@@ -77,7 +77,7 @@ func NewRouter(deps Dependencies) chi.Router {
 		subscriptions.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		tracking.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		vehicles.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		users.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
+		users.NewModule(deps.DB, deps.JWT, deps.Storage).RegisterRoutes(r)
 	})
 
 	return router

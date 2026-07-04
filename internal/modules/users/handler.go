@@ -66,6 +66,60 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, UserResponse{User: user})
 }
 
+// UploadAvatar handles POST /api/v1/users/me/avatar
+// Accepts multipart/form-data with field "avatar" (max 5 MB).
+// Uploads to MinIO profile-images bucket and updates the user's profile_image_url.
+func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+
+	const maxSize = 5 << 20 // 5 MB
+	if err := r.ParseMultipartForm(maxSize); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_form", "could not parse multipart form")
+		return
+	}
+
+	file, header, err := r.FormFile("avatar")
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "missing_file", "avatar field is required")
+		return
+	}
+	defer file.Close()
+
+	if header.Size > maxSize {
+		response.Error(w, http.StatusBadRequest, "file_too_large", "avatar must be under 5 MB")
+		return
+	}
+
+	contentType := header.Header.Get("Content-Type")
+	ext := "jpg"
+	switch contentType {
+	case "image/png":
+		ext = "png"
+	case "image/webp":
+		ext = "webp"
+	case "image/gif":
+		ext = "gif"
+	default:
+		contentType = "image/jpeg"
+	}
+
+	data := make([]byte, header.Size)
+	if _, err := file.Read(data); err != nil {
+		response.Error(w, http.StatusInternalServerError, "read_error", "could not read uploaded file")
+		return
+	}
+
+	user, err := h.service.UploadAvatar(r.Context(), actor, data, contentType, ext)
+	if err != nil {
+		writeUsersError(w, err)
+		return
+	}
+	response.OK(w, UserResponse{User: user})
+}
+
 func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {

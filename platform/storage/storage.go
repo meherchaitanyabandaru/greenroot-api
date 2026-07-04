@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/url"
@@ -81,6 +82,21 @@ func (c *Client) PresignGet(ctx context.Context, bucket, key string, ttl time.Du
 		return "", fmt.Errorf("storage: presign get %s/%s: %w", bucket, key, err)
 	}
 	return u.String(), nil
+}
+
+// PutObject uploads bytes directly from the server to MinIO.
+// Returns the permanent public file URL.
+func (c *Client) PutObject(ctx context.Context, bucket, key, contentType string, data []byte) (string, error) {
+	if !validBuckets[bucket] {
+		return "", fmt.Errorf("storage: unknown bucket %q", bucket)
+	}
+	_, err := c.minio.PutObject(ctx, bucket, key, bytes.NewReader(data), int64(len(data)),
+		minio.PutObjectOptions{ContentType: contentType},
+	)
+	if err != nil {
+		return "", fmt.Errorf("storage: put %s/%s: %w", bucket, key, err)
+	}
+	return fmt.Sprintf("%s/%s/%s", c.publicURL, bucket, key), nil
 }
 
 // IsValidBucket returns true if the bucket name is one of the known platform buckets.

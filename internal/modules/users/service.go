@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	platformstorage "github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 )
 
 var (
@@ -17,6 +20,7 @@ var (
 
 type Service struct {
 	repository Repository
+	storage    *platformstorage.Client
 }
 
 type ActorContext struct {
@@ -26,8 +30,8 @@ type ActorContext struct {
 	UserAgent string
 }
 
-func NewService(repository Repository) *Service {
-	return &Service{repository: repository}
+func NewService(repository Repository, storage *platformstorage.Client) *Service {
+	return &Service{repository: repository, storage: storage}
 }
 
 func (s *Service) Me(ctx context.Context, actor ActorContext) (User, error) {
@@ -60,6 +64,33 @@ func (s *Service) UpdateMe(ctx context.Context, actor ActorContext, input Update
 	})
 
 	return *user, nil
+}
+
+func (s *Service) UploadAvatar(ctx context.Context, actor ActorContext, data []byte, contentType string, ext string) (User, error) {
+	// Fetch current profile so we can preserve firstName in the UPDATE.
+	current, err := s.repository.FindUserByID(ctx, actor.UserID)
+	if err != nil {
+		return User{}, err
+	}
+
+	key := fmt.Sprintf("%d/%s.%s", actor.UserID, uuid.NewString(), ext)
+	fileURL, err := s.storage.PutObject(ctx, platformstorage.BucketProfileImages, key, contentType, data)
+	if err != nil {
+		return User{}, fmt.Errorf("upload avatar: %w", err)
+	}
+
+	now := time.Now()
+	updated, err := s.repository.UpdateProfile(ctx, actor.UserID, UpdateProfileRequest{
+		FirstName:       current.FirstName,
+		LastName:        current.LastName,
+		Email:           current.Email,
+		Gender:          current.Gender,
+		ProfileImageURL: &fileURL,
+	}, now)
+	if err != nil {
+		return User{}, err
+	}
+	return *updated, nil
 }
 
 func (s *Service) GetUser(ctx context.Context, actor ActorContext, userID int64) (User, error) {
