@@ -466,6 +466,10 @@ func buildWhere(input ListDispatchesRequest) (string, []any) {
 		args = append(args, input.DriverUserID)
 		clauses = append(clauses, fmt.Sprintf("dr.user_id = $%d", len(args)))
 	}
+	if input.BuyerUserID > 0 {
+		args = append(args, input.BuyerUserID)
+		clauses = append(clauses, fmt.Sprintf("o.buyer_user_id = $%d", len(args)))
+	}
 	if input.Status != "" {
 		args = append(args, input.Status)
 		clauses = append(clauses, fmt.Sprintf("d.dispatch_status::text = $%d", len(args)))

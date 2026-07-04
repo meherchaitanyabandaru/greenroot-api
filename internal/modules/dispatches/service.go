@@ -250,6 +250,11 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 		input.DriverUserID = actor.UserID
 		return nil
 	}
+	if hasRole(actor, "BUYER") {
+		// Buyers see dispatches for their own orders only.
+		input.BuyerUserID = actor.UserID
+		return nil
+	}
 	return ErrForbidden
 }
 
@@ -278,6 +283,13 @@ func (s *Service) canAccess(ctx context.Context, actor ActorContext, dispatch Di
 			if err == nil && isDriver {
 				return nil
 			}
+		}
+	}
+	if hasRole(actor, "BUYER") {
+		// Buyer can access dispatch if it belongs to their order.
+		access, err := s.repository.OrderAccess(ctx, dispatch.OrderID)
+		if err == nil && access.BuyerID != nil && *access.BuyerID == actor.UserID {
+			return nil
 		}
 	}
 	return ErrForbidden

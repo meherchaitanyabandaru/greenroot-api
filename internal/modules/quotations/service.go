@@ -9,7 +9,6 @@ import (
 	"time"
 )
 
-
 var (
 	ErrForbidden        = errors.New("forbidden")
 	ErrInvalidInput     = errors.New("invalid input")
@@ -294,12 +293,20 @@ func (s *Service) BuyerReject(ctx context.Context, actor ActorContext, quotation
 }
 
 // canBuyerAct verifies the actor is the buyer on this quotation.
+// Matches both linked accounts (customer_user_id) and unlinked mobile-only quotations.
 func (s *Service) canBuyerAct(ctx context.Context, actor ActorContext, q Quotation) error {
 	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
 		return nil
 	}
 	if q.CustomerUserID != nil && *q.CustomerUserID == actor.UserID {
 		return nil
+	}
+	// Allow match by recipient_mobile when customer_user_id is not yet set.
+	if q.RecipientMobile != nil && *q.RecipientMobile != "" {
+		mobile, err := s.repository.GetUserMobile(ctx, actor.UserID)
+		if err == nil && mobile == *q.RecipientMobile {
+			return nil
+		}
 	}
 	if q.BuyerNurseryID != nil {
 		ownedNurseryID, _ := s.repository.GetOwnedNurseryID(ctx, actor.UserID)

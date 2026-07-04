@@ -36,6 +36,7 @@ type Repository interface {
 	MarkConverted(ctx context.Context, quotationID int64, orderID int64, byUserID int64) error
 	GetNurseryInfo(ctx context.Context, nurseryID int64) (name string, phone string, err error)
 	GetUserName(ctx context.Context, userID int64) (string, error)
+	GetUserMobile(ctx context.Context, userID int64) (string, error)
 	GetPlantInfo(ctx context.Context, plantID int64) (scientificName string, commonName string, err error)
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error)
@@ -330,6 +331,15 @@ func (r *PostgresRepository) GetUserName(ctx context.Context, userID int64) (str
 	return name, err
 }
 
+func (r *PostgresRepository) GetUserMobile(ctx context.Context, userID int64) (string, error) {
+	var mobile string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT mobile FROM public.users WHERE user_id = $1`,
+		userID,
+	).Scan(&mobile)
+	return mobile, err
+}
+
 func (r *PostgresRepository) GetPlantInfo(ctx context.Context, plantID int64) (string, string, error) {
 	var scientific string
 	var common sql.NullString
@@ -534,11 +544,16 @@ func buildWhere(input ListQuotationsRequest) (string, []any) {
 	args := make([]any, 0)
 
 	if input.Buying {
-		// Buyer perspective: quotations where this user (or their nursery) is the buyer/recipient
+		// Buyer perspective: quotations where this user (or their nursery) is the buyer/recipient.
+		// Matches both linked accounts (customer_user_id) and unlinked mobile-only quotations.
 		buyerClauses := make([]string, 0)
 		if input.UserID > 0 {
 			args = append(args, input.UserID)
 			buyerClauses = append(buyerClauses, fmt.Sprintf("q.customer_user_id = $%d", len(args)))
+			// Also match quotations sent to this user's mobile number (not yet linked).
+			buyerClauses = append(buyerClauses, fmt.Sprintf(
+				"q.recipient_mobile = (SELECT mobile FROM public.users WHERE user_id = $%d)", len(args),
+			))
 		}
 		if input.BuyerNurseryID > 0 {
 			args = append(args, input.BuyerNurseryID)

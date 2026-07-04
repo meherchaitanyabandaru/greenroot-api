@@ -6,6 +6,7 @@ type ListDispatchesRequest struct {
 	OrderID      int64
 	NurseryID    int64
 	DriverUserID int64
+	BuyerUserID  int64
 	Status       string
 	Search       string
 	SortBy       string
