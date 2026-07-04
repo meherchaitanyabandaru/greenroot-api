@@ -2067,18 +2067,62 @@ INSERT INTO public.platform_config (config_key, config_value, data_type, descrip
   ('nursery_approval_days',   '7',    'integer', 'Days before a pending nursery application auto-expires')
 ON CONFLICT (config_key) DO NOTHING;
 
--- ─── Dev admin user (login: 9000000777, any OTP works in DEV mode) ─────────────
-INSERT INTO public.users (user_id, user_code, first_name, mobile, mobile_verified, status)
-VALUES (1, 'USR-000001', 'Admin', '9000000777', true, 'ACTIVE')
+-- ─── Dev test users — one per role (OTP 123456 for all in DEV mode) ─────────────
+--
+--  mobile       | role                  | name
+--  9000000000   | ADMIN + SUPER_ADMIN   | GreenRoot Admin
+--  9100000000   | NURSERY_OWNER         | Priya Owner
+--  9200000000   | MANAGER               | Gumastha Manager
+--  9300000000   | BUYER                 | Ravi Buyer
+--  9400000000   | DRIVER                | Raju Driver
+
+INSERT INTO public.users (user_id, user_code, first_name, mobile, mobile_verified, status) VALUES
+  (1, 'USR-000001', 'GreenRoot',          '9000000000', true, 'ACTIVE'),
+  (2, 'USR-000002', 'Priya Owner',        '9100000000', true, 'ACTIVE'),
+  (3, 'USR-000003', 'Gumastha Manager',   '9200000000', true, 'ACTIVE'),
+  (4, 'USR-000004', 'Ravi Buyer',         '9300000000', true, 'ACTIVE'),
+  (5, 'USR-000005', 'Raju Driver',        '9400000000', true, 'ACTIVE')
 ON CONFLICT (mobile) DO NOTHING;
 
+-- Platform roles
 INSERT INTO public.user_roles (user_id, role_id)
 SELECT 1, role_id FROM public.roles WHERE role_code IN ('ADMIN', 'SUPER_ADMIN')
 ON CONFLICT DO NOTHING;
 
-SELECT setval('public.users_user_id_seq', (SELECT MAX(user_id) FROM public.users), true);
+INSERT INTO public.user_roles (user_id, role_id)
+SELECT 2, role_id FROM public.roles WHERE role_code = 'NURSERY_OWNER'
+ON CONFLICT DO NOTHING;
 
--- Sync public_code_sequences so the next auto-generated user_code won't conflict
+INSERT INTO public.user_roles (user_id, role_id)
+SELECT 3, role_id FROM public.roles WHERE role_code = 'MANAGER'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO public.user_roles (user_id, role_id)
+SELECT 4, role_id FROM public.roles WHERE role_code = 'BUYER'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO public.user_roles (user_id, role_id)
+SELECT 5, role_id FROM public.roles WHERE role_code = 'DRIVER'
+ON CONFLICT DO NOTHING;
+
+-- Dev nursery owned by Priya (user_id=2), approved and active
+INSERT INTO public.nurseries (nursery_id, nursery_code, nursery_name, owner_user_id, mobile, status, created_by)
+VALUES (1, 'NUR-000001', 'GreenRoot Dev Nursery', 2, '9100000000', 'ACTIVE', 1)
+ON CONFLICT (nursery_id) DO NOTHING;
+
+-- Gumastha (user_id=3) is MANAGER at nursery_id=1
+INSERT INTO public.nursery_users (nursery_id, user_id, role, status, nursery_role_id, joined_at)
+VALUES (
+  1, 3, 'MANAGER', 'ACTIVE',
+  (SELECT nursery_role_id FROM public.nursery_roles WHERE role_code = 'MANAGER'),
+  CURRENT_TIMESTAMP
+)
+ON CONFLICT DO NOTHING;
+
+SELECT setval('public.users_user_id_seq', (SELECT MAX(user_id) FROM public.users), true);
+SELECT setval('public.nurseries_nursery_id_seq', (SELECT MAX(nursery_id) FROM public.nurseries), true);
+
+-- Sync public_code_sequences
 INSERT INTO public.public_code_sequences (code_key, date_key, last_value)
 SELECT 'users', '', count(*) FROM public.users
 ON CONFLICT (code_key, date_key) DO UPDATE
