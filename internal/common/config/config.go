@@ -78,7 +78,10 @@ func Load() Config {
 		HTTP: HTTPConfig{
 			Host:               getString("HTTP_HOST", "0.0.0.0"),
 			Port:               getInt("HTTP_PORT", 8080),
-			CORSAllowedOrigins: getStringSlice("CORS_ALLOWED_ORIGINS", []string{"http://localhost:5173", "http://127.0.0.1:5173"}),
+			CORSAllowedOrigins: getStringSlice("CORS_ALLOWED_ORIGINS", []string{
+				"http://localhost:5173", "http://127.0.0.1:5173",
+				"http://localhost:3000", "http://127.0.0.1:3000",
+			}),
 			ReadHeaderTimeout:  getDuration("HTTP_READ_HEADER_TIMEOUT", 5*time.Second),
 			ReadTimeout:        getDuration("HTTP_READ_TIMEOUT", 15*time.Second),
 			WriteTimeout:       getDuration("HTTP_WRITE_TIMEOUT", 15*time.Second),
