@@ -50,6 +50,25 @@ func (s *Service) UpdateMe(ctx context.Context, actor ActorContext, input Update
 		}
 	}
 
+	// Lock fields that are already set — once a user fills a field it cannot
+	// be changed, even via direct API calls.
+	current, err := s.repository.FindUserByID(ctx, actor.UserID)
+	if err != nil {
+		return User{}, err
+	}
+	if current.FirstName != "" {
+		input.FirstName = current.FirstName
+	}
+	if current.LastName != nil && *current.LastName != "" {
+		input.LastName = current.LastName
+	}
+	if current.Gender != nil && *current.Gender != "" {
+		input.Gender = current.Gender
+	}
+	if current.Email != nil && *current.Email != "" {
+		input.Email = current.Email
+	}
+
 	now := time.Now()
 	user, err := s.repository.UpdateProfile(ctx, actor.UserID, input, now)
 	if err != nil {
