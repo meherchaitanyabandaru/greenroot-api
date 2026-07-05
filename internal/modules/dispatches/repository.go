@@ -29,6 +29,7 @@ type Repository interface {
 	OrderAccess(ctx context.Context, orderID int64) (*OrderAccess, error)
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	IsDispatchDriver(ctx context.Context, driverID int64, userID int64) (bool, error)
+	GetOwnedNurseryID(ctx context.Context, userID int64) (*int64, error)
 	GetUserNurseryIDs(ctx context.Context, userID int64) ([]int64, error)
 	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 }
@@ -306,6 +307,22 @@ func (r *PostgresRepository) IsDispatchDriver(ctx context.Context, driverID int6
 	return exists, err
 }
 
+func (r *PostgresRepository) GetOwnedNurseryID(ctx context.Context, userID int64) (*int64, error) {
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT nursery_id FROM public.nurseries
+		WHERE owner_user_id = $1 AND COALESCE(status::text, '') <> 'DELETED'
+		LIMIT 1
+	`, userID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
 // GetUserNurseryIDs returns all nursery IDs the user owns or is a member of.
 func (r *PostgresRepository) GetUserNurseryIDs(ctx context.Context, userID int64) ([]int64, error) {
 	rows, err := r.db.QueryContext(ctx, `
@@ -466,9 +483,15 @@ func buildWhere(input ListDispatchesRequest) (string, []any) {
 		args = append(args, input.DriverUserID)
 		clauses = append(clauses, fmt.Sprintf("dr.user_id = $%d", len(args)))
 	}
-	if input.BuyerUserID > 0 {
+	if input.BuyerUserID > 0 && input.BuyerNurseryID > 0 {
+		args = append(args, input.BuyerUserID, input.BuyerNurseryID)
+		clauses = append(clauses, fmt.Sprintf("(o.buyer_user_id = $%d OR o.buyer_nursery_id = $%d)", len(args)-1, len(args)))
+	} else if input.BuyerUserID > 0 {
 		args = append(args, input.BuyerUserID)
 		clauses = append(clauses, fmt.Sprintf("o.buyer_user_id = $%d", len(args)))
+	} else if input.BuyerNurseryID > 0 {
+		args = append(args, input.BuyerNurseryID)
+		clauses = append(clauses, fmt.Sprintf("o.buyer_nursery_id = $%d", len(args)))
 	}
 	if input.Status != "" {
 		args = append(args, input.Status)

@@ -217,6 +217,7 @@ func listRequest(r *http.Request) ListDispatchesRequest {
 		Page:      intQuery(query.Get("page")),
 		PerPage:   intQuery(query.Get("per_page")),
 		NurseryID: int64Query(query.Get("nursery_id")),
+		Buying:    query.Get("buying") == "true" || query.Get("buying") == "1",
 		Status:    query.Get("dispatch_status"),
 		Search:    query.Get("search"),
 		SortBy:    query.Get("sort_by"),

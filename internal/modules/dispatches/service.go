@@ -216,6 +216,17 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 		return nil
 	}
 	if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
+		if input.Buying {
+			// Buyer perspective: incoming dispatches for orders this owner placed as buyer.
+			input.BuyerUserID = actor.UserID
+			if hasRole(actor, "NURSERY_OWNER") {
+				nurseryID, _ := s.repository.GetOwnedNurseryID(ctx, actor.UserID)
+				if nurseryID != nil {
+					input.BuyerNurseryID = *nurseryID
+				}
+			}
+			return nil
+		}
 		if input.OrderID > 0 {
 			access, err := s.repository.OrderAccess(ctx, input.OrderID)
 			if err != nil {
