@@ -15,6 +15,7 @@ type Repository interface {
 	Accept(ctx context.Context, uuid string, acceptedByUserID int64) (*Invite, error)
 	Cancel(ctx context.Context, uuid string, actorID int64) (*Invite, error)
 	ListByNursery(ctx context.Context, nurseryID int64) ([]Invite, error)
+	ListAcceptedByUser(ctx context.Context, userID int64) ([]Invite, error)
 	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 	UserOwnsNursery(ctx context.Context, userID int64) (bool, error)
 	IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error)
@@ -105,6 +106,26 @@ func (r *PostgresRepository) Cancel(ctx context.Context, uuid string, actorID in
 
 func (r *PostgresRepository) ListByNursery(ctx context.Context, nurseryID int64) ([]Invite, error) {
 	rows, err := r.db.QueryContext(ctx, baseSelect()+" WHERE i.nursery_id = $1 ORDER BY i.id DESC", nurseryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	invites := make([]Invite, 0)
+	for rows.Next() {
+		invite, err := scanInviteRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		invites = append(invites, invite)
+	}
+	return invites, rows.Err()
+}
+
+func (r *PostgresRepository) ListAcceptedByUser(ctx context.Context, userID int64) ([]Invite, error) {
+	rows, err := r.db.QueryContext(ctx,
+		baseSelect()+` WHERE i.accepted_by_user_id = $1 AND i.invite_type = 'CUSTOMER_INVITE' AND i.status = 'ACCEPTED' ORDER BY i.id DESC`,
+		userID,
+	)
 	if err != nil {
 		return nil, err
 	}

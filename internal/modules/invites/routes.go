@@ -25,4 +25,5 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Post("/{uuid}/cancel", m.handler.Cancel)
 	})
 	router.Get("/nurseries/{nurseryId}/invites", m.handler.ListByNursery)
+	router.Get("/me/connections", m.handler.GetMyConnections)
 }

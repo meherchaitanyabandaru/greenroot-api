@@ -160,6 +160,10 @@ func (s *Service) ListByNursery(ctx context.Context, actor ActorContext, nursery
 	return s.repository.ListByNursery(ctx, nurseryID)
 }
 
+func (s *Service) ListMyConnections(ctx context.Context, actor ActorContext) ([]Invite, error) {
+	return s.repository.ListAcceptedByUser(ctx, actor.UserID)
+}
+
 func hasRole(actor ActorContext, role string) bool {
 	for _, r := range actor.Roles {
 		if strings.EqualFold(r, role) {

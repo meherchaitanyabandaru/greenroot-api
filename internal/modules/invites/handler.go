@@ -94,6 +94,19 @@ func (h *Handler) ListByNursery(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, InvitesResponse{Invites: invites})
 }
 
+func (h *Handler) GetMyConnections(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	invites, err := h.service.ListMyConnections(r.Context(), actor)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, InvitesResponse{Invites: invites})
+}
+
 func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, bool) {
 	actor, ok := authctx.FromRequest(w, r, h.jwt)
 	if !ok {
