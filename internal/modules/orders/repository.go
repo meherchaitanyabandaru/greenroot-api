@@ -517,10 +517,12 @@ func baseSelect() string {
 			o.assigned_manager_user_id, o.created_by_user_id,
 			o.cancelled_by_user_id, o.cancelled_at, o.cancel_reason,
 			o.loading_started_at, o.loading_completed_at, o.loading_completed_by_user_id,
-			o.buyer_nursery_id
+			o.buyer_nursery_id,
+			mu.first_name
 		FROM public.orders o
 		LEFT JOIN public.users bu ON bu.user_id = o.buyer_user_id
 		LEFT JOIN public.nurseries n ON n.nursery_id = COALESCE(o.nursery_id, o.seller_nursery_id)
+		LEFT JOIN public.users mu ON mu.user_id = o.assigned_manager_user_id
 	`
 }
 
@@ -638,6 +640,7 @@ func scanOrder(row interface{ Scan(dest ...any) error }) (Order, error) {
 	var cancelReason sql.NullString
 	var loadingCompletedByUserID sql.NullInt64
 	var buyerNurseryID sql.NullInt64
+	var assignedManagerName sql.NullString
 	if err := row.Scan(
 		&order.ID, &order.OrderCode, &order.OrderNumber,
 		&buyerID, &buyerName,
@@ -650,6 +653,7 @@ func scanOrder(row interface{ Scan(dest ...any) error }) (Order, error) {
 		&cancelledByUserID, &cancelledAt, &cancelReason,
 		&loadingStartedAt, &loadingCompletedAt, &loadingCompletedByUserID,
 		&buyerNurseryID,
+		&assignedManagerName,
 	); err != nil {
 		return Order{}, err
 	}
@@ -666,6 +670,7 @@ func scanOrder(row interface{ Scan(dest ...any) error }) (Order, error) {
 	order.CustomerName = nullableString(customerName)
 	order.CustomerMobile = nullableString(customerMobile)
 	order.AssignedManagerUserID = nullableInt64(assignedManagerUserID)
+	order.AssignedManagerName = nullableString(assignedManagerName)
 	order.CreatedByUserID = nullableInt64(createdByUserID)
 	order.CancelledByUserID = nullableInt64(cancelledByUserID)
 	if cancelledAt.Valid {

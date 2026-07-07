@@ -20,6 +20,7 @@ type Order struct {
 	CustomerName              *string     `json:"customer_name,omitempty"`
 	CustomerMobile            *string     `json:"customer_mobile,omitempty"`
 	AssignedManagerUserID     *int64      `json:"assigned_manager_user_id,omitempty"`
+	AssignedManagerName       *string     `json:"assigned_manager_name,omitempty"`
 	CreatedByUserID           *int64      `json:"created_by_user_id,omitempty"`
 	CancelledByUserID         *int64      `json:"cancelled_by_user_id,omitempty"`
 	CancelledAt               *time.Time  `json:"cancelled_at,omitempty"`

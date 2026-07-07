@@ -440,7 +440,7 @@ func baseSelect() string {
 		SELECT d.dispatch_id, d.dispatch_code, d.order_id, o.order_number,
 			COALESCE(o.nursery_id, o.seller_nursery_id), d.dispatch_number,
 			COALESCE(d.dispatch_status::text, ''), d.vehicle_id, v.vehicle_number, d.driver_id,
-			u.first_name, d.dispatched_by, d.dispatch_date, d.delivery_date, d.destination_address,
+			u.first_name, u.mobile, d.dispatched_by, d.dispatch_date, d.delivery_date, d.destination_address,
 			d.notes, d.created_at, d.updated_at,
 			d.nursery_id, d.assigned_manager_user_id, d.driver_user_id,
 			d.owner_user_id_snapshot, d.customer_user_id,
@@ -535,7 +535,7 @@ func sortClause(input ListDispatchesRequest) string {
 
 func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 	var dispatch Dispatch
-	var orderNumber, dispatchNumber, vehicleNumber, driverName, destination, notes sql.NullString
+	var orderNumber, dispatchNumber, vehicleNumber, driverName, driverMobile, destination, notes sql.NullString
 	var nurseryID, vehicleID, driverID, dispatchedBy sql.NullInt64
 	var dispatchDate, deliveryDate, updatedAt sql.NullTime
 	// V1 snapshot fields
@@ -549,7 +549,7 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 		&dispatch.ID, &dispatch.DispatchCode, &dispatch.OrderID, &orderNumber,
 		&nurseryID, &dispatchNumber,
 		&dispatch.Status, &vehicleID, &vehicleNumber, &driverID,
-		&driverName, &dispatchedBy, &dispatchDate, &deliveryDate, &destination,
+		&driverName, &driverMobile, &dispatchedBy, &dispatchDate, &deliveryDate, &destination,
 		&notes, &dispatch.CreatedAt, &updatedAt,
 		&v1NurseryID, &assignedManagerUserID, &driverUserID,
 		&ownerUserIDSnapshot, &customerUserID,
@@ -566,6 +566,7 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 	dispatch.VehicleNumber = nullableString(vehicleNumber)
 	dispatch.DriverID = nullableInt64(driverID)
 	dispatch.DriverName = nullableString(driverName)
+	dispatch.DriverMobile = nullableString(driverMobile)
 	dispatch.DispatchedBy = nullableInt64(dispatchedBy)
 	if dispatchDate.Valid {
 		dispatch.DispatchDate = &dispatchDate.Time

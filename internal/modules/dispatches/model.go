@@ -33,6 +33,7 @@ type Dispatch struct {
 	VehicleNumber           *string        `json:"vehicle_number,omitempty"`
 	DriverID                *int64         `json:"driver_id,omitempty"`
 	DriverName              *string        `json:"driver_name,omitempty"`
+	DriverMobile            *string        `json:"driver_mobile,omitempty"`
 	DispatchedBy            *int64         `json:"dispatched_by,omitempty"`
 	DispatchDate            *time.Time     `json:"dispatch_date,omitempty"`
 	DeliveryDate            *time.Time     `json:"delivery_date,omitempty"`
