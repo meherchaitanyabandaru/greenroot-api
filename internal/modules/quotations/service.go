@@ -139,19 +139,16 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, id int64) erro
 		s.audit(ctx, actor, "quotations", id, actionDelete, map[string]any{"deleted": true})
 		return nil
 	}
-	// Non-admin: only nursery owner may delete
-	ownerID, err := s.repository.FindNurseryOwnerID(ctx, id)
+	// Non-admin: nursery owner/member (manager) or quotation creator may soft-delete
+	q, err := s.repository.FindByID(ctx, id)
 	if err != nil {
-		// If no nursery, fall back to creator check
-		creatorID, cerr := s.repository.FindCreatorID(ctx, id)
-		if cerr != nil {
-			return cerr
-		}
-		if creatorID != actor.UserID {
+		return err
+	}
+	if manageErr := s.canManage(ctx, actor, *q); manageErr != nil {
+		// canManage failed: fall back to creator check
+		if q.CreatedByUserID != actor.UserID {
 			return ErrForbidden
 		}
-	} else if ownerID != actor.UserID {
-		return ErrForbidden
 	}
 	if err := s.repository.SoftDelete(ctx, id); err != nil {
 		return err

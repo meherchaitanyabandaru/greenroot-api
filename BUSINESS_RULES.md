@@ -142,8 +142,9 @@ When `complete-loading` is called and any item has `loaded_quantity < quantity`,
 
 - Internal quotation: buyer not required.
 - Customer quotation: buyer linked.
+- Both nursery owners and managers can create and edit quotations.
 - Quotations are editable until approved.
-- Only the owner can delete a quotation.
+- Only the nursery owner can delete a quotation (managers cannot delete).
 - A quotation can be converted to an order.
 
 ---

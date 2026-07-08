@@ -148,9 +148,13 @@ type LinkQuotationRequest struct {
 // ── List queries ─────────────────────────────────────────────
 
 type AdsQuery struct {
-	PlantName string
-	Page      int
-	PerPage   int
+	Search   string  // full-text across title, plant_name, nursery_name, description
+	Sort     string  // newest|oldest|price_asc|price_desc|popular
+	Category string  // exact match on category_name (case-insensitive)
+	MinPrice float64 // 0 = no lower bound
+	MaxPrice float64 // 0 = no upper bound
+	Page     int
+	PerPage  int
 }
 
 type EnquiriesQuery struct {

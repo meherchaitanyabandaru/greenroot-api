@@ -145,22 +145,39 @@ func (r *PostgresRepository) GetAd(ctx context.Context, id int64) (Ad, error) {
 }
 
 func (r *PostgresRepository) ListPublished(ctx context.Context, q AdsQuery) ([]Ad, int, error) {
-	filterArgs := []any{}
+	args := []any{}
 	filter := "ma.status = 'PUBLISHED'"
-	if q.PlantName != "" {
-		filterArgs = append(filterArgs, "%"+strings.ToLower(q.PlantName)+"%")
-		filter += fmt.Sprintf(" AND LOWER(ma.plant_name) LIKE $%d::text", len(filterArgs))
+	if q.Search != "" {
+		args = append(args, "%"+strings.ToLower(q.Search)+"%")
+		n := len(args)
+		filter += fmt.Sprintf(
+			" AND (LOWER(ma.title) LIKE $%[1]d::text"+
+				" OR LOWER(ma.plant_name) LIKE $%[1]d::text"+
+				" OR LOWER(n.nursery_name) LIKE $%[1]d::text"+
+				" OR LOWER(COALESCE(ma.description,'')) LIKE $%[1]d::text)", n)
 	}
-	return r.listAds(ctx, filter, q.Page, q.PerPage, filterArgs)
+	if q.Category != "" {
+		args = append(args, q.Category)
+		filter += fmt.Sprintf(" AND LOWER(COALESCE(ma.category_name,'')) = LOWER($%d)", len(args))
+	}
+	if q.MinPrice > 0 {
+		args = append(args, q.MinPrice)
+		filter += fmt.Sprintf(" AND ma.price_per_unit >= $%d", len(args))
+	}
+	if q.MaxPrice > 0 {
+		args = append(args, q.MaxPrice)
+		filter += fmt.Sprintf(" AND ma.price_per_unit <= $%d", len(args))
+	}
+	return r.listAds(ctx, filter, q.Sort, q.Page, q.PerPage, args)
 }
 
 func (r *PostgresRepository) ListByNursery(ctx context.Context, nurseryID int64, q AdsQuery) ([]Ad, int, error) {
-	return r.listAds(ctx, "ma.nursery_id = $1", q.Page, q.PerPage, []any{nurseryID})
+	return r.listAds(ctx, "ma.nursery_id = $1", "", q.Page, q.PerPage, []any{nurseryID})
 }
 
 // listAds runs count + paginated SELECT. filterArgs are args for the WHERE clause only;
 // LIMIT and OFFSET are appended here so parameter indices are always correct.
-func (r *PostgresRepository) listAds(ctx context.Context, filter string, page, perPage int, filterArgs []any) ([]Ad, int, error) {
+func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, page, perPage int, filterArgs []any) ([]Ad, int, error) {
 	countQ := fmt.Sprintf(`
 		SELECT COUNT(*) FROM public.market_ads ma
 		JOIN public.nurseries n ON n.nursery_id = ma.nursery_id
@@ -169,6 +186,18 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter string, page, p
 	var total int
 	if err := r.db.QueryRowContext(ctx, countQ, filterArgs...).Scan(&total); err != nil {
 		return nil, 0, err
+	}
+
+	orderBy := "ma.published_at DESC NULLS LAST, ma.created_at DESC"
+	switch sort {
+	case "oldest":
+		orderBy = "ma.created_at ASC"
+	case "price_asc":
+		orderBy = "ma.price_per_unit ASC NULLS LAST, ma.created_at DESC"
+	case "price_desc":
+		orderBy = "ma.price_per_unit DESC NULLS FIRST, ma.created_at DESC"
+	case "popular":
+		orderBy = "ma.view_count DESC, ma.created_at DESC"
 	}
 
 	offset := (page - 1) * perPage
@@ -189,8 +218,8 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter string, page, p
 		FROM public.market_ads ma
 		JOIN public.nurseries n ON n.nursery_id = ma.nursery_id
 		WHERE %s
-		ORDER BY ma.published_at DESC NULLS LAST, ma.created_at DESC
-		LIMIT $%d OFFSET $%d`, filter, limitIdx, offsetIdx)
+		ORDER BY %s
+		LIMIT $%d OFFSET $%d`, filter, orderBy, limitIdx, offsetIdx)
 
 	rows, err := r.db.QueryContext(ctx, listQ, listArgs...)
 	if err != nil {
@@ -351,7 +380,7 @@ func (r *PostgresRepository) ListSaved(ctx context.Context, nurseryID int64, q A
 		SELECT 1 FROM public.market_ad_saves s
 		WHERE s.ad_id = ma.ad_id AND s.nursery_id = $1
 	)`
-	return r.listAds(ctx, filter, q.Page, q.PerPage, []any{nurseryID})
+	return r.listAds(ctx, filter, "", q.Page, q.PerPage, []any{nurseryID})
 }
 
 // ── Reports ───────────────────────────────────────────────────

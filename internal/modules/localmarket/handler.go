@@ -29,10 +29,16 @@ func (h *Handler) BrowseAds(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	minPrice, _ := strconv.ParseFloat(r.URL.Query().Get("min_price"), 64)
+	maxPrice, _ := strconv.ParseFloat(r.URL.Query().Get("max_price"), 64)
 	q := AdsQuery{
-		PlantName: r.URL.Query().Get("plant_name"),
-		Page:      intParam(r, "page", 1),
-		PerPage:   intParam(r, "per_page", 20),
+		Search:   r.URL.Query().Get("q"),
+		Sort:     r.URL.Query().Get("sort"),
+		Category: r.URL.Query().Get("category"),
+		MinPrice: minPrice,
+		MaxPrice: maxPrice,
+		Page:     intParam(r, "page", 1),
+		PerPage:  intParam(r, "per_page", 20),
 	}
 	ads, total, err := h.svc.BrowseAds(r.Context(), actor, q)
 	if err != nil {
