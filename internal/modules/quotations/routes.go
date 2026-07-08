@@ -26,6 +26,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Delete("/{id}", m.handler.Delete)
 		r.Post("/{id}/assign-manager", m.handler.AssignManager)
 		r.Post("/{id}/approve", m.handler.Approve)
+		r.Post("/{id}/recall", m.handler.Recall)
 		r.Post("/{id}/convert-to-order", m.handler.ConvertToOrder)
 		// Buyer actions
 		r.Post("/{id}/buyer-accept", m.handler.BuyerAccept)

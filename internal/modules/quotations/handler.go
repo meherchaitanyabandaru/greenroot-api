@@ -181,6 +181,23 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, QuotationResponse{Quotation: q})
 }
 
+func (h *Handler) Recall(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	q, err := h.service.Recall(r.Context(), actor, id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, QuotationResponse{Quotation: q})
+}
+
 func (h *Handler) ConvertToOrder(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {
@@ -264,6 +281,10 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusForbidden, "forbidden", "not allowed to access quotation")
 	case errors.Is(err, ErrAlreadyConverted):
 		response.Error(w, http.StatusConflict, "already_converted", "quotation has already been converted to an order")
+	case errors.Is(err, ErrInvalidTransition):
+		response.Error(w, http.StatusConflict, "invalid_transition", "action not allowed in current quotation status")
+	case errors.Is(err, ErrQuotationExpired):
+		response.Error(w, http.StatusConflict, "quotation_expired", "quotation has expired and can no longer be accepted")
 	case errors.Is(err, ErrCustomerRequired):
 		response.Error(w, http.StatusBadRequest, "customer_required", "customer information required for customer quotations")
 	case errors.Is(err, ErrPlantNotFound):

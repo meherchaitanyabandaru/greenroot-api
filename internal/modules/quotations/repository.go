@@ -24,13 +24,12 @@ type Repository interface {
 	Create(ctx context.Context, actorID int64, input CreateQuotationRequest, createdByName string, nurseryName *string, nurseryPhone *string) (*Quotation, error)
 	Update(ctx context.Context, id int64, input UpdateQuotationRequest) (*Quotation, error)
 	Approve(ctx context.Context, id int64, byUserID int64) (*Quotation, error)
+	Recall(ctx context.Context, id int64) (*Quotation, error)
 	// Buyer actions
 	BuyerAccept(ctx context.Context, id int64, byUserID int64) (*Quotation, error)
 	BuyerReject(ctx context.Context, id int64, byUserID int64, reason string) (*Quotation, error)
 	GetBuyerNurseryID(ctx context.Context, quotationID int64) (*int64, error)
-	Delete(ctx context.Context, id int64) error
 	SoftDelete(ctx context.Context, id int64) error
-	FindCreatorID(ctx context.Context, id int64) (int64, error)
 	FindNurseryOwnerID(ctx context.Context, quotationID int64) (int64, error)
 	AssignManager(ctx context.Context, quotationID int64, managerUserID int64) (*Quotation, error)
 	MarkConverted(ctx context.Context, quotationID int64, orderID int64, byUserID int64) error
@@ -40,7 +39,10 @@ type Repository interface {
 	GetPlantInfo(ctx context.Context, plantID int64) (scientificName string, commonName string, err error)
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error)
+	IsNurseryActive(ctx context.Context, nurseryID int64) (bool, error)
 	GetOwnedNurseryID(ctx context.Context, userID int64) (*int64, error)
+	GetManagerNurseryID(ctx context.Context, userID int64) (*int64, error)
+	GetOrderNurseryID(ctx context.Context, orderID int64) (*int64, error)
 	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 }
 
@@ -212,21 +214,6 @@ func (r *PostgresRepository) Update(ctx context.Context, id int64, input UpdateQ
 	return r.FindByID(ctx, id)
 }
 
-func (r *PostgresRepository) Delete(ctx context.Context, id int64) error {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM public.quotations WHERE quotation_id = $1`, id)
-	if err != nil {
-		return err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
 func (r *PostgresRepository) SoftDelete(ctx context.Context, id int64) error {
 	result, err := r.db.ExecContext(ctx,
 		`UPDATE public.quotations SET deleted_at = CURRENT_TIMESTAMP, status = 'DELETED', updated_at = CURRENT_TIMESTAMP WHERE quotation_id = $1 AND deleted_at IS NULL`,
@@ -298,15 +285,6 @@ func (r *PostgresRepository) IsNurseryOwner(ctx context.Context, nurseryID int64
 		nurseryID, userID,
 	).Scan(&exists)
 	return exists, err
-}
-
-func (r *PostgresRepository) FindCreatorID(ctx context.Context, id int64) (int64, error) {
-	var creatorID int64
-	err := r.db.QueryRowContext(ctx, `SELECT created_by_user_id FROM public.quotations WHERE quotation_id = $1`, id).Scan(&creatorID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
-	return creatorID, err
 }
 
 func (r *PostgresRepository) GetNurseryInfo(ctx context.Context, nurseryID int64) (string, string, error) {
@@ -385,8 +363,25 @@ func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAud
 func (r *PostgresRepository) Approve(ctx context.Context, id int64, byUserID int64) (*Quotation, error) {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE public.quotations
-		SET status = 'CUSTOMER_SENT', updated_at = CURRENT_TIMESTAMP
-		WHERE quotation_id = $1 AND status IN ('CUSTOMER_DRAFT') AND deleted_at IS NULL
+		SET status = 'CUSTOMER_SENT',
+		    valid_until = CURRENT_TIMESTAMP + INTERVAL '15 days',
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE quotation_id = $1 AND status = 'CUSTOMER_DRAFT' AND deleted_at IS NULL
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return nil, ErrNotFound
+	}
+	return r.FindByID(ctx, id)
+}
+
+func (r *PostgresRepository) Recall(ctx context.Context, id int64) (*Quotation, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE public.quotations
+		SET status = 'CUSTOMER_DRAFT', updated_at = CURRENT_TIMESTAMP
+		WHERE quotation_id = $1 AND status = 'CUSTOMER_SENT' AND deleted_at IS NULL
 	`, id)
 	if err != nil {
 		return nil, err
@@ -416,7 +411,7 @@ func (r *PostgresRepository) BuyerReject(ctx context.Context, id int64, byUserID
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE public.quotations
 		SET status = 'CUSTOMER_REJECTED', notes = CASE WHEN $2 <> '' THEN COALESCE(notes || E'\n', '') || $2 ELSE notes END, updated_at = CURRENT_TIMESTAMP
-		WHERE quotation_id = $1 AND status IN ('CUSTOMER_DRAFT','CUSTOMER_SENT','CUSTOMER_ACCEPTED') AND deleted_at IS NULL
+		WHERE quotation_id = $1 AND status = 'CUSTOMER_SENT' AND deleted_at IS NULL
 	`, id, reason)
 	if err != nil {
 		return nil, err
@@ -450,6 +445,45 @@ func (r *PostgresRepository) GetOwnedNurseryID(ctx context.Context, userID int64
 	).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return nullableInt64(id), nil
+}
+
+func (r *PostgresRepository) GetManagerNurseryID(ctx context.Context, userID int64) (*int64, error) {
+	var id sql.NullInt64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT nursery_id FROM public.nursery_users WHERE user_id = $1 AND COALESCE(is_active, true) = true LIMIT 1`,
+		userID,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return nullableInt64(id), nil
+}
+
+func (r *PostgresRepository) IsNurseryActive(ctx context.Context, nurseryID int64) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM public.nurseries WHERE nursery_id = $1 AND status = 'ACTIVE')`,
+		nurseryID,
+	).Scan(&exists)
+	return exists, err
+}
+
+func (r *PostgresRepository) GetOrderNurseryID(ctx context.Context, orderID int64) (*int64, error) {
+	var id sql.NullInt64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT nursery_id FROM public.orders WHERE order_id = $1`,
+		orderID,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -509,19 +543,16 @@ func (r *PostgresRepository) refreshTotalTx(ctx context.Context, tx *sql.Tx, qID
 
 func baseSelect() string {
 	return `
-		SELECT q.quotation_id, q.quotation_code,
-		       CASE
-		         WHEN LEFT(q.status, 9) = 'INTERNAL' THEN 'INTERNAL'
-		         WHEN q.recipient_name IS NULL AND q.recipient_mobile IS NULL AND q.customer_user_id IS NULL AND q.buyer_nursery_id IS NULL THEN 'INTERNAL'
-		         ELSE 'CUSTOMER'
-		       END,
+		SELECT q.quotation_id, q.quotation_code, q.quotation_type,
 		       q.created_by_user_id, q.created_by_name,
 		       q.nursery_id, q.nursery_name, q.nursery_phone,
 		       q.customer_user_id, q.assigned_manager_user_id, q.converted_order_id,
 		       q.recipient_name, q.recipient_mobile, q.notes,
-		       COALESCE(q.total_amount, 0), q.status, q.deleted_at, q.created_at, q.updated_at,
-		       q.buyer_nursery_id
+		       COALESCE(q.total_amount, 0), q.status, q.valid_until, q.deleted_at, q.created_at, q.updated_at,
+		       q.buyer_nursery_id,
+		       NULLIF(TRIM(COALESCE(um.first_name, '') || ' ' || COALESCE(um.last_name, '')), '') AS assigned_manager_name
 		FROM public.quotations q
+		LEFT JOIN public.users um ON um.user_id = q.assigned_manager_user_id
 		WHERE q.deleted_at IS NULL
 	`
 }
@@ -629,9 +660,11 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 		recipientName         sql.NullString
 		recipientMobile       sql.NullString
 		notes                 sql.NullString
+		validUntil            sql.NullTime
 		deletedAt             sql.NullTime
 		buyerNurseryID        sql.NullInt64
 		totalAmount           sql.NullString
+		assignedManagerName   sql.NullString
 	)
 	if err := row.Scan(
 		&q.ID, &q.QuotationCode, &q.QuotationType,
@@ -639,8 +672,8 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 		&nurseryID, &nurseryName, &nurseryPhone,
 		&customerUserID, &assignedManagerUserID, &convertedOrderID,
 		&recipientName, &recipientMobile, &notes,
-		&totalAmount, &q.Status, &deletedAt, &q.CreatedAt, &q.UpdatedAt,
-		&buyerNurseryID,
+		&totalAmount, &q.Status, &validUntil, &deletedAt, &q.CreatedAt, &q.UpdatedAt,
+		&buyerNurseryID, &assignedManagerName,
 	); err != nil {
 		return Quotation{}, err
 	}
@@ -654,10 +687,14 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 	q.CustomerUserID = nullableInt64(customerUserID)
 	q.BuyerNurseryID = nullableInt64(buyerNurseryID)
 	q.AssignedManagerUserID = nullableInt64(assignedManagerUserID)
+	q.AssignedManagerName = nullableString(assignedManagerName)
 	q.ConvertedOrderID = nullableInt64(convertedOrderID)
 	q.RecipientName = nullableString(recipientName)
 	q.RecipientMobile = nullableString(recipientMobile)
 	q.Notes = nullableString(notes)
+	if validUntil.Valid {
+		q.ValidUntil = &validUntil.Time
+	}
 	if deletedAt.Valid {
 		q.DeletedAt = &deletedAt.Time
 	}

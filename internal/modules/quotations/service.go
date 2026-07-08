@@ -5,16 +5,27 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
 
 var (
-	ErrForbidden        = errors.New("forbidden")
-	ErrInvalidInput     = errors.New("invalid input")
-	ErrAlreadyConverted = errors.New("quotation already converted to an order")
-	ErrCustomerRequired = errors.New("customer information required for customer quotations")
+	ErrForbidden         = errors.New("forbidden")
+	ErrInvalidInput      = errors.New("invalid input")
+	ErrAlreadyConverted  = errors.New("quotation already converted to an order")
+	ErrCustomerRequired  = errors.New("customer information required for customer quotations")
+	ErrInvalidTransition = errors.New("action not allowed in current quotation status")
+	ErrQuotationExpired  = errors.New("quotation has expired")
 )
+
+var nonDigit = regexp.MustCompile(`\D`)
+
+// editableStatuses enumerates statuses in which a quotation's content may be modified.
+var editableStatuses = map[string]bool{
+	"INTERNAL_DRAFT": true,
+	"CUSTOMER_DRAFT": true,
+}
 
 type Service struct {
 	repository Repository
@@ -33,6 +44,11 @@ func (s *Service) List(ctx context.Context, actor ActorContext, input ListQuotat
 	if err != nil {
 		return nil, Pagination{}, err
 	}
+	if isManagerOnly(actor) {
+		for i := range qs {
+			redactCustomerContact(&qs[i])
+		}
+	}
 	return qs, Pagination{
 		Page:       input.Page,
 		PerPage:    input.PerPage,
@@ -46,18 +62,20 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, id int64) (Quotat
 	if err != nil {
 		return Quotation{}, err
 	}
-	if err := s.canView(actor, *q); err != nil {
+	if err := s.canView(ctx, actor, *q); err != nil {
 		return Quotation{}, err
+	}
+	if isManagerOnly(actor) {
+		redactCustomerContact(q)
 	}
 	return *q, nil
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQuotationRequest) (Quotation, error) {
-	// Business rule: admin cannot participate in business transactions
+	// Business rule: admins and drivers do not participate in business transactions.
 	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") || hasRole(actor, "DRIVER") {
 		return Quotation{}, ErrForbidden
 	}
-	// Normalize type
 	if input.QuotationType != "INTERNAL" {
 		input.QuotationType = "CUSTOMER"
 	}
@@ -65,11 +83,26 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQu
 		return Quotation{}, err
 	}
 
-	// Resolve nursery info
+	// Normalize recipient_mobile before validation.
+	if input.RecipientMobile != nil {
+		normalized := normalizeIndianMobile(*input.RecipientMobile)
+		if normalized == "" && *input.RecipientMobile != "" {
+			return Quotation{}, fmt.Errorf("invalid recipient_mobile: %w", ErrInvalidInput)
+		}
+		input.RecipientMobile = &normalized
+	}
+
 	var nurseryName, nurseryPhone *string
 	if input.NurseryID != nil && *input.NurseryID > 0 {
-		// Verify user belongs to nursery (unless admin)
-		if !hasRole(actor, "ADMIN") {
+		if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+			// Nursery must be ACTIVE before quotations can be created.
+			active, err := s.repository.IsNurseryActive(ctx, *input.NurseryID)
+			if err != nil {
+				return Quotation{}, err
+			}
+			if !active {
+				return Quotation{}, ErrForbidden
+			}
 			member, err := s.repository.IsNurseryMember(ctx, *input.NurseryID, actor.UserID)
 			if err != nil {
 				return Quotation{}, err
@@ -90,9 +123,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQu
 		}
 	}
 
-	// Resolve creator name
 	createdByName, _ := s.repository.GetUserName(ctx, actor.UserID)
-
 	q, err := s.repository.Create(ctx, actor.UserID, input, createdByName, nurseryName, nurseryPhone)
 	if err != nil {
 		return Quotation{}, err
@@ -108,6 +139,13 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, inpu
 	if len(input.Items) == 0 {
 		return Quotation{}, ErrInvalidInput
 	}
+	if input.RecipientMobile != nil {
+		normalized := normalizeIndianMobile(*input.RecipientMobile)
+		if normalized == "" && *input.RecipientMobile != "" {
+			return Quotation{}, fmt.Errorf("invalid recipient_mobile: %w", ErrInvalidInput)
+		}
+		input.RecipientMobile = &normalized
+	}
 	for _, item := range input.Items {
 		if item.PlantID <= 0 || item.Quantity <= 0 || item.UnitPrice < 0 || item.TotalPrice < 0 {
 			return Quotation{}, ErrInvalidInput
@@ -116,22 +154,31 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, inpu
 			return Quotation{}, ErrInvalidInput
 		}
 	}
-	creatorID, err := s.repository.FindCreatorID(ctx, id)
+	q, err := s.repository.FindByID(ctx, id)
 	if err != nil {
 		return Quotation{}, err
 	}
-	if !hasRole(actor, "ADMIN") && creatorID != actor.UserID {
-		return Quotation{}, ErrForbidden
+	// Business rule: quotations are editable only until approved (i.e., while in a DRAFT status).
+	if !editableStatuses[q.Status] {
+		return Quotation{}, ErrInvalidTransition
 	}
-	q, err := s.repository.Update(ctx, id, input)
+	// Business rule: both nursery owners and managers can edit quotations.
+	if err := s.canManage(ctx, actor, *q); err != nil {
+		return Quotation{}, err
+	}
+	updated, err := s.repository.Update(ctx, id, input)
 	if err != nil {
 		return Quotation{}, err
 	}
 	s.audit(ctx, actor, "quotations", id, actionUpdate, input)
-	return *q, nil
+	return *updated, nil
 }
 
 func (s *Service) Delete(ctx context.Context, actor ActorContext, id int64) error {
+	q, err := s.repository.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
 	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
 		if err := s.repository.SoftDelete(ctx, id); err != nil {
 			return err
@@ -139,16 +186,9 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, id int64) erro
 		s.audit(ctx, actor, "quotations", id, actionDelete, map[string]any{"deleted": true})
 		return nil
 	}
-	// Non-admin: nursery owner/member (manager) or quotation creator may soft-delete
-	q, err := s.repository.FindByID(ctx, id)
-	if err != nil {
-		return err
-	}
-	if manageErr := s.canManage(ctx, actor, *q); manageErr != nil {
-		// canManage failed: fall back to creator check
-		if q.CreatedByUserID != actor.UserID {
-			return ErrForbidden
-		}
+	// Business rule: only the nursery owner may delete a quotation; managers cannot.
+	if !s.isNurseryOwner(ctx, actor, *q) {
+		return ErrForbidden
 	}
 	if err := s.repository.SoftDelete(ctx, id); err != nil {
 		return err
@@ -157,8 +197,8 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, id int64) erro
 	return nil
 }
 
-// Approve sends a CUSTOMER_DRAFT quotation to the customer (status → CUSTOMER_SENT).
-// Only the nursery owner/manager or admin may do this.
+// Approve sends a CUSTOMER_DRAFT quotation to the buyer (status → CUSTOMER_SENT).
+// Only nursery owner, manager, or admin may do this.
 func (s *Service) Approve(ctx context.Context, actor ActorContext, quotationID int64) (Quotation, error) {
 	q, err := s.repository.FindByID(ctx, quotationID)
 	if err != nil {
@@ -168,7 +208,7 @@ func (s *Service) Approve(ctx context.Context, actor ActorContext, quotationID i
 		return Quotation{}, err
 	}
 	if q.Status != "CUSTOMER_DRAFT" {
-		return Quotation{}, ErrInvalidInput
+		return Quotation{}, ErrInvalidTransition
 	}
 	approved, err := s.repository.Approve(ctx, quotationID, actor.UserID)
 	if err != nil {
@@ -178,7 +218,27 @@ func (s *Service) Approve(ctx context.Context, actor ActorContext, quotationID i
 	return *approved, nil
 }
 
-// ConvertToOrder links a quotation to an existing order and marks it CONVERTED.
+// Recall pulls a CUSTOMER_SENT quotation back to CUSTOMER_DRAFT so it can be edited before re-sending.
+func (s *Service) Recall(ctx context.Context, actor ActorContext, quotationID int64) (Quotation, error) {
+	q, err := s.repository.FindByID(ctx, quotationID)
+	if err != nil {
+		return Quotation{}, err
+	}
+	if err := s.canManage(ctx, actor, *q); err != nil {
+		return Quotation{}, err
+	}
+	if q.Status != "CUSTOMER_SENT" {
+		return Quotation{}, ErrInvalidTransition
+	}
+	recalled, err := s.repository.Recall(ctx, quotationID)
+	if err != nil {
+		return Quotation{}, err
+	}
+	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_DRAFT", "recalled": true})
+	return *recalled, nil
+}
+
+// ConvertToOrder links an accepted quotation to an existing order and marks it CONVERTED.
 func (s *Service) ConvertToOrder(ctx context.Context, actor ActorContext, quotationID int64, orderID int64) (Quotation, error) {
 	q, err := s.repository.FindByID(ctx, quotationID)
 	if err != nil {
@@ -187,8 +247,19 @@ func (s *Service) ConvertToOrder(ctx context.Context, actor ActorContext, quotat
 	if err := s.canManage(ctx, actor, *q); err != nil {
 		return Quotation{}, err
 	}
+	// Business rule: only an accepted quotation may be converted to an order.
+	if q.Status != "CUSTOMER_ACCEPTED" {
+		return Quotation{}, ErrInvalidTransition
+	}
 	if q.ConvertedOrderID != nil {
 		return Quotation{}, ErrAlreadyConverted
+	}
+	// The target order must belong to the same nursery as the quotation.
+	if q.NurseryID != nil {
+		orderNurseryID, err := s.repository.GetOrderNurseryID(ctx, orderID)
+		if err != nil || orderNurseryID == nil || *orderNurseryID != *q.NurseryID {
+			return Quotation{}, ErrInvalidInput
+		}
 	}
 	if err := s.repository.MarkConverted(ctx, quotationID, orderID, actor.UserID); err != nil {
 		return Quotation{}, err
@@ -201,57 +272,34 @@ func (s *Service) ConvertToOrder(ctx context.Context, actor ActorContext, quotat
 	return *converted, nil
 }
 
-// AssignManager assigns a manager to a quotation. Only the nursery owner or admin may do this.
+// AssignManager assigns an active nursery member as the responsible manager for a quotation.
+// Only the nursery owner or admin may do this; the target must be an active member of the nursery.
 func (s *Service) AssignManager(ctx context.Context, actor ActorContext, quotationID int64, req AssignManagerRequest) (Quotation, error) {
+	q, err := s.repository.FindByID(ctx, quotationID)
+	if err != nil {
+		return Quotation{}, err
+	}
 	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
-		ownerID, err := s.repository.FindNurseryOwnerID(ctx, quotationID)
-		if err != nil || ownerID != actor.UserID {
+		if !s.isNurseryOwner(ctx, actor, *q) {
 			return Quotation{}, ErrForbidden
 		}
 	}
-	q, err := s.repository.AssignManager(ctx, quotationID, req.ManagerUserID)
+	// Target user must be an active member of the quotation's nursery.
+	if q.NurseryID != nil {
+		member, err := s.repository.IsNurseryMember(ctx, *q.NurseryID, req.ManagerUserID)
+		if err != nil || !member {
+			return Quotation{}, ErrInvalidInput
+		}
+	}
+	updated, err := s.repository.AssignManager(ctx, quotationID, req.ManagerUserID)
 	if err != nil {
 		return Quotation{}, err
 	}
 	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, req)
-	return *q, nil
+	return *updated, nil
 }
 
-func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *ListQuotationsRequest) error {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
-		return nil
-	}
-	if input.Buying {
-		// Buyer perspective: filter by buyer user or buyer nursery
-		input.UserID = actor.UserID
-		if hasRole(actor, "NURSERY_OWNER") {
-			nurseryID, _ := s.repository.GetOwnedNurseryID(ctx, actor.UserID)
-			if nurseryID != nil {
-				input.BuyerNurseryID = *nurseryID
-			}
-		}
-		return nil
-	}
-	// Seller perspective: scoped to nursery if NURSERY_OWNER/MANAGER, else by creator
-	if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
-		// NurseryID is set by handler from query param; fallback: auto-scope via getUserNursery
-		if input.NurseryID <= 0 {
-			nurseryID, _ := s.repository.GetOwnedNurseryID(ctx, actor.UserID)
-			if nurseryID != nil {
-				input.NurseryID = *nurseryID
-			} else {
-				// manager: fall back to user filter
-				input.UserID = actor.UserID
-			}
-		}
-		return nil
-	}
-	// Default: buyer/customer sees their own
-	input.UserID = actor.UserID
-	return nil
-}
-
-// BuyerAccept lets a buyer (or buyer nursery owner) accept a quotation sent to them.
+// BuyerAccept lets the buyer accept a quotation that has been sent to them.
 func (s *Service) BuyerAccept(ctx context.Context, actor ActorContext, quotationID int64) (Quotation, error) {
 	q, err := s.repository.FindByID(ctx, quotationID)
 	if err != nil {
@@ -260,15 +308,18 @@ func (s *Service) BuyerAccept(ctx context.Context, actor ActorContext, quotation
 	if err := s.canBuyerAct(ctx, actor, *q); err != nil {
 		return Quotation{}, err
 	}
+	if q.Status != "CUSTOMER_SENT" {
+		return Quotation{}, ErrInvalidTransition
+	}
 	updated, err := s.repository.BuyerAccept(ctx, quotationID, actor.UserID)
 	if err != nil {
 		return Quotation{}, err
 	}
-	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"status": "BUYER_ACCEPTED"})
+	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_ACCEPTED"})
 	return *updated, nil
 }
 
-// BuyerReject lets a buyer reject a quotation sent to them.
+// BuyerReject lets the buyer reject a quotation that has been sent to them.
 func (s *Service) BuyerReject(ctx context.Context, actor ActorContext, quotationID int64, req AcceptRejectQuotationRequest) (Quotation, error) {
 	q, err := s.repository.FindByID(ctx, quotationID)
 	if err != nil {
@@ -276,6 +327,9 @@ func (s *Service) BuyerReject(ctx context.Context, actor ActorContext, quotation
 	}
 	if err := s.canBuyerAct(ctx, actor, *q); err != nil {
 		return Quotation{}, err
+	}
+	if q.Status != "CUSTOMER_SENT" {
+		return Quotation{}, ErrInvalidTransition
 	}
 	reason := ""
 	if req.Reason != nil {
@@ -285,15 +339,20 @@ func (s *Service) BuyerReject(ctx context.Context, actor ActorContext, quotation
 	if err != nil {
 		return Quotation{}, err
 	}
-	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"status": "BUYER_REJECTED", "reason": reason})
+	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_REJECTED", "reason": reason})
 	return *updated, nil
 }
 
 // canBuyerAct verifies the actor is the buyer on this quotation.
 // Matches both linked accounts (customer_user_id) and unlinked mobile-only quotations.
+// Also enforces valid_until expiry.
 func (s *Service) canBuyerAct(ctx context.Context, actor ActorContext, q Quotation) error {
 	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
 		return nil
+	}
+	// Expiry check: buyer cannot act on an expired quotation.
+	if q.ValidUntil != nil && time.Now().After(*q.ValidUntil) {
+		return ErrQuotationExpired
 	}
 	if q.CustomerUserID != nil && *q.CustomerUserID == actor.UserID {
 		return nil
@@ -314,7 +373,9 @@ func (s *Service) canBuyerAct(ctx context.Context, actor ActorContext, q Quotati
 	return ErrForbidden
 }
 
-func (s *Service) canView(actor ActorContext, q Quotation) error {
+// canView checks whether the actor may read a quotation.
+// Uses the passed context so request cancellation/timeouts are respected.
+func (s *Service) canView(ctx context.Context, actor ActorContext, q Quotation) error {
 	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
 		return nil
 	}
@@ -327,12 +388,27 @@ func (s *Service) canView(actor ActorContext, q Quotation) error {
 	if q.CustomerUserID != nil && *q.CustomerUserID == actor.UserID {
 		return nil
 	}
+	// Allow buyers matched by mobile (quotations where customer_user_id is not yet set
+	// but recipient_mobile matches — consistent with the buyer list scope).
+	if q.RecipientMobile != nil && *q.RecipientMobile != "" {
+		mobile, err := s.repository.GetUserMobile(ctx, actor.UserID)
+		if err == nil && mobile == *q.RecipientMobile {
+			return nil
+		}
+	}
+	// Allow access when the actor's nursery is the designated buyer nursery.
+	if q.BuyerNurseryID != nil {
+		ownedNurseryID, _ := s.repository.GetOwnedNurseryID(ctx, actor.UserID)
+		if ownedNurseryID != nil && *ownedNurseryID == *q.BuyerNurseryID {
+			return nil
+		}
+	}
 	if q.NurseryID != nil {
-		owner, err := s.repository.IsNurseryOwner(context.Background(), *q.NurseryID, actor.UserID)
+		owner, err := s.repository.IsNurseryOwner(ctx, *q.NurseryID, actor.UserID)
 		if err == nil && owner {
 			return nil
 		}
-		member, err := s.repository.IsNurseryMember(context.Background(), *q.NurseryID, actor.UserID)
+		member, err := s.repository.IsNurseryMember(ctx, *q.NurseryID, actor.UserID)
 		if err != nil {
 			return ErrForbidden
 		}
@@ -343,8 +419,8 @@ func (s *Service) canView(actor ActorContext, q Quotation) error {
 	return ErrForbidden
 }
 
-// canManage checks if the actor can approve, convert, or otherwise mutate a quotation.
-// Nursery owner and manager (member) can manage; admins always can; creator cannot (they're the buyer).
+// canManage checks if the actor may approve, recall, convert, or otherwise mutate a quotation's state.
+// Both nursery owners and managers qualify; admins always qualify.
 func (s *Service) canManage(ctx context.Context, actor ActorContext, q Quotation) error {
 	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
 		return nil
@@ -362,6 +438,54 @@ func (s *Service) canManage(ctx context.Context, actor ActorContext, q Quotation
 	return ErrForbidden
 }
 
+// isNurseryOwner returns true if actor owns the nursery associated with the quotation.
+func (s *Service) isNurseryOwner(ctx context.Context, actor ActorContext, q Quotation) bool {
+	if q.NurseryID == nil {
+		return false
+	}
+	owner, err := s.repository.IsNurseryOwner(ctx, *q.NurseryID, actor.UserID)
+	return err == nil && owner
+}
+
+func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *ListQuotationsRequest) error {
+	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+		return nil
+	}
+	if input.Buying {
+		// Buyer perspective: filter by buyer user or buyer nursery.
+		input.UserID = actor.UserID
+		if hasRole(actor, "NURSERY_OWNER") {
+			nurseryID, _ := s.repository.GetOwnedNurseryID(ctx, actor.UserID)
+			if nurseryID != nil {
+				input.BuyerNurseryID = *nurseryID
+			}
+		}
+		return nil
+	}
+	// Seller perspective: always force scope to the actor's own nursery.
+	// Never trust a client-supplied nursery_id — an owner could otherwise read
+	// another nursery's quotations by passing ?nursery_id=X.
+	if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
+		nurseryID, _ := s.repository.GetOwnedNurseryID(ctx, actor.UserID)
+		if nurseryID == nil && hasRole(actor, "MANAGER") {
+			nurseryID, _ = s.repository.GetManagerNurseryID(ctx, actor.UserID)
+		}
+		input.UserID = 0
+		if nurseryID != nil {
+			input.NurseryID = *nurseryID
+		} else {
+			input.NurseryID = 0
+			input.UserID = actor.UserID
+		}
+		return nil
+	}
+	// Default: buyer/customer sees only their own.
+	input.UserID = actor.UserID
+	return nil
+}
+
+// ── validation ────────────────────────────────────────────────────────────────
+
 func validateCreate(input CreateQuotationRequest) error {
 	if len(input.Items) == 0 {
 		return ErrInvalidInput
@@ -374,7 +498,7 @@ func validateCreate(input CreateQuotationRequest) error {
 			return ErrInvalidInput
 		}
 	}
-	// CUSTOMER quotations must have at least a recipient name or mobile
+	// CUSTOMER quotations require at least one recipient identifier.
 	if input.QuotationType == "CUSTOMER" {
 		hasRecipient := (input.RecipientName != nil && *input.RecipientName != "") ||
 			(input.RecipientMobile != nil && *input.RecipientMobile != "") ||
@@ -429,6 +553,36 @@ func (s *Service) audit(ctx context.Context, actor ActorContext, table string, r
 		NewJSON:   mustJSON(data),
 		At:        time.Now(),
 	})
+}
+
+// isManagerOnly returns true when the actor is a manager but NOT also an owner or admin.
+func isManagerOnly(actor ActorContext) bool {
+	return hasRole(actor, "MANAGER") &&
+		!hasRole(actor, "NURSERY_OWNER") &&
+		!hasRole(actor, "ADMIN") &&
+		!hasRole(actor, "SUPER_ADMIN")
+}
+
+// redactCustomerContact removes recipient contact details for actors who must not see them.
+func redactCustomerContact(q *Quotation) {
+	q.RecipientName = nil
+	q.RecipientMobile = nil
+}
+
+// normalizeIndianMobile strips non-digits and country prefix, returning a clean
+// 10-digit mobile number. Returns "" if the result is not exactly 10 digits.
+func normalizeIndianMobile(s string) string {
+	s = strings.TrimSpace(s)
+	// Strip leading +91 or 91
+	s = strings.TrimPrefix(s, "+91")
+	if len(s) == 12 && strings.HasPrefix(s, "91") {
+		s = s[2:]
+	}
+	s = nonDigit.ReplaceAllString(s, "")
+	if len(s) != 10 {
+		return ""
+	}
+	return s
 }
 
 func mustJSON(v any) string {
