@@ -238,8 +238,8 @@ func (s *Service) Recall(ctx context.Context, actor ActorContext, quotationID in
 	return *recalled, nil
 }
 
-// ConvertToOrder links an accepted quotation to an existing order and marks it CONVERTED.
-func (s *Service) ConvertToOrder(ctx context.Context, actor ActorContext, quotationID int64, orderID int64) (Quotation, error) {
+// ConvertToOrder auto-creates a PENDING order from the quotation's items and marks it CONVERTED.
+func (s *Service) ConvertToOrder(ctx context.Context, actor ActorContext, quotationID int64) (Quotation, error) {
 	q, err := s.repository.FindByID(ctx, quotationID)
 	if err != nil {
 		return Quotation{}, err
@@ -247,21 +247,14 @@ func (s *Service) ConvertToOrder(ctx context.Context, actor ActorContext, quotat
 	if err := s.canManage(ctx, actor, *q); err != nil {
 		return Quotation{}, err
 	}
-	// Business rule: only an accepted quotation may be converted to an order.
 	if q.Status != "CUSTOMER_ACCEPTED" {
 		return Quotation{}, ErrInvalidTransition
 	}
 	if q.ConvertedOrderID != nil {
 		return Quotation{}, ErrAlreadyConverted
 	}
-	// The target order must belong to the same nursery as the quotation.
-	if q.NurseryID != nil {
-		orderNurseryID, err := s.repository.GetOrderNurseryID(ctx, orderID)
-		if err != nil || orderNurseryID == nil || *orderNurseryID != *q.NurseryID {
-			return Quotation{}, ErrInvalidInput
-		}
-	}
-	if err := s.repository.MarkConverted(ctx, quotationID, orderID, actor.UserID); err != nil {
+	orderID, err := s.repository.CreateOrderAndConvert(ctx, q, actor.UserID)
+	if err != nil {
 		return Quotation{}, err
 	}
 	converted, err := s.repository.FindByID(ctx, quotationID)

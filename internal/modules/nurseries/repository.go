@@ -74,7 +74,7 @@ func (r *PostgresRepository) List(ctx context.Context, input ListNurseriesReques
 	query := fmt.Sprintf(`
 		SELECT DISTINCT n.nursery_id, n.nursery_code, n.nursery_name, n.gst_number, n.mobile,
 			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
-			n.created_at, n.updated_at, n.created_by, n.updated_by
+			n.created_at, n.updated_at, n.created_by, n.updated_by, n.rejection_reason, n.rejected_at
 		FROM public.nurseries n
 		%s
 		ORDER BY n.nursery_id DESC
@@ -665,7 +665,7 @@ func (r *PostgresRepository) ListByUserID(ctx context.Context, userID int64) ([]
 	const query = `
 		SELECT DISTINCT n.nursery_id, n.nursery_code, n.nursery_name, n.gst_number, n.mobile,
 			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
-			n.created_at, n.updated_at, n.created_by, n.updated_by
+			n.created_at, n.updated_at, n.created_by, n.updated_by, n.rejection_reason, n.rejected_at
 		FROM public.nurseries n
 		JOIN public.nursery_users nu ON nu.nursery_id = n.nursery_id
 		WHERE nu.user_id = $1
@@ -732,7 +732,7 @@ func (r *PostgresRepository) scanNursery(ctx context.Context, where string, args
 	query := `
 		SELECT n.nursery_id, n.nursery_code, n.nursery_name, n.gst_number, n.mobile,
 			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
-			n.created_at, n.updated_at, n.created_by, n.updated_by
+			n.created_at, n.updated_at, n.created_by, n.updated_by, n.rejection_reason, n.rejected_at
 		FROM public.nurseries n
 		` + where
 	nursery, err := scanNurseryRow(r.db.QueryRowContext(ctx, query, args...))
@@ -794,9 +794,10 @@ func scanNurseryRows(rows *sql.Rows) (Nursery, error) {
 
 func scanNursery(row interface{ Scan(dest ...any) error }) (Nursery, error) {
 	var nursery Nursery
-	var code, gst, mobile, email, website, description sql.NullString
+	var code, gst, mobile, email, website, description, rejectionReason sql.NullString
 	var ownerUserID, createdBy, updatedBy sql.NullInt64
-	if err := row.Scan(&nursery.ID, &code, &nursery.Name, &gst, &mobile, &email, &website, &description, &nursery.Status, &ownerUserID, &nursery.CreatedAt, &nursery.UpdatedAt, &createdBy, &updatedBy); err != nil {
+	var rejectedAt sql.NullTime
+	if err := row.Scan(&nursery.ID, &code, &nursery.Name, &gst, &mobile, &email, &website, &description, &nursery.Status, &ownerUserID, &nursery.CreatedAt, &nursery.UpdatedAt, &createdBy, &updatedBy, &rejectionReason, &rejectedAt); err != nil {
 		return Nursery{}, err
 	}
 	nursery.Code = nullableString(code)
@@ -806,6 +807,10 @@ func scanNursery(row interface{ Scan(dest ...any) error }) (Nursery, error) {
 	nursery.Email = nullableString(email)
 	nursery.Website = nullableString(website)
 	nursery.Description = nullableString(description)
+	nursery.RejectionReason = nullableString(rejectionReason)
+	if rejectedAt.Valid {
+		nursery.RejectedAt = &rejectedAt.Time
+	}
 	nursery.OwnerUserID = nullableInt64(ownerUserID)
 	nursery.CreatedBy = nullableInt64(createdBy)
 	nursery.UpdatedBy = nullableInt64(updatedBy)

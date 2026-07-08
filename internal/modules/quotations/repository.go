@@ -33,6 +33,7 @@ type Repository interface {
 	FindNurseryOwnerID(ctx context.Context, quotationID int64) (int64, error)
 	AssignManager(ctx context.Context, quotationID int64, managerUserID int64) (*Quotation, error)
 	MarkConverted(ctx context.Context, quotationID int64, orderID int64, byUserID int64) error
+	CreateOrderAndConvert(ctx context.Context, q *Quotation, byUserID int64) (orderID int64, err error)
 	GetNurseryInfo(ctx context.Context, nurseryID int64) (name string, phone string, err error)
 	GetUserName(ctx context.Context, userID int64) (string, error)
 	GetUserMobile(ctx context.Context, userID int64) (string, error)
@@ -489,6 +490,92 @@ func (r *PostgresRepository) GetOrderNurseryID(ctx context.Context, orderID int6
 		return nil, err
 	}
 	return nullableInt64(id), nil
+}
+
+// CreateOrderAndConvert creates a PENDING order from the quotation's items and marks
+// the quotation as CONVERTED in a single transaction. No manual order_id needed.
+func (r *PostgresRepository) CreateOrderAndConvert(ctx context.Context, q *Quotation, byUserID int64) (int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	now := time.Now()
+	orderCode, err := publiccode.Next(ctx, tx, publiccode.Orders, now)
+	if err != nil {
+		return 0, err
+	}
+	orderNumber := fmt.Sprintf("%s-%d", orderCode, now.UnixNano()%10000)
+
+	var nurseryID sql.NullInt64
+	if q.NurseryID != nil {
+		nurseryID = sql.NullInt64{Int64: *q.NurseryID, Valid: true}
+	}
+	var buyerNurseryID sql.NullInt64
+	if q.BuyerNurseryID != nil {
+		buyerNurseryID = sql.NullInt64{Int64: *q.BuyerNurseryID, Valid: true}
+	}
+	var buyerUserID sql.NullInt64
+	if q.BuyerNurseryID != nil {
+		var ownerID int64
+		if scanErr := tx.QueryRowContext(ctx,
+			`SELECT owner_user_id FROM public.nurseries WHERE nursery_id = $1`,
+			*q.BuyerNurseryID,
+		).Scan(&ownerID); scanErr == nil {
+			buyerUserID = sql.NullInt64{Int64: ownerID, Valid: true}
+		}
+	}
+	var notes sql.NullString
+	if q.Notes != nil && *q.Notes != "" {
+		notes = sql.NullString{String: *q.Notes, Valid: true}
+	}
+
+	var orderID int64
+	if err := tx.QueryRowContext(ctx, `
+		INSERT INTO public.orders (
+			order_code, order_number, seller_nursery_id, buyer_nursery_id,
+			buyer_user_id, quotation_id, order_status, total_amount,
+			notes, order_date, created_at, updated_at, created_by, updated_by
+		) VALUES ($1,$2,$3,$4,$5,$6,'PENDING',0,$7,$8,$8,$8,$9,$9)
+		RETURNING order_id
+	`, orderCode, orderNumber, nurseryID, buyerNurseryID, buyerUserID, q.ID, notes, now, byUserID,
+	).Scan(&orderID); err != nil {
+		return 0, err
+	}
+
+	for _, item := range q.Items {
+		var plantID sql.NullInt64
+		if item.PlantID != nil {
+			plantID = sql.NullInt64{Int64: *item.PlantID, Valid: true}
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO public.order_items (order_id, plant_id, quantity, unit_price, total_price, created_at)
+			VALUES ($1,$2,$3,$4,$5,CURRENT_TIMESTAMP)
+		`, orderID, plantID, item.Quantity, item.UnitPrice, item.TotalPrice); err != nil {
+			return 0, err
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE public.orders
+		SET total_amount = COALESCE((SELECT SUM(total_price) FROM public.order_items WHERE order_id = $1), 0),
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE order_id = $1
+	`, orderID); err != nil {
+		return 0, err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE public.quotations
+		SET converted_order_id = $2, converted_by_user_id = $3, converted_at = CURRENT_TIMESTAMP,
+		    status = 'CONVERTED', updated_at = CURRENT_TIMESTAMP
+		WHERE quotation_id = $1 AND converted_order_id IS NULL AND deleted_at IS NULL
+	`, q.ID, orderID, byUserID); err != nil {
+		return 0, err
+	}
+
+	return orderID, tx.Commit()
 }
 
 func (r *PostgresRepository) listItems(ctx context.Context, qID int64) ([]QuotationItem, error) {

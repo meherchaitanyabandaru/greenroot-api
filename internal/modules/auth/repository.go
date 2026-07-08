@@ -364,7 +364,7 @@ func (r *PostgresRepository) GetWorkspaces(ctx context.Context, userID int64) ([
 
 	// Nursery owned by this user — V1 tracks ownership via nurseries.owner_user_id
 	const ownedQuery = `
-		SELECT nursery_id, nursery_name
+		SELECT nursery_id, nursery_name, COALESCE(status::text, 'PENDING') AS nursery_status
 		FROM public.nurseries
 		WHERE owner_user_id = $1
 		  AND status NOT IN ('DELETED', 'SUSPENDED')
@@ -372,13 +372,14 @@ func (r *PostgresRepository) GetWorkspaces(ctx context.Context, userID int64) ([
 		LIMIT 1
 	`
 	var ownedNurseryID int64
-	var ownedNurseryName string
-	if err := r.db.QueryRowContext(ctx, ownedQuery, userID).Scan(&ownedNurseryID, &ownedNurseryName); err == nil {
+	var ownedNurseryName, ownedNurseryStatus string
+	if err := r.db.QueryRowContext(ctx, ownedQuery, userID).Scan(&ownedNurseryID, &ownedNurseryName, &ownedNurseryStatus); err == nil {
 		workspaces = append(workspaces, Workspace{
-			Type:        "OWNED_NURSERY",
-			Role:        "OWNER",
-			NurseryID:   &ownedNurseryID,
-			NurseryName: &ownedNurseryName,
+			Type:          "OWNED_NURSERY",
+			Role:          "OWNER",
+			NurseryID:     &ownedNurseryID,
+			NurseryName:   &ownedNurseryName,
+			NurseryStatus: &ownedNurseryStatus,
 		})
 	}
 

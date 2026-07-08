@@ -39,10 +39,11 @@ type Session struct {
 // Workspace represents one context a user can operate in after login.
 // Types: PERSONAL | OWNED_NURSERY | MANAGER_NURSERY | DRIVER
 type Workspace struct {
-	Type        string  `json:"type"`
-	Role        string  `json:"role"`
-	NurseryID   *int64  `json:"nursery_id,omitempty"`
-	NurseryName *string `json:"nursery_name,omitempty"`
+	Type          string  `json:"type"`
+	Role          string  `json:"role"`
+	NurseryID     *int64  `json:"nursery_id,omitempty"`
+	NurseryName   *string `json:"nursery_name,omitempty"`
+	NurseryStatus *string `json:"nursery_status,omitempty"` // only for OWNED_NURSERY
 }
 
 // OwnerDashboard aggregates all key metrics for a nursery owner.

@@ -9,23 +9,25 @@ const (
 )
 
 type Nursery struct {
-	ID          int64      `json:"id"`
-	Code        *string    `json:"code,omitempty"`
-	NurseryCode *string    `json:"nursery_code,omitempty"`
-	Name        string     `json:"name"`
-	GSTNumber   *string    `json:"gst_number,omitempty"`
-	Mobile      *string    `json:"mobile,omitempty"`
-	Email       *string    `json:"email,omitempty"`
-	Website     *string    `json:"website,omitempty"`
-	Description *string    `json:"description,omitempty"`
-	Status      string     `json:"status"`
-	OwnerUserID *int64     `json:"owner_user_id,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	CreatedBy   *int64     `json:"created_by,omitempty"`
-	UpdatedBy   *int64     `json:"updated_by,omitempty"`
-	Addresses   []Address  `json:"addresses,omitempty"`
-	Users       []UserLink `json:"users,omitempty"`
+	ID              int64      `json:"id"`
+	Code            *string    `json:"code,omitempty"`
+	NurseryCode     *string    `json:"nursery_code,omitempty"`
+	Name            string     `json:"name"`
+	GSTNumber       *string    `json:"gst_number,omitempty"`
+	Mobile          *string    `json:"mobile,omitempty"`
+	Email           *string    `json:"email,omitempty"`
+	Website         *string    `json:"website,omitempty"`
+	Description     *string    `json:"description,omitempty"`
+	Status          string     `json:"status"`
+	RejectionReason *string    `json:"rejection_reason,omitempty"`
+	RejectedAt      *time.Time `json:"rejected_at,omitempty"`
+	OwnerUserID     *int64     `json:"owner_user_id,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	CreatedBy       *int64     `json:"created_by,omitempty"`
+	UpdatedBy       *int64     `json:"updated_by,omitempty"`
+	Addresses       []Address  `json:"addresses,omitempty"`
+	Users           []UserLink `json:"users,omitempty"`
 }
 
 // NurseryDriver represents a driver connected to a nursery.

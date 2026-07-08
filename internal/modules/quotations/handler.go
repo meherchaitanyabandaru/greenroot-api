@@ -207,17 +207,7 @@ func (h *Handler) ConvertToOrder(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req struct {
-		OrderID int64 `json:"order_id"`
-	}
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-	if req.OrderID <= 0 {
-		response.Error(w, http.StatusBadRequest, "invalid_input", "order_id is required")
-		return
-	}
-	q, err := h.service.ConvertToOrder(r.Context(), actor, id, req.OrderID)
+	q, err := h.service.ConvertToOrder(r.Context(), actor, id)
 	if err != nil {
 		writeError(w, err)
 		return
