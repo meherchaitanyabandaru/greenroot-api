@@ -19,12 +19,22 @@ var (
 	ErrDriverCannotOwnNursery  = errors.New("approved drivers cannot register a nursery")
 )
 
+// TrialCreator is satisfied by the subscriptions.Service to avoid a circular import.
+type TrialCreator interface {
+	CreateTrialForOwner(ctx context.Context, ownerUserID int64, approvalDate time.Time) error
+}
+
 type Service struct {
-	repository Repository
+	repository  Repository
+	trialSvc    TrialCreator // may be nil
 }
 
 func NewService(repository Repository) *Service {
 	return &Service{repository: repository}
+}
+
+func NewServiceWithTrial(repository Repository, trialSvc TrialCreator) *Service {
+	return &Service{repository: repository, trialSvc: trialSvc}
 }
 
 func (s *Service) List(ctx context.Context, input ListNurseriesRequest) ([]Nursery, Pagination, error) {
@@ -194,6 +204,12 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, nurseryI
 		return Nursery{}, err
 	}
 	s.audit(ctx, actor, "nurseries", nursery.ID, actionUpdate, map[string]any{"status": status})
+
+	// Auto-create 6-month TRIAL subscription when admin approves a nursery.
+	if status == "APPROVED" && s.trialSvc != nil && nursery.OwnerUserID != nil {
+		_ = s.trialSvc.CreateTrialForOwner(ctx, *nursery.OwnerUserID, time.Now())
+	}
+
 	return *nursery, nil
 }
 

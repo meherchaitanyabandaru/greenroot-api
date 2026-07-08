@@ -12,8 +12,12 @@ type Module struct {
 }
 
 func NewModule(db *sql.DB, jwt *jwtplatform.Service) Module {
+	return NewModuleWithTrial(db, jwt, nil)
+}
+
+func NewModuleWithTrial(db *sql.DB, jwt *jwtplatform.Service, trialSvc TrialCreator) Module {
 	repository := NewRepository(db)
-	service := NewService(repository)
+	service := NewServiceWithTrial(repository, trialSvc)
 	return Module{handler: NewHandler(service, jwt)}
 }
 

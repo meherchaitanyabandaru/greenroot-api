@@ -177,6 +177,46 @@ func (s *Service) Cancel(ctx context.Context, actor ActorContext, subscriptionID
 	return *subscription, nil
 }
 
+func (s *Service) ListPayments(ctx context.Context, actor ActorContext, subscriptionID int64) ([]Payment, error) {
+	subscription, err := s.repository.FindByID(ctx, subscriptionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.canAccess(actor, *subscription); err != nil {
+		return nil, err
+	}
+	return s.repository.ListPaymentsBySubscription(ctx, subscriptionID)
+}
+
+// CreateTrialForOwner auto-creates a 6-month TRIAL subscription when a nursery is approved.
+// Silently succeeds if the owner already has an active subscription or if TRIAL plan is not seeded.
+func (s *Service) CreateTrialForOwner(ctx context.Context, ownerUserID int64, approvalDate time.Time) error {
+	if _, err := s.repository.FindActiveByUser(ctx, ownerUserID); err == nil {
+		return nil // already has an active subscription
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	plan, err := s.repository.FindPlanByCode(ctx, "TRIAL")
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil // TRIAL plan not seeded yet; skip gracefully
+		}
+		return err
+	}
+	startDateStr := approvalDate.Truncate(24 * time.Hour).Format(time.DateOnly)
+	adminActor := ActorContext{UserID: ownerUserID, Roles: []string{"ADMIN"}}
+	_, err = s.Create(ctx, adminActor, CreateSubscriptionRequest{
+		UserID:       &ownerUserID,
+		PlanID:       plan.ID,
+		BillingCycle: "TRIAL",
+		StartDate:    &startDateStr,
+	})
+	if errors.Is(err, ErrConflict) {
+		return nil
+	}
+	return err
+}
+
 func (s *Service) canAccess(actor ActorContext, subscription UserSubscription) error {
 	if hasRole(actor, "ADMIN") || subscription.UserID == actor.UserID {
 		return nil
@@ -260,6 +300,8 @@ func cycleEndAndAmount(startDate time.Time, cycle string, plan SubscriptionPlan)
 	case "YEARLY", "ANNUAL":
 		amount := float64OrZero(plan.YearlyPrice)
 		return startDate.AddDate(1, 0, -1), amount, nil
+	case "TRIAL":
+		return startDate.AddDate(0, 6, -1), 0, nil
 	default:
 		return time.Time{}, 0, ErrInvalidInput
 	}

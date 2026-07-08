@@ -16,6 +16,7 @@ var ErrNotFound = errors.New("not found")
 type Repository interface {
 	ListPlans(ctx context.Context, activeOnly bool) ([]SubscriptionPlan, error)
 	FindPlan(ctx context.Context, planID int64) (*SubscriptionPlan, error)
+	FindPlanByCode(ctx context.Context, code string) (*SubscriptionPlan, error)
 	List(ctx context.Context, input ListSubscriptionsRequest) ([]UserSubscription, int64, error)
 	FindByID(ctx context.Context, subscriptionID int64) (*UserSubscription, error)
 	FindActiveByUser(ctx context.Context, userID int64) (*UserSubscription, error)
@@ -23,6 +24,7 @@ type Repository interface {
 	UpdateStatus(ctx context.Context, subscriptionID int64, status string) (*UserSubscription, error)
 	Renew(ctx context.Context, subscriptionID int64, input RenewSubscriptionInput) (*UserSubscription, error)
 	CreatePayment(ctx context.Context, input CreatePaymentInput) error
+	ListPaymentsBySubscription(ctx context.Context, subscriptionID int64) ([]Payment, error)
 	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 }
 
@@ -94,6 +96,14 @@ func (r *PostgresRepository) ListPlans(ctx context.Context, activeOnly bool) ([]
 
 func (r *PostgresRepository) FindPlan(ctx context.Context, planID int64) (*SubscriptionPlan, error) {
 	plan, err := scanPlan(r.db.QueryRowContext(ctx, planSelect()+" WHERE plan_id = $1", planID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return plan, err
+}
+
+func (r *PostgresRepository) FindPlanByCode(ctx context.Context, code string) (*SubscriptionPlan, error) {
+	plan, err := scanPlan(r.db.QueryRowContext(ctx, planSelect()+" WHERE UPPER(plan_code) = UPPER($1)", code))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -235,6 +245,40 @@ func (r *PostgresRepository) CreatePayment(ctx context.Context, input CreatePaym
 	return err
 }
 
+func (r *PostgresRepository) ListPaymentsBySubscription(ctx context.Context, subscriptionID int64) ([]Payment, error) {
+	const query = `
+		SELECT payment_id, payment_code, amount, payment_method, transaction_reference,
+		       payment_status, payment_date, provider, provider_payment_id, provider_order_id, created_at
+		FROM public.payments
+		WHERE user_subscription_id = $1 AND payment_for = 'SUBSCRIPTION'
+		ORDER BY payment_id DESC
+	`
+	rows, err := r.db.QueryContext(ctx, query, subscriptionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	payments := make([]Payment, 0)
+	for rows.Next() {
+		var p Payment
+		var method, txRef, provider, providerPaymentID, providerOrderID sql.NullString
+		var paymentDate sql.NullTime
+		if err := rows.Scan(&p.ID, &p.PaymentCode, &p.Amount, &method, &txRef, &p.Status, &paymentDate, &provider, &providerPaymentID, &providerOrderID, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		p.PaymentMethod = nullableString(method)
+		p.TransactionReference = nullableString(txRef)
+		p.Provider = nullableString(provider)
+		p.ProviderPaymentID = nullableString(providerPaymentID)
+		p.ProviderOrderID = nullableString(providerOrderID)
+		if paymentDate.Valid {
+			p.PaymentDate = &paymentDate.Time
+		}
+		payments = append(payments, p)
+	}
+	return payments, rows.Err()
+}
+
 func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAuditInput) error {
 	const query = `
 		INSERT INTO public.audit_logs (
@@ -354,6 +398,11 @@ func scanSubscription(row interface{ Scan(dest ...any) error }) (UserSubscriptio
 	}
 	if endDate.Valid {
 		subscription.EndDate = &endDate.Time
+		days := int(time.Until(endDate.Time).Hours() / 24)
+		if days < 0 {
+			days = 0
+		}
+		subscription.DaysRemaining = &days
 	}
 	if updatedAt.Valid {
 		subscription.UpdatedAt = &updatedAt.Time

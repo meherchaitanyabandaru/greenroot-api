@@ -59,6 +59,10 @@ type SubscriptionResponse struct {
 	Subscription UserSubscription `json:"subscription"`
 }
 
+type PaymentsResponse struct {
+	Payments []Payment `json:"payments"`
+}
+
 type MessageResponse struct {
 	Message string `json:"message"`
 }

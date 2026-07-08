@@ -37,6 +37,7 @@ type UserSubscription struct {
 	EndDate          *time.Time `json:"end_date,omitempty"`
 	Status           string     `json:"subscription_status"`
 	AutoRenew        bool       `json:"auto_renew"`
+	DaysRemaining    *int       `json:"days_remaining,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
 	LatestPayment    *Payment   `json:"latest_payment,omitempty"`

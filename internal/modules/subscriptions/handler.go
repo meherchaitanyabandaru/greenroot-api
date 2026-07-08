@@ -158,6 +158,23 @@ func (h *Handler) Renew(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, SubscriptionResponse{Subscription: subscription})
 }
 
+func (h *Handler) ListPayments(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	subscriptionID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	payments, err := h.service.ListPayments(r.Context(), actor, subscriptionID)
+	if err != nil {
+		writeSubscriptionsError(w, err)
+		return
+	}
+	response.OK(w, PaymentsResponse{Payments: payments})
+}
+
 func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {

@@ -9,13 +9,17 @@ import (
 
 type Module struct {
 	handler *Handler
+	service *Service
 }
 
 func NewModule(db *sql.DB, jwt *jwtplatform.Service) Module {
 	repository := NewRepository(db)
 	service := NewService(repository)
-	return Module{handler: NewHandler(service, jwt)}
+	return Module{handler: NewHandler(service, jwt), service: service}
 }
+
+// Service exposes the subscription service so other modules can call CreateTrialForOwner.
+func (m Module) Service() *Service { return m.service }
 
 func (m Module) RegisterRoutes(router chi.Router) {
 	router.Route("/subscription-plans", func(r chi.Router) {
@@ -31,5 +35,6 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Put("/{id}/status", m.handler.UpdateStatus)
 		r.Post("/{id}/renew", m.handler.Renew)
 		r.Post("/{id}/cancel", m.handler.Cancel)
+		r.Get("/{id}/payments", m.handler.ListPayments)
 	})
 }
