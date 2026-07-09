@@ -19,7 +19,6 @@ type Repository interface {
 	ListRoles(ctx context.Context, userID int64) ([]Role, error)
 	ListSessions(ctx context.Context, userID int64) ([]Session, error)
 	CreateUserActivity(ctx context.Context, input CreateActivityInput) error
-	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 }
 
 type CreateActivityInput struct {
@@ -29,17 +28,6 @@ type CreateActivityInput struct {
 	EntityID int64
 	DataJSON string
 	At       time.Time
-}
-
-type CreateAuditInput struct {
-	TableName string
-	RecordID  int64
-	Action    string
-	ChangedBy int64
-	SourceIP  string
-	UserAgent string
-	NewJSON   string
-	At        time.Time
 }
 
 type PostgresRepository struct {
@@ -327,16 +315,6 @@ func (r *PostgresRepository) CreateUserActivity(ctx context.Context, input Creat
 	return err
 }
 
-func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAuditInput) error {
-	const query = `
-		INSERT INTO public.audit_logs (
-			table_name, record_id, action_type, old_data, new_data, changed_by, source_ip, user_agent, changed_at
-		)
-		VALUES ($1, $2, $3, NULL, NULLIF($4, '')::jsonb, $5, NULLIF($6, ''), NULLIF($7, ''), $8)
-	`
-	_, err := r.db.ExecContext(ctx, query, input.TableName, input.RecordID, input.Action, input.NewJSON, input.ChangedBy, input.SourceIP, input.UserAgent, input.At)
-	return err
-}
 
 func (r *PostgresRepository) scanUser(ctx context.Context, where string, args ...any) (*User, error) {
 	query := `

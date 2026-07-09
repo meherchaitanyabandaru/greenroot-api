@@ -20,18 +20,6 @@ type Repository interface {
 	Update(ctx context.Context, actorID int64, inventoryID int64, input UpsertInventoryRequest) (*InventoryItem, error)
 	Delete(ctx context.Context, inventoryID int64) error
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
-	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
-}
-
-type CreateAuditInput struct {
-	TableName string
-	RecordID  int64
-	Action    string
-	ChangedBy int64
-	SourceIP  string
-	UserAgent string
-	NewJSON   string
-	At        time.Time
 }
 
 type PostgresRepository struct {
@@ -156,16 +144,6 @@ func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int6
 	return exists, err
 }
 
-func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAuditInput) error {
-	const query = `
-		INSERT INTO public.audit_logs (
-			table_name, record_id, action_type, old_data, new_data, changed_by, source_ip, user_agent, changed_at
-		)
-		VALUES ($1, $2, $3, NULL, NULLIF($4, '')::jsonb, $5, NULLIF($6, ''), NULLIF($7, ''), $8)
-	`
-	_, err := r.db.ExecContext(ctx, query, input.TableName, input.RecordID, input.Action, input.NewJSON, input.ChangedBy, input.SourceIP, input.UserAgent, input.At)
-	return err
-}
 
 func baseSelect() string {
 	return `

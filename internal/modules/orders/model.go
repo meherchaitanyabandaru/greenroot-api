@@ -3,7 +3,7 @@ package orders
 import "time"
 
 const (
-	actionInsert = "INSERT"
+	actionInsert = "CREATE"
 	actionUpdate = "UPDATE"
 	actionDelete = "DELETE"
 )

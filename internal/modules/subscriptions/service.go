@@ -8,6 +8,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 )
 
 var (
@@ -18,10 +20,11 @@ var (
 
 type Service struct {
 	repository Repository
+	auditSvc   *auditlog.Service
 }
 
-func NewService(repository Repository) *Service {
-	return &Service{repository: repository}
+func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
+	return &Service{repository: repository, auditSvc: auditSvc}
 }
 
 func (s *Service) ListPlans(ctx context.Context) ([]SubscriptionPlan, error) {
@@ -268,20 +271,16 @@ func (s *Service) createSubscriptionPayment(ctx context.Context, subscriptionID 
 	})
 }
 
-func (s *Service) audit(ctx context.Context, actor ActorContext, recordID int64, action string, payload any) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-	_ = s.repository.CreateAuditLog(ctx, CreateAuditInput{
-		TableName: "user_subscriptions",
-		RecordID:  recordID,
-		Action:    action,
-		ChangedBy: actor.UserID,
-		SourceIP:  actor.IPAddress,
-		UserAgent: actor.UserAgent,
-		NewJSON:   string(data),
-		At:        time.Now(),
+func (s *Service) audit(ctx context.Context, actor ActorContext, entityID int64, action auditlog.Action, newValue any) {
+	s.auditSvc.Log(ctx, auditlog.Entry{
+		UserID:     actor.UserID,
+		Module:     auditlog.ModuleSubscriptions,
+		EntityType: "user_subscription",
+		EntityID:   entityID,
+		Action:     action,
+		NewValue:   newValue,
+		IPAddress:  actor.IPAddress,
+		DeviceInfo: actor.UserAgent,
 	})
 }
 

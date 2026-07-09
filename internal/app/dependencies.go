@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"log/slog"
 
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/config"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/logger"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
@@ -17,4 +18,5 @@ type Dependencies struct {
 	DB         *sql.DB
 	JWT        *jwtplatform.Service
 	Storage    *storage.Client
+	Audit      *auditlog.Service
 }

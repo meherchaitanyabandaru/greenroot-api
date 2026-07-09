@@ -17,9 +17,8 @@ type mockRepo struct {
 	managedNurseries map[int64]int64   // user_id → nursery_id (managers)
 	activeNurseries  map[int64]bool    // nursery_id → is active
 	orders           map[int64]int64   // order_id → nursery_id
-	userMobiles      map[int64]string
-	softDeleted      []int64
-	auditCount       int
+	userMobiles map[int64]string
+	softDeleted []int64
 }
 
 func newMockRepo() *mockRepo {
@@ -184,6 +183,17 @@ func (m *mockRepo) MarkConverted(_ context.Context, quotationID int64, orderID i
 	return nil
 }
 
+func (m *mockRepo) CreateOrderAndConvert(_ context.Context, q *Quotation, _ int64) (int64, error) {
+	const fakeOrderID = int64(1000)
+	q.Status = "CONVERTED"
+	q.ConvertedOrderID = func() *int64 { v := fakeOrderID; return &v }()
+	if stored, ok := m.quotations[q.ID]; ok {
+		stored.Status = "CONVERTED"
+		stored.ConvertedOrderID = q.ConvertedOrderID
+	}
+	return fakeOrderID, nil
+}
+
 func (m *mockRepo) GetNurseryInfo(_ context.Context, nurseryID int64) (string, string, error) {
 	return "Test Nursery", "9000000000", nil
 }
@@ -247,11 +257,6 @@ func (m *mockRepo) GetOrderNurseryID(_ context.Context, orderID int64) (*int64, 
 	return &nurseryID, nil
 }
 
-func (m *mockRepo) CreateAuditLog(_ context.Context, _ CreateAuditInput) error {
-	m.auditCount++
-	return nil
-}
-
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func ownerActor(userID int64) ActorContext {
@@ -298,7 +303,7 @@ func TestUpdate_BlockedAfterApproval(t *testing.T) {
 			repo := newMockRepo()
 			repo.addNursery(10, 1)
 			repo.addQuotation(baseQuotation(1, status))
-			svc := NewService(repo)
+			svc := NewService(repo, nil)
 
 			_, err := svc.Update(context.Background(), ownerActor(1), 1, UpdateQuotationRequest{Items: []QuotationItemRequest{validItem()}})
 			if !errors.Is(err, ErrInvalidTransition) {
@@ -314,7 +319,7 @@ func TestUpdate_AllowedInDraftStatuses(t *testing.T) {
 			repo := newMockRepo()
 			repo.addNursery(10, 1)
 			repo.addQuotation(baseQuotation(1, status))
-			svc := NewService(repo)
+			svc := NewService(repo, nil)
 
 			_, err := svc.Update(context.Background(), ownerActor(1), 1, UpdateQuotationRequest{Items: []QuotationItemRequest{validItem()}})
 			if err != nil {
@@ -332,7 +337,7 @@ func TestUpdate_ManagerCanEdit(t *testing.T) {
 	q := baseQuotation(1, "CUSTOMER_DRAFT")
 	q.CreatedByUserID = 1 // created by owner, not manager
 	repo.addQuotation(q)
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	_, err := svc.Update(context.Background(), managerActor(2), 1, UpdateQuotationRequest{Items: []QuotationItemRequest{validItem()}})
 	if err != nil {
@@ -344,7 +349,7 @@ func TestUpdate_NonMemberForbidden(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1) // user 99 is not a member
 	repo.addQuotation(baseQuotation(1, "CUSTOMER_DRAFT"))
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	_, err := svc.Update(context.Background(), ownerActor(99), 1, UpdateQuotationRequest{Items: []QuotationItemRequest{validItem()}})
 	if !errors.Is(err, ErrForbidden) {
@@ -361,7 +366,7 @@ func TestApprove_OnlyFromCustomerDraft(t *testing.T) {
 			repo := newMockRepo()
 			repo.addNursery(10, 1)
 			repo.addQuotation(baseQuotation(1, status))
-			svc := NewService(repo)
+			svc := NewService(repo, nil)
 
 			_, err := svc.Approve(context.Background(), ownerActor(1), 1)
 			if !errors.Is(err, ErrInvalidTransition) {
@@ -375,7 +380,7 @@ func TestApprove_FromCustomerDraftSucceeds(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1)
 	repo.addQuotation(baseQuotation(1, "CUSTOMER_DRAFT"))
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	q, err := svc.Approve(context.Background(), ownerActor(1), 1)
 	if err != nil {
@@ -392,7 +397,7 @@ func TestRecall_FromCustomerSentSucceeds(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1)
 	repo.addQuotation(baseQuotation(1, "CUSTOMER_SENT"))
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	q, err := svc.Recall(context.Background(), ownerActor(1), 1)
 	if err != nil {
@@ -401,16 +406,13 @@ func TestRecall_FromCustomerSentSucceeds(t *testing.T) {
 	if q.Status != "CUSTOMER_DRAFT" {
 		t.Errorf("expected CUSTOMER_DRAFT after recall, got %s", q.Status)
 	}
-	if repo.auditCount == 0 {
-		t.Error("recall should produce an audit log entry")
-	}
 }
 
 func TestRecall_ManagerCanRecall(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1, 2)
 	repo.addQuotation(baseQuotation(1, "CUSTOMER_SENT"))
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	_, err := svc.Recall(context.Background(), managerActor(2), 1)
 	if err != nil {
@@ -425,7 +427,7 @@ func TestRecall_OnlyFromSent(t *testing.T) {
 			repo := newMockRepo()
 			repo.addNursery(10, 1)
 			repo.addQuotation(baseQuotation(1, status))
-			svc := NewService(repo)
+			svc := NewService(repo, nil)
 
 			_, err := svc.Recall(context.Background(), ownerActor(1), 1)
 			if !errors.Is(err, ErrInvalidTransition) {
@@ -442,7 +444,7 @@ func TestRecall_BuyerForbidden(t *testing.T) {
 	buyerID := int64(99)
 	q.CustomerUserID = &buyerID
 	repo.addQuotation(q)
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	_, err := svc.Recall(context.Background(), buyerActor(99), 1)
 	if !errors.Is(err, ErrForbidden) {
@@ -462,7 +464,7 @@ func TestBuyerAccept_OnlyFromCustomerSent(t *testing.T) {
 			buyerID := int64(99)
 			q.CustomerUserID = &buyerID
 			repo.addQuotation(q)
-			svc := NewService(repo)
+			svc := NewService(repo, nil)
 
 			_, err := svc.BuyerAccept(context.Background(), buyerActor(99), 1)
 			if !errors.Is(err, ErrInvalidTransition) {
@@ -479,7 +481,7 @@ func TestBuyerAccept_FromSentSucceeds(t *testing.T) {
 	buyerID := int64(99)
 	q.CustomerUserID = &buyerID
 	repo.addQuotation(q)
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	result, err := svc.BuyerAccept(context.Background(), buyerActor(99), 1)
 	if err != nil {
@@ -497,16 +499,11 @@ func TestBuyerAccept_AuditUsesCorrectStatus(t *testing.T) {
 	buyerID := int64(99)
 	q.CustomerUserID = &buyerID
 	repo.addQuotation(q)
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	_, err := svc.BuyerAccept(context.Background(), buyerActor(99), 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	// Audit should have fired (no way to inspect the exact JSON in this mock,
-	// but we verify audit was called exactly once for this action).
-	if repo.auditCount != 1 {
-		t.Errorf("expected 1 audit entry, got %d", repo.auditCount)
 	}
 }
 
@@ -522,7 +519,7 @@ func TestBuyerReject_OnlyFromCustomerSent(t *testing.T) {
 			buyerID := int64(99)
 			q.CustomerUserID = &buyerID
 			repo.addQuotation(q)
-			svc := NewService(repo)
+			svc := NewService(repo, nil)
 
 			_, err := svc.BuyerReject(context.Background(), buyerActor(99), 1, AcceptRejectQuotationRequest{})
 			if !errors.Is(err, ErrInvalidTransition) {
@@ -539,7 +536,7 @@ func TestBuyerReject_FromSentSucceeds(t *testing.T) {
 	buyerID := int64(99)
 	q.CustomerUserID = &buyerID
 	repo.addQuotation(q)
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	result, err := svc.BuyerReject(context.Background(), buyerActor(99), 1, AcceptRejectQuotationRequest{Reason: ptr("Price too high")})
 	if err != nil {
@@ -559,9 +556,9 @@ func TestConvertToOrder_RequiresAcceptedStatus(t *testing.T) {
 			repo := newMockRepo()
 			repo.addNursery(10, 1)
 			repo.addQuotation(baseQuotation(1, status))
-			svc := NewService(repo)
+			svc := NewService(repo, nil)
 
-			_, err := svc.ConvertToOrder(context.Background(), ownerActor(1), 1, 42)
+			_, err := svc.ConvertToOrder(context.Background(), ownerActor(1), 1)
 			if !errors.Is(err, ErrInvalidTransition) {
 				t.Errorf("status %s: expected ErrInvalidTransition, got %v", status, err)
 			}
@@ -574,9 +571,9 @@ func TestConvertToOrder_FromAcceptedSucceeds(t *testing.T) {
 	repo.addNursery(10, 1)
 	repo.addOrder(42, 10) // order 42 belongs to nursery 10
 	repo.addQuotation(baseQuotation(1, "CUSTOMER_ACCEPTED"))
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
-	result, err := svc.ConvertToOrder(context.Background(), ownerActor(1), 1, 42)
+	result, err := svc.ConvertToOrder(context.Background(), ownerActor(1), 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -592,9 +589,9 @@ func TestConvertToOrder_IdempotencyGuard(t *testing.T) {
 	orderID := int64(42)
 	q.ConvertedOrderID = &orderID
 	repo.addQuotation(q)
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
-	_, err := svc.ConvertToOrder(context.Background(), ownerActor(1), 1, 42)
+	_, err := svc.ConvertToOrder(context.Background(), ownerActor(1), 1)
 	if !errors.Is(err, ErrAlreadyConverted) {
 		t.Errorf("expected ErrAlreadyConverted, got %v", err)
 	}
@@ -606,7 +603,7 @@ func TestDelete_OwnerCanDelete(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1)
 	repo.addQuotation(baseQuotation(1, "CUSTOMER_DRAFT"))
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	err := svc.Delete(context.Background(), ownerActor(1), 1)
 	if err != nil {
@@ -622,7 +619,7 @@ func TestDelete_ManagerCannotDelete(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1, 2) // user 2 is manager
 	repo.addQuotation(baseQuotation(1, "CUSTOMER_DRAFT"))
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	err := svc.Delete(context.Background(), managerActor(2), 1)
 	if !errors.Is(err, ErrForbidden) {
@@ -634,7 +631,7 @@ func TestDelete_AdminCanDelete(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1)
 	repo.addQuotation(baseQuotation(1, "CUSTOMER_SENT"))
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	err := svc.Delete(context.Background(), adminActor(999), 1)
 	if err != nil {
@@ -646,7 +643,7 @@ func TestDelete_StrangerForbidden(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1)
 	repo.addQuotation(baseQuotation(1, "CUSTOMER_DRAFT"))
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	err := svc.Delete(context.Background(), ownerActor(55), 1)
 	if !errors.Is(err, ErrForbidden) {
@@ -660,7 +657,7 @@ func TestAssignManager_NonMemberRejected(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1) // user 99 is NOT a member
 	repo.addQuotation(baseQuotation(1, "CUSTOMER_DRAFT"))
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	_, err := svc.AssignManager(context.Background(), ownerActor(1), 1, AssignManagerRequest{ManagerUserID: 99})
 	if !errors.Is(err, ErrInvalidInput) {
@@ -672,7 +669,7 @@ func TestAssignManager_ValidMemberSucceeds(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1, 2) // user 2 is a member
 	repo.addQuotation(baseQuotation(1, "CUSTOMER_DRAFT"))
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	q, err := svc.AssignManager(context.Background(), ownerActor(1), 1, AssignManagerRequest{ManagerUserID: 2})
 	if err != nil {
@@ -687,7 +684,7 @@ func TestAssignManager_NonOwnerForbidden(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1, 2) // user 2 is manager, user 3 is unrelated
 	repo.addQuotation(baseQuotation(1, "CUSTOMER_DRAFT"))
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	_, err := svc.AssignManager(context.Background(), managerActor(2), 1, AssignManagerRequest{ManagerUserID: 2})
 	if !errors.Is(err, ErrForbidden) {
@@ -701,7 +698,7 @@ func TestScopeList_ManagerGetsNurseryScope(t *testing.T) {
 	// Previously managers fell back to user-filter; they should see the whole nursery.
 	repo := newMockRepo()
 	repo.addNursery(10, 1, 2) // user 2 is a manager of nursery 10
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	input := ListQuotationsRequest{}
 	err := svc.scopeList(context.Background(), managerActor(2), &input)
@@ -719,7 +716,7 @@ func TestScopeList_ManagerGetsNurseryScope(t *testing.T) {
 func TestScopeList_OwnerGetsNurseryScope(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1)
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	input := ListQuotationsRequest{}
 	err := svc.scopeList(context.Background(), ownerActor(1), &input)
@@ -733,7 +730,7 @@ func TestScopeList_OwnerGetsNurseryScope(t *testing.T) {
 
 func TestScopeList_AdminSeesAll(t *testing.T) {
 	repo := newMockRepo()
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	input := ListQuotationsRequest{}
 	err := svc.scopeList(context.Background(), adminActor(999), &input)
@@ -755,7 +752,7 @@ func TestCanView_ContextIsPassedThrough(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1)
 	q := baseQuotation(1, "CUSTOMER_DRAFT")
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled
@@ -770,7 +767,7 @@ func TestCanView_ContextIsPassedThrough(t *testing.T) {
 func TestCanView_CreatorCanView(t *testing.T) {
 	repo := newMockRepo()
 	q := baseQuotation(1, "CUSTOMER_DRAFT")
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	err := svc.canView(context.Background(), ownerActor(1), q) // user 1 is creator
 	if err != nil {
@@ -782,7 +779,7 @@ func TestCanView_StrangerForbidden(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1)
 	q := baseQuotation(1, "CUSTOMER_DRAFT")
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	err := svc.canView(context.Background(), ownerActor(55), q)
 	if !errors.Is(err, ErrForbidden) {
@@ -799,7 +796,7 @@ func TestCanBuyerAct_MobileMatchWorks(t *testing.T) {
 	mobile := "9300000000"
 	q.CustomerUserID = nil
 	q.RecipientMobile = &mobile
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	err := svc.canBuyerAct(context.Background(), buyerActor(99), q)
 	if err != nil {
@@ -817,7 +814,7 @@ func TestCanView_RecipientMobileMatchGrantsAccess(t *testing.T) {
 	q.CustomerUserID = nil
 	mobile := "9300000000"
 	q.RecipientMobile = &mobile
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	err := svc.canView(context.Background(), buyerActor(99), q)
 	if err != nil {
@@ -831,7 +828,7 @@ func TestCanView_BuyerNurseryMatchGrantsAccess(t *testing.T) {
 	q := baseQuotation(1, "CUSTOMER_SENT")
 	buyerNursery := int64(20)
 	q.BuyerNurseryID = &buyerNursery
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	err := svc.canView(context.Background(), ownerActor(99), q)
 	if err != nil {
@@ -845,7 +842,7 @@ func TestCanBuyerAct_WrongMobileForbidden(t *testing.T) {
 	q := baseQuotation(1, "CUSTOMER_SENT")
 	mobile := "9111111111" // different number
 	q.RecipientMobile = &mobile
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	err := svc.canBuyerAct(context.Background(), buyerActor(99), q)
 	if !errors.Is(err, ErrForbidden) {
@@ -857,7 +854,7 @@ func TestCanBuyerAct_WrongMobileForbidden(t *testing.T) {
 
 func TestCreate_DriverForbidden(t *testing.T) {
 	repo := newMockRepo()
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	actor := ActorContext{UserID: 5, Roles: []string{"DRIVER"}}
 	_, err := svc.Create(context.Background(), actor, CreateQuotationRequest{
@@ -873,7 +870,7 @@ func TestCreate_DriverForbidden(t *testing.T) {
 func TestCreate_CustomerQuotationRequiresRecipient(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1)
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	_, err := svc.Create(context.Background(), ownerActor(1), CreateQuotationRequest{
 		QuotationType: "CUSTOMER",
@@ -893,7 +890,7 @@ func TestScopeList_OwnerCannotOverrideNurseryID(t *testing.T) {
 	// unchecked. Now it must always force the actor's own nursery.
 	repo := newMockRepo()
 	repo.addNursery(10, 1) // user 1 owns nursery 10
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	input := ListQuotationsRequest{NurseryID: 99} // attacker-supplied ID
 	if err := svc.scopeList(context.Background(), ownerActor(1), &input); err != nil {
@@ -915,7 +912,7 @@ func TestGet_ManagerCannotSeeRecipientContact(t *testing.T) {
 	q.RecipientName = &name
 	q.RecipientMobile = &mobile
 	repo.addQuotation(q)
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	result, err := svc.Get(context.Background(), managerActor(2), 1)
 	if err != nil {
@@ -935,7 +932,7 @@ func TestGet_OwnerCanSeeRecipientContact(t *testing.T) {
 	q.RecipientName = &name
 	q.RecipientMobile = &mobile
 	repo.addQuotation(q)
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	result, err := svc.Get(context.Background(), ownerActor(1), 1)
 	if err != nil {
@@ -946,21 +943,6 @@ func TestGet_OwnerCanSeeRecipientContact(t *testing.T) {
 	}
 }
 
-// ── ConvertToOrder nursery ownership check ────────────────────────────────────
-
-func TestConvertToOrder_WrongNurseryRejected(t *testing.T) {
-	repo := newMockRepo()
-	repo.addNursery(10, 1)
-	repo.addOrder(42, 99) // order 42 belongs to nursery 99, not 10
-	repo.addQuotation(baseQuotation(1, "CUSTOMER_ACCEPTED"))
-	svc := NewService(repo)
-
-	_, err := svc.ConvertToOrder(context.Background(), ownerActor(1), 1, 42)
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("order from wrong nursery should return ErrInvalidInput, got %v", err)
-	}
-}
-
 // ── Nursery must be ACTIVE to create quotation ────────────────────────────────
 
 func TestCreate_InactiveNurseryForbidden(t *testing.T) {
@@ -968,7 +950,7 @@ func TestCreate_InactiveNurseryForbidden(t *testing.T) {
 	// addNursery marks nursery active; override to inactive
 	repo.addNursery(10, 1)
 	repo.activeNurseries[10] = false
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	_, err := svc.Create(context.Background(), ownerActor(1), CreateQuotationRequest{
 		QuotationType:   "CUSTOMER",
@@ -1009,7 +991,7 @@ func TestScopeList_BuyerSeesBuyingScope(t *testing.T) {
 	// When buying=true, scopeList should filter by the buyer's user ID.
 	// The buyer's own nursery_id should also be set when the actor is an owner.
 	repo := newMockRepo()
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	input := ListQuotationsRequest{Buying: true}
 	if err := svc.scopeList(context.Background(), buyerActor(99), &input); err != nil {
@@ -1028,7 +1010,7 @@ func TestScopeList_OwnerBuyingScopeIncludesNursery(t *testing.T) {
 	// An owner purchasing on behalf of their nursery should have BuyerNurseryID set.
 	repo := newMockRepo()
 	repo.addNursery(10, 1) // user 1 owns nursery 10
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	input := ListQuotationsRequest{Buying: true}
 	if err := svc.scopeList(context.Background(), ownerActor(1), &input); err != nil {
@@ -1047,7 +1029,7 @@ func TestScopeList_OwnerBuyingScopeIncludesNursery(t *testing.T) {
 func TestCreate_InvalidMobileRejected(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1)
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	_, err := svc.Create(context.Background(), ownerActor(1), CreateQuotationRequest{
 		QuotationType:   "CUSTOMER",
@@ -1063,7 +1045,7 @@ func TestCreate_InvalidMobileRejected(t *testing.T) {
 func TestCreate_NormalizedMobileAccepted(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1)
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	// +91 prefix should be stripped and accepted
 	_, err := svc.Create(context.Background(), ownerActor(1), CreateQuotationRequest{
@@ -1088,7 +1070,7 @@ func TestBuyerAccept_ExpiredQuotationRejected(t *testing.T) {
 	past := time.Now().Add(-24 * time.Hour)
 	q.ValidUntil = &past
 	repo.addQuotation(q)
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	_, err := svc.BuyerAccept(context.Background(), buyerActor(99), 1)
 	if !errors.Is(err, ErrQuotationExpired) {

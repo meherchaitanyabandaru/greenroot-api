@@ -45,8 +45,6 @@ type Repository interface {
 	// Auth helpers
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error)
-
-	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 }
 
 type PostgresRepository struct{ db *sql.DB }
@@ -571,16 +569,6 @@ func (r *PostgresRepository) IsNurseryOwner(ctx context.Context, nurseryID int64
 	return exists, err
 }
 
-func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAuditInput) error {
-	const q = `
-		INSERT INTO public.audit_logs
-			(table_name, record_id, action_type, old_data, new_data, changed_by, source_ip, user_agent, changed_at)
-		VALUES ($1, $2, $3, NULL, NULLIF($4,'')::jsonb, $5, NULLIF($6,''), NULLIF($7,''), $8)
-	`
-	_, err := r.db.ExecContext(ctx, q, input.TableName, input.RecordID, input.Action,
-		input.NewJSON, input.ChangedBy, input.SourceIP, input.UserAgent, input.At)
-	return err
-}
 
 // ---- SQL helpers ----
 

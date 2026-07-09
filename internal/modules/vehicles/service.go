@@ -2,11 +2,11 @@ package vehicles
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"math"
 	"strings"
-	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 )
 
 var (
@@ -17,10 +17,11 @@ var (
 
 type Service struct {
 	repository Repository
+	auditSvc   *auditlog.Service
 }
 
-func NewService(repository Repository) *Service {
-	return &Service{repository: repository}
+func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
+	return &Service{repository: repository, auditSvc: auditSvc}
 }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListVehiclesRequest) ([]Vehicle, Pagination, error) {
@@ -157,19 +158,15 @@ func totalPages(total int64, perPage int) int {
 	return int(math.Ceil(float64(total) / float64(perPage)))
 }
 
-func (s *Service) audit(ctx context.Context, actor ActorContext, recordID int64, action string, payload any) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-	_ = s.repository.CreateAuditLog(ctx, CreateAuditInput{
-		TableName: "vehicles",
-		RecordID:  recordID,
-		Action:    action,
-		ChangedBy: actor.UserID,
-		SourceIP:  actor.IPAddress,
-		UserAgent: actor.UserAgent,
-		NewJSON:   string(data),
-		At:        time.Now(),
+func (s *Service) audit(ctx context.Context, actor ActorContext, entityID int64, action auditlog.Action, newValue any) {
+	s.auditSvc.Log(ctx, auditlog.Entry{
+		UserID:     actor.UserID,
+		Module:     auditlog.ModuleVehicles,
+		EntityType: "vehicle",
+		EntityID:   entityID,
+		Action:     action,
+		NewValue:   newValue,
+		IPAddress:  actor.IPAddress,
+		DeviceInfo: actor.UserAgent,
 	})
 }

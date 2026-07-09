@@ -27,18 +27,6 @@ type Repository interface {
 	CreateImage(ctx context.Context, plantID int64, input CreateImageRequest) (*Image, error)
 	GetCareGuide(ctx context.Context, plantID int64) (*CareGuide, error)
 	GetNamesByLanguage(ctx context.Context, plantIDs []int64, langCode string) (map[int64]string, error)
-	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
-}
-
-type CreateAuditInput struct {
-	TableName string
-	RecordID  int64
-	Action    string
-	ChangedBy int64
-	SourceIP  string
-	UserAgent string
-	NewJSON   string
-	At        time.Time
 }
 
 type PostgresRepository struct {
@@ -352,16 +340,6 @@ func (r *PostgresRepository) GetCareGuide(ctx context.Context, plantID int64) (*
 	return guide, err
 }
 
-func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAuditInput) error {
-	const query = `
-		INSERT INTO public.audit_logs (
-			table_name, record_id, action_type, old_data, new_data, changed_by, source_ip, user_agent, changed_at
-		)
-		VALUES ($1, $2, $3, NULL, NULLIF($4, '')::jsonb, $5, NULLIF($6, ''), NULLIF($7, ''), $8)
-	`
-	_, err := r.db.ExecContext(ctx, query, input.TableName, input.RecordID, input.Action, input.NewJSON, input.ChangedBy, input.SourceIP, input.UserAgent, input.At)
-	return err
-}
 
 func buildPlantWhere(input ListPlantsRequest) (string, []any) {
 	clauses := []string{"p.is_active = true"}

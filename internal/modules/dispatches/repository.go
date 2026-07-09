@@ -31,7 +31,6 @@ type Repository interface {
 	IsDispatchDriver(ctx context.Context, driverID int64, userID int64) (bool, error)
 	GetOwnedNurseryID(ctx context.Context, userID int64) (*int64, error)
 	GetUserNurseryIDs(ctx context.Context, userID int64) ([]int64, error)
-	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 }
 
 type CreateTripEventInput struct {
@@ -61,16 +60,6 @@ type UpdateStatusInput struct {
 	Notes        *string
 }
 
-type CreateAuditInput struct {
-	TableName string
-	RecordID  int64
-	Action    string
-	ChangedBy int64
-	SourceIP  string
-	UserAgent string
-	NewJSON   string
-	At        time.Time
-}
 
 type PostgresRepository struct {
 	db *sql.DB
@@ -427,13 +416,6 @@ func (r *PostgresRepository) ListTripEvents(ctx context.Context, dispatchID int6
 	return events, rows.Err()
 }
 
-func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAuditInput) error {
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO public.audit_logs (table_name, record_id, action_type, old_data, new_data, changed_by, source_ip, user_agent, changed_at)
-		VALUES ($1, $2, $3, NULL, NULLIF($4, '')::jsonb, $5, NULLIF($6, ''), NULLIF($7, ''), $8)
-	`, input.TableName, input.RecordID, input.Action, input.NewJSON, input.ChangedBy, input.SourceIP, input.UserAgent, input.At)
-	return err
-}
 
 func baseSelect() string {
 	return `

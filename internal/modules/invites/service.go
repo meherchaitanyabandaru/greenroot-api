@@ -2,11 +2,10 @@ package invites
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
-	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 )
 
 var (
@@ -17,10 +16,11 @@ var (
 
 type Service struct {
 	repository Repository
+	auditSvc   *auditlog.Service
 }
 
-func NewService(repository Repository) *Service {
-	return &Service{repository: repository}
+func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
+	return &Service{repository: repository, auditSvc: auditSvc}
 }
 
 var allowedInviteTypes = map[string]bool{
@@ -173,27 +173,15 @@ func hasRole(actor ActorContext, role string) bool {
 	return false
 }
 
-func (s *Service) audit(ctx context.Context, actor ActorContext, recordID int64, action string, data any) {
-	b, err := json.Marshal(data)
-	if err != nil {
-		return
-	}
-	_ = s.repository.CreateAuditLog(ctx, CreateAuditInput{
-		TableName: "invites",
-		RecordID:  recordID,
-		Action:    action,
-		ChangedBy: actor.UserID,
-		SourceIP:  actor.IPAddress,
-		UserAgent: actor.UserAgent,
-		NewJSON:   string(b),
-		At:        time.Now(),
+func (s *Service) audit(ctx context.Context, actor ActorContext, entityID int64, action auditlog.Action, newValue any) {
+	s.auditSvc.Log(ctx, auditlog.Entry{
+		UserID:     actor.UserID,
+		Module:     auditlog.ModuleInvites,
+		EntityType: "invite",
+		EntityID:   entityID,
+		Action:     action,
+		NewValue:   newValue,
+		IPAddress:  actor.IPAddress,
+		DeviceInfo: actor.UserAgent,
 	})
-}
-
-func mustJSON(v any) string {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprintf(`{"error":%q}`, err.Error())
-	}
-	return string(b)
 }

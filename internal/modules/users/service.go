@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	platformstorage "github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 )
 
@@ -21,6 +22,7 @@ var (
 type Service struct {
 	repository Repository
 	storage    *platformstorage.Client
+	auditSvc   *auditlog.Service
 }
 
 type ActorContext struct {
@@ -30,8 +32,8 @@ type ActorContext struct {
 	UserAgent string
 }
 
-func NewService(repository Repository, storage *platformstorage.Client) *Service {
-	return &Service{repository: repository, storage: storage}
+func NewService(repository Repository, storage *platformstorage.Client, auditSvc *auditlog.Service) *Service {
+	return &Service{repository: repository, storage: storage, auditSvc: auditSvc}
 }
 
 func (s *Service) Me(ctx context.Context, actor ActorContext) (User, error) {
@@ -188,7 +190,6 @@ func (s *Service) ListSessions(ctx context.Context, actor ActorContext, userID i
 }
 
 func (s *Service) recordChange(ctx context.Context, actor ActorContext, table string, recordID int64, action string, activityType string, entity string, entityID int64, data any) {
-	now := time.Now()
 	dataJSON := mustJSON(data)
 	_ = s.repository.CreateUserActivity(ctx, CreateActivityInput{
 		UserID:   actor.UserID,
@@ -196,17 +197,17 @@ func (s *Service) recordChange(ctx context.Context, actor ActorContext, table st
 		Entity:   entity,
 		EntityID: entityID,
 		DataJSON: dataJSON,
-		At:       now,
+		At:       time.Now(),
 	})
-	_ = s.repository.CreateAuditLog(ctx, CreateAuditInput{
-		TableName: table,
-		RecordID:  recordID,
-		Action:    action,
-		ChangedBy: actor.UserID,
-		SourceIP:  actor.IPAddress,
-		UserAgent: actor.UserAgent,
-		NewJSON:   dataJSON,
-		At:        now,
+	s.auditSvc.Log(ctx, auditlog.Entry{
+		UserID:     actor.UserID,
+		Module:     auditlog.ModuleUsers,
+		EntityType: entity,
+		EntityID:   entityID,
+		Action:     action,
+		NewValue:   data,
+		IPAddress:  actor.IPAddress,
+		DeviceInfo: actor.UserAgent,
 	})
 }
 

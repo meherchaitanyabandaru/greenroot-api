@@ -232,13 +232,3 @@ type ResponsesWrap struct {
 	Responses []PostResponse `json:"responses"`
 }
 
-type CreateAuditInput struct {
-	TableName string
-	RecordID  int64
-	Action    string
-	ChangedBy int64
-	SourceIP  string
-	UserAgent string
-	NewJSON   string
-	At        time.Time
-}

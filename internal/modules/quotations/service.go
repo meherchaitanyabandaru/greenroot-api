@@ -2,12 +2,13 @@ package quotations
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 )
 
 var (
@@ -29,10 +30,11 @@ var editableStatuses = map[string]bool{
 
 type Service struct {
 	repository Repository
+	auditSvc   *auditlog.Service
 }
 
-func NewService(repository Repository) *Service {
-	return &Service{repository: repository}
+func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
+	return &Service{repository: repository, auditSvc: auditSvc}
 }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListQuotationsRequest) ([]Quotation, Pagination, error) {
@@ -535,16 +537,16 @@ func totalPages(total int64, perPage int) int {
 	return int((total + int64(perPage) - 1) / int64(perPage))
 }
 
-func (s *Service) audit(ctx context.Context, actor ActorContext, table string, recordID int64, action string, data any) {
-	_ = s.repository.CreateAuditLog(ctx, CreateAuditInput{
-		TableName: table,
-		RecordID:  recordID,
-		Action:    action,
-		ChangedBy: actor.UserID,
-		SourceIP:  actor.IPAddress,
-		UserAgent: actor.UserAgent,
-		NewJSON:   mustJSON(data),
-		At:        time.Now(),
+func (s *Service) audit(ctx context.Context, actor ActorContext, entityType string, entityID int64, action auditlog.Action, newValue any) {
+	s.auditSvc.Log(ctx, auditlog.Entry{
+		UserID:     actor.UserID,
+		Module:     auditlog.ModuleQuotations,
+		EntityType: entityType,
+		EntityID:   entityID,
+		Action:     action,
+		NewValue:   newValue,
+		IPAddress:  actor.IPAddress,
+		DeviceInfo: actor.UserAgent,
 	})
 }
 
@@ -578,10 +580,3 @@ func normalizeIndianMobile(s string) string {
 	return s
 }
 
-func mustJSON(v any) string {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprintf(`{"error":%q}`, err.Error())
-	}
-	return string(data)
-}

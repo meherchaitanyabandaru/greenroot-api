@@ -20,18 +20,6 @@ type Repository interface {
 	Create(ctx context.Context, input VehicleRequest) (*Vehicle, error)
 	Update(ctx context.Context, vehicleID int64, input VehicleRequest) (*Vehicle, error)
 	Delete(ctx context.Context, vehicleID int64) error
-	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
-}
-
-type CreateAuditInput struct {
-	TableName string
-	RecordID  int64
-	Action    string
-	ChangedBy int64
-	SourceIP  string
-	UserAgent string
-	NewJSON   string
-	At        time.Time
 }
 
 type PostgresRepository struct {
@@ -158,13 +146,6 @@ func (r *PostgresRepository) Delete(ctx context.Context, vehicleID int64) error 
 	return nil
 }
 
-func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAuditInput) error {
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO public.audit_logs (table_name, record_id, action_type, old_data, new_data, changed_by, source_ip, user_agent, changed_at)
-		VALUES ($1, $2, $3, NULL, NULLIF($4, '')::jsonb, $5, NULLIF($6, ''), NULLIF($7, ''), $8)
-	`, input.TableName, input.RecordID, input.Action, input.NewJSON, input.ChangedBy, input.SourceIP, input.UserAgent, input.At)
-	return err
-}
 
 func buildWhere(input ListVehiclesRequest) (string, []any) {
 	clauses := []string{"COALESCE(status::text, '') <> 'RETIRED'"}

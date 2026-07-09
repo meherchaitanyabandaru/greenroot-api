@@ -4,6 +4,7 @@ import (
 	"database/sql"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 	platformstorage "github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 )
@@ -12,9 +13,9 @@ type Module struct {
 	handler *Handler
 }
 
-func NewModule(db *sql.DB, jwt *jwtplatform.Service, storage *platformstorage.Client) Module {
+func NewModule(db *sql.DB, jwt *jwtplatform.Service, storage *platformstorage.Client, audit *auditlog.Service) Module {
 	repository := NewRepository(db)
-	service := NewService(repository, storage)
+	service := NewService(repository, storage, audit)
 	return Module{handler: NewHandler(service, jwt)}
 }
 

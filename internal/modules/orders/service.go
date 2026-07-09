@@ -8,6 +8,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 )
 
 var (
@@ -18,10 +20,11 @@ var (
 
 type Service struct {
 	repository Repository
+	auditSvc   *auditlog.Service
 }
 
-func NewService(repository Repository) *Service {
-	return &Service{repository: repository}
+func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
+	return &Service{repository: repository, auditSvc: auditSvc}
 }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListOrdersRequest) ([]Order, Pagination, error) {
@@ -572,16 +575,16 @@ func totalPages(total int64, perPage int) int {
 	return int((total + int64(perPage) - 1) / int64(perPage))
 }
 
-func (s *Service) audit(ctx context.Context, actor ActorContext, table string, recordID int64, action string, data any) {
-	_ = s.repository.CreateAuditLog(ctx, CreateAuditInput{
-		TableName: table,
-		RecordID:  recordID,
-		Action:    action,
-		ChangedBy: actor.UserID,
-		SourceIP:  actor.IPAddress,
-		UserAgent: actor.UserAgent,
-		NewJSON:   mustJSON(data),
-		At:        time.Now(),
+func (s *Service) audit(ctx context.Context, actor ActorContext, entityType string, entityID int64, action auditlog.Action, newValue any) {
+	s.auditSvc.Log(ctx, auditlog.Entry{
+		UserID:     actor.UserID,
+		Module:     auditlog.ModuleOrders,
+		EntityType: entityType,
+		EntityID:   entityID,
+		Action:     action,
+		NewValue:   newValue,
+		IPAddress:  actor.IPAddress,
+		DeviceInfo: actor.UserAgent,
 	})
 }
 

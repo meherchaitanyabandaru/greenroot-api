@@ -4,6 +4,7 @@ import (
 	"database/sql"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 )
 
@@ -11,13 +12,13 @@ type Module struct {
 	handler *Handler
 }
 
-func NewModule(db *sql.DB, jwt *jwtplatform.Service) Module {
-	return NewModuleWithTrial(db, jwt, nil)
+func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service) Module {
+	return NewModuleWithTrial(db, jwt, audit, nil)
 }
 
-func NewModuleWithTrial(db *sql.DB, jwt *jwtplatform.Service, trialSvc TrialCreator) Module {
+func NewModuleWithTrial(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, trialSvc TrialCreator) Module {
 	repository := NewRepository(db)
-	service := NewServiceWithTrial(repository, trialSvc)
+	service := NewServiceWithTrial(repository, trialSvc, audit)
 	return Module{handler: NewHandler(service, jwt)}
 }
 

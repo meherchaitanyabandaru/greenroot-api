@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/config"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/logger"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/revocation"
@@ -59,6 +60,7 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		DB:         db,
 		JWT:        jwtplatform.NewService(cfg.JWT),
 		Storage:    storageClient,
+		Audit:      auditlog.NewService(db, logManager.Logger()),
 	}
 
 	server := &http.Server{

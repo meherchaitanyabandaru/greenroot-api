@@ -44,7 +44,8 @@ func NewRouter(deps Dependencies) chi.Router {
 	router.Use(appmiddleware.Recovery(deps.Logger))
 	router.Use(appmiddleware.SecurityHeaders)
 	router.Use(appmiddleware.RequestLogger(deps.Logger))
-	router.Use(appmiddleware.Audit(deps.Logger))
+	// AuditContext must come after RequestID and after EnrichActorMiddleware
+	// (registered below on the /api/v1 sub-router) so we apply it there too.
 
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusNotFound, "route_not_found", "route not found")
@@ -58,29 +59,31 @@ func NewRouter(deps Dependencies) chi.Router {
 
 	router.Route("/api/v1", func(r chi.Router) {
 		r.Use(authctx.EnrichActorMiddleware(deps.JWT))
-		auth.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
+		r.Use(appmiddleware.AuditContext) // must come after EnrichActorMiddleware
+
+		auth.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		admin.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		attachments.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		audit.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		dispatches.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		drivers.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		inventory.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
+		dispatches.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
+		drivers.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
+		inventory.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		localmarket.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		invites.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		notifications.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		subModule := subscriptions.NewModule(deps.DB, deps.JWT)
-		nurseries.NewModuleWithTrial(deps.DB, deps.JWT, subModule.Service()).RegisterRoutes(r)
-		orders.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		quotations.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		payments.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		plants.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		requests.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		sourcing.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
+		invites.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
+		notifications.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
+		subModule := subscriptions.NewModule(deps.DB, deps.JWT, deps.Audit)
+		nurseries.NewModuleWithTrial(deps.DB, deps.JWT, deps.Audit, subModule.Service()).RegisterRoutes(r)
+		orders.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
+		quotations.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
+		payments.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
+		plants.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
+		requests.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
+		sourcing.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		storage.NewModule(deps.DB, deps.JWT, deps.Storage).RegisterRoutes(r)
 		subModule.RegisterRoutes(r)
 		tracking.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		vehicles.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		users.NewModule(deps.DB, deps.JWT, deps.Storage).RegisterRoutes(r)
+		vehicles.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
+		users.NewModule(deps.DB, deps.JWT, deps.Storage, deps.Audit).RegisterRoutes(r)
 	})
 
 	return router

@@ -2,11 +2,11 @@ package nurseries
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 )
 
 var (
@@ -25,16 +25,17 @@ type TrialCreator interface {
 }
 
 type Service struct {
-	repository  Repository
-	trialSvc    TrialCreator // may be nil
+	repository Repository
+	trialSvc   TrialCreator // may be nil
+	auditSvc   *auditlog.Service
 }
 
-func NewService(repository Repository) *Service {
-	return &Service{repository: repository}
+func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
+	return &Service{repository: repository, auditSvc: auditSvc}
 }
 
-func NewServiceWithTrial(repository Repository, trialSvc TrialCreator) *Service {
-	return &Service{repository: repository, trialSvc: trialSvc}
+func NewServiceWithTrial(repository Repository, trialSvc TrialCreator, auditSvc *auditlog.Service) *Service {
+	return &Service{repository: repository, trialSvc: trialSvc, auditSvc: auditSvc}
 }
 
 func (s *Service) List(ctx context.Context, input ListNurseriesRequest) ([]Nursery, Pagination, error) {
@@ -317,16 +318,16 @@ func (s *Service) RemoveUser(ctx context.Context, actor ActorContext, nurseryID 
 	return nil
 }
 
-func (s *Service) audit(ctx context.Context, actor ActorContext, table string, recordID int64, action string, data any) {
-	_ = s.repository.CreateAuditLog(ctx, CreateAuditInput{
-		TableName: table,
-		RecordID:  recordID,
-		Action:    action,
-		ChangedBy: actor.UserID,
-		SourceIP:  actor.IPAddress,
-		UserAgent: actor.UserAgent,
-		NewJSON:   mustJSON(data),
-		At:        time.Now(),
+func (s *Service) audit(ctx context.Context, actor ActorContext, entityType string, entityID int64, action auditlog.Action, newValue any) {
+	s.auditSvc.Log(ctx, auditlog.Entry{
+		UserID:     actor.UserID,
+		Module:     auditlog.ModuleNurseries,
+		EntityType: entityType,
+		EntityID:   entityID,
+		Action:     action,
+		NewValue:   newValue,
+		IPAddress:  actor.IPAddress,
+		DeviceInfo: actor.UserAgent,
 	})
 }
 
@@ -407,10 +408,3 @@ func upperOptional(value *string) {
 	*value = strings.ToUpper(strings.TrimSpace(*value))
 }
 
-func mustJSON(value any) string {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return fmt.Sprintf(`{"error":%q}`, err.Error())
-	}
-	return string(data)
-}

@@ -2,11 +2,10 @@ package sourcing
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
-	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 )
 
 var (
@@ -14,9 +13,14 @@ var (
 	ErrInvalidInput = errors.New("invalid input")
 )
 
-type Service struct{ repository Repository }
+type Service struct {
+	repository Repository
+	auditSvc   *auditlog.Service
+}
 
-func NewService(r Repository) *Service { return &Service{repository: r} }
+func NewService(r Repository, auditSvc *auditlog.Service) *Service {
+	return &Service{repository: r, auditSvc: auditSvc}
+}
 
 // canSource returns true for roles that may use the Plant Sourcing Network.
 // Per business rules: NURSERY_OWNER and MANAGER have full sourcing access.
@@ -345,22 +349,15 @@ func pagination(total int64, page, perPage int) Pagination {
 	return Pagination{Page: page, PerPage: perPage, Total: total, TotalPages: tp}
 }
 
-func (s *Service) audit(ctx context.Context, actor ActorContext, table string, id int64, action string, data any) {
-	b, err := json.Marshal(data)
-	if err != nil {
-		return
-	}
-	_ = s.repository.CreateAuditLog(ctx, CreateAuditInput{
-		TableName: table, RecordID: id, Action: action,
-		ChangedBy: actor.UserID, SourceIP: actor.IPAddress, UserAgent: actor.UserAgent,
-		NewJSON: string(b), At: time.Now(),
+func (s *Service) audit(ctx context.Context, actor ActorContext, entityType string, entityID int64, action auditlog.Action, newValue any) {
+	s.auditSvc.Log(ctx, auditlog.Entry{
+		UserID:     actor.UserID,
+		Module:     auditlog.ModuleSourcing,
+		EntityType: entityType,
+		EntityID:   entityID,
+		Action:     action,
+		NewValue:   newValue,
+		IPAddress:  actor.IPAddress,
+		DeviceInfo: actor.UserAgent,
 	})
-}
-
-func mustJSON(v any) string {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprintf(`{"error":%q}`, err.Error())
-	}
-	return string(b)
 }

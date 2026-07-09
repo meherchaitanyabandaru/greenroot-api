@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"time"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -16,23 +15,11 @@ type Repository interface {
 	Cancel(ctx context.Context, uuid string, actorID int64) (*Invite, error)
 	ListByNursery(ctx context.Context, nurseryID int64) ([]Invite, error)
 	ListAcceptedByUser(ctx context.Context, userID int64) ([]Invite, error)
-	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 	UserOwnsNursery(ctx context.Context, userID int64) (bool, error)
 	IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	UserIsManager(ctx context.Context, userID int64) (bool, error)
 	AddNurseryMember(ctx context.Context, nurseryID int64, userID int64, role string, invitedByUserID int64) error
 	GrantNurseryOwnerRole(ctx context.Context, userID int64) error
-}
-
-type CreateAuditInput struct {
-	TableName string
-	RecordID  int64
-	Action    string
-	ChangedBy int64
-	SourceIP  string
-	UserAgent string
-	NewJSON   string
-	At        time.Time
 }
 
 type PostgresRepository struct {
@@ -149,13 +136,6 @@ func (r *PostgresRepository) findByID(ctx context.Context, id int64) (*Invite, e
 	return &invite, err
 }
 
-func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAuditInput) error {
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO public.audit_logs (table_name, record_id, action_type, old_data, new_data, changed_by, source_ip, user_agent, changed_at)
-		VALUES ($1, $2, $3, NULL, NULLIF($4, '')::jsonb, $5, NULLIF($6, ''), NULLIF($7, ''), $8)
-	`, input.TableName, input.RecordID, input.Action, input.NewJSON, input.ChangedBy, input.SourceIP, input.UserAgent, input.At)
-	return err
-}
 
 func (r *PostgresRepository) UserOwnsNursery(ctx context.Context, userID int64) (bool, error) {
 	var exists bool

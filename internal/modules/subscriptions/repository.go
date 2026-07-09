@@ -27,7 +27,6 @@ type Repository interface {
 	Renew(ctx context.Context, subscriptionID int64, input RenewSubscriptionInput) (*UserSubscription, error)
 	CreatePayment(ctx context.Context, input CreatePaymentInput) error
 	ListPaymentsBySubscription(ctx context.Context, subscriptionID int64) ([]Payment, error)
-	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 	// Promos
 	ListPromos(ctx context.Context, activeOnly bool) ([]SubscriptionPromo, error)
 	FindPromo(ctx context.Context, promoID int64) (*SubscriptionPromo, error)
@@ -111,16 +110,6 @@ type CreatePaymentInput struct {
 	Notes           string
 }
 
-type CreateAuditInput struct {
-	TableName string
-	RecordID  int64
-	Action    string
-	ChangedBy int64
-	SourceIP  string
-	UserAgent string
-	NewJSON   string
-	At        time.Time
-}
 
 type PostgresRepository struct {
 	db *sql.DB
@@ -360,16 +349,6 @@ func (r *PostgresRepository) ListPaymentsBySubscription(ctx context.Context, sub
 	return payments, rows.Err()
 }
 
-func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAuditInput) error {
-	const query = `
-		INSERT INTO public.audit_logs (
-			table_name, record_id, action_type, old_data, new_data, changed_by, source_ip, user_agent, changed_at
-		)
-		VALUES ($1, $2, $3, NULL, NULLIF($4, '')::jsonb, $5, NULLIF($6, ''), NULLIF($7, ''), $8)
-	`
-	_, err := r.db.ExecContext(ctx, query, input.TableName, input.RecordID, input.Action, input.NewJSON, input.ChangedBy, input.SourceIP, input.UserAgent, input.At)
-	return err
-}
 
 func planSelect() string {
 	return `

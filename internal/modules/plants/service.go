@@ -2,11 +2,10 @@ package plants
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
-	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 )
 
 var (
@@ -16,10 +15,11 @@ var (
 
 type Service struct {
 	repository Repository
+	auditSvc   *auditlog.Service
 }
 
-func NewService(repository Repository) *Service {
-	return &Service{repository: repository}
+func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
+	return &Service{repository: repository, auditSvc: auditSvc}
 }
 
 func (s *Service) List(ctx context.Context, input ListPlantsRequest) ([]Plant, Pagination, error) {
@@ -148,16 +148,16 @@ func (s *Service) GetCareGuide(ctx context.Context, plantID int64) (CareGuide, e
 	return *guide, nil
 }
 
-func (s *Service) audit(ctx context.Context, actor ActorContext, plantID int64, action string, data any) {
-	_ = s.repository.CreateAuditLog(ctx, CreateAuditInput{
-		TableName: "plants",
-		RecordID:  plantID,
-		Action:    action,
-		ChangedBy: actor.UserID,
-		SourceIP:  actor.IPAddress,
-		UserAgent: actor.UserAgent,
-		NewJSON:   mustJSON(data),
-		At:        time.Now(),
+func (s *Service) audit(ctx context.Context, actor ActorContext, entityID int64, action auditlog.Action, newValue any) {
+	s.auditSvc.Log(ctx, auditlog.Entry{
+		UserID:     actor.UserID,
+		Module:     auditlog.ModulePlants,
+		EntityType: "plant",
+		EntityID:   entityID,
+		Action:     action,
+		NewValue:   newValue,
+		IPAddress:  actor.IPAddress,
+		DeviceInfo: actor.UserAgent,
 	})
 }
 
@@ -230,10 +230,3 @@ func upperOptional(value *string) {
 	*value = strings.ToUpper(strings.TrimSpace(*value))
 }
 
-func mustJSON(value any) string {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return fmt.Sprintf(`{"error":%q}`, err.Error())
-	}
-	return string(data)
-}

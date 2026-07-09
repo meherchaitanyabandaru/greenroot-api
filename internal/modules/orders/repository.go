@@ -35,18 +35,6 @@ type Repository interface {
 	GetUserNurseryIDs(ctx context.Context, userID int64) ([]int64, error)
 	GetOwnedNurseryID(ctx context.Context, userID int64) (*int64, error)
 	FindOrCreateBuyerByMobile(ctx context.Context, mobile string, name string) (int64, error)
-	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
-}
-
-type CreateAuditInput struct {
-	TableName string
-	RecordID  int64
-	Action    string
-	ChangedBy int64
-	SourceIP  string
-	UserAgent string
-	NewJSON   string
-	At        time.Time
 }
 
 type PostgresRepository struct {
@@ -463,16 +451,6 @@ func (r *PostgresRepository) FindOrCreateBuyerByMobile(ctx context.Context, mobi
 	return userID, tx.Commit()
 }
 
-func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAuditInput) error {
-	const query = `
-		INSERT INTO public.audit_logs (
-			table_name, record_id, action_type, old_data, new_data, changed_by, source_ip, user_agent, changed_at
-		)
-		VALUES ($1, $2, $3, NULL, NULLIF($4, '')::jsonb, $5, NULLIF($6, ''), NULLIF($7, ''), $8)
-	`
-	_, err := r.db.ExecContext(ctx, query, input.TableName, input.RecordID, input.Action, input.NewJSON, input.ChangedBy, input.SourceIP, input.UserAgent, input.At)
-	return err
-}
 
 func (r *PostgresRepository) createItemTx(ctx context.Context, tx *sql.Tx, orderID int64, input OrderItemRequest) (int64, error) {
 	const query = `

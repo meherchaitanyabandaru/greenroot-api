@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 )
 
@@ -47,6 +48,7 @@ var (
 type Service struct {
 	repository Repository
 	jwt        *jwtplatform.Service
+	audit      *auditlog.Service
 }
 
 type ClientContext struct {
@@ -54,8 +56,8 @@ type ClientContext struct {
 	UserAgent string
 }
 
-func NewService(repository Repository, jwt *jwtplatform.Service) *Service {
-	return &Service{repository: repository, jwt: jwt}
+func NewService(repository Repository, jwt *jwtplatform.Service, audit *auditlog.Service) *Service {
+	return &Service{repository: repository, jwt: jwt, audit: audit}
 }
 
 func (s *Service) SendOTP(ctx context.Context, req SendOTPRequest) (SendOTPResponse, error) {
@@ -128,19 +130,19 @@ func (s *Service) VerifyOTP(ctx context.Context, req VerifyOTPRequest, client Cl
 		return AuthResponse{}, err
 	}
 
-	_ = s.repository.CreateAuditLog(ctx, CreateAuditInput{
-		TableName: "users",
-		RecordID:  user.ID,
-		Action:    "UPDATE",
-		ChangedBy: user.ID,
-		SourceIP:  client.IPAddress,
-		UserAgent: client.UserAgent,
-		NewJSON: mustJSON(map[string]any{
-			"event":         activityLogin,
-			"last_login_at": now.Format(time.RFC3339),
-			"session_id":    sessionID,
-		}),
-		At: now,
+	s.audit.LogSecurity(ctx, auditlog.SecurityEntry{
+		UserID:      user.ID,
+		EventType:   auditlog.SecurityEventLogin,
+		Description: "User logged in via OTP",
+		Metadata: map[string]any{
+			"session_id":  sessionID,
+			"device_type": req.DeviceType,
+			"os_name":     req.OSName,
+			"app_version": req.AppVersion,
+			"is_new_user": isNewUser,
+		},
+		IPAddress:  client.IPAddress,
+		DeviceInfo: client.UserAgent,
 	})
 
 	user.LastLoginAt = &now
