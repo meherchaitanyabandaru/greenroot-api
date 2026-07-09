@@ -49,6 +49,27 @@ func (h *Handler) GetPlan(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, PlanResponse{Plan: plan})
 }
 
+func (h *Handler) UpdatePlan(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	planID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req UpdatePlanRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	plan, err := h.service.UpdatePlan(r.Context(), actor, planID, req)
+	if err != nil {
+		writeSubscriptionsError(w, err)
+		return
+	}
+	response.OK(w, PlanResponse{Plan: plan})
+}
+
 // List godoc
 //
 //	@Summary	List subscriptions
@@ -194,6 +215,89 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, SubscriptionResponse{Subscription: subscription})
+}
+
+// ── Promo handlers ────────────────────────────────────────────────────────────
+
+func (h *Handler) ListPromos(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	promos, err := h.service.ListPromos(r.Context(), actor)
+	if err != nil {
+		writeSubscriptionsError(w, err)
+		return
+	}
+	response.OK(w, PromosResponse{Promos: promos})
+}
+
+func (h *Handler) CreatePromo(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	var req CreatePromoRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	promo, err := h.service.CreatePromo(r.Context(), actor, req)
+	if err != nil {
+		writeSubscriptionsError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusCreated, PromoResponse{Promo: promo})
+}
+
+func (h *Handler) UpdatePromo(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	promoID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req UpdatePromoRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	promo, err := h.service.UpdatePromo(r.Context(), actor, promoID, req)
+	if err != nil {
+		writeSubscriptionsError(w, err)
+		return
+	}
+	response.OK(w, PromoResponse{Promo: promo})
+}
+
+func (h *Handler) ValidatePromo(w http.ResponseWriter, r *http.Request) {
+	_, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	var req ValidatePromoRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result := h.service.ValidatePromo(r.Context(), req)
+	response.OK(w, PromoValidationResponse{Validation: result})
+}
+
+func (h *Handler) BlastPromo(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	promoID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	count, err := h.service.BlastPromo(r.Context(), actor, promoID)
+	if err != nil {
+		writeSubscriptionsError(w, err)
+		return
+	}
+	response.OK(w, BlastResponse{SentCount: count})
 }
 
 func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, bool) {

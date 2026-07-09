@@ -3,6 +3,7 @@ package subscriptions
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,6 +18,7 @@ type Repository interface {
 	ListPlans(ctx context.Context, activeOnly bool) ([]SubscriptionPlan, error)
 	FindPlan(ctx context.Context, planID int64) (*SubscriptionPlan, error)
 	FindPlanByCode(ctx context.Context, code string) (*SubscriptionPlan, error)
+	UpdatePlan(ctx context.Context, planID int64, input UpdatePlanInput) (*SubscriptionPlan, error)
 	List(ctx context.Context, input ListSubscriptionsRequest) ([]UserSubscription, int64, error)
 	FindByID(ctx context.Context, subscriptionID int64) (*UserSubscription, error)
 	FindActiveByUser(ctx context.Context, userID int64) (*UserSubscription, error)
@@ -26,6 +28,62 @@ type Repository interface {
 	CreatePayment(ctx context.Context, input CreatePaymentInput) error
 	ListPaymentsBySubscription(ctx context.Context, subscriptionID int64) ([]Payment, error)
 	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
+	// Promos
+	ListPromos(ctx context.Context, activeOnly bool) ([]SubscriptionPromo, error)
+	FindPromo(ctx context.Context, promoID int64) (*SubscriptionPromo, error)
+	FindPromoByCode(ctx context.Context, code string) (*SubscriptionPromo, error)
+	CreatePromo(ctx context.Context, input CreatePromoInput) (*SubscriptionPromo, error)
+	UpdatePromo(ctx context.Context, promoID int64, input UpdatePromoInput) (*SubscriptionPromo, error)
+	IncrementPromoUsed(ctx context.Context, promoID int64) error
+	FindUnsubscribedOwnerIDs(ctx context.Context) ([]int64, error)
+	BulkCreateNotifications(ctx context.Context, inputs []BulkNotificationInput) (int, error)
+}
+
+type CreatePromoInput struct {
+	PromoCode        string
+	Name             string
+	Description      *string
+	DiscountType     string
+	DiscountValue    float64
+	MaxDiscountCap   *float64
+	ApplicablePlans  []string
+	ApplicableCycles []string
+	ValidFrom        string
+	ValidUntil       string
+	MaxUses          *int
+	CreatedBy        int64
+}
+
+type UpdatePromoInput struct {
+	Name             string
+	Description      *string
+	DiscountType     string
+	DiscountValue    float64
+	MaxDiscountCap   *float64
+	ApplicablePlans  []string
+	ApplicableCycles []string
+	ValidFrom        string
+	ValidUntil       string
+	IsActive         bool
+	MaxUses          *int
+}
+
+type BulkNotificationInput struct {
+	UserID  int64
+	Type    string
+	Title   string
+	Message string
+	DataJSON string
+}
+
+type UpdatePlanInput struct {
+	Name         string
+	Description  *string
+	SixMonthPrice float64
+	YearlyPrice  float64
+	MaxManagers  *int
+	IsActive     bool
+	Features     map[string]any
 }
 
 type CreateSubscriptionInput struct {
@@ -108,6 +166,29 @@ func (r *PostgresRepository) FindPlanByCode(ctx context.Context, code string) (*
 		return nil, ErrNotFound
 	}
 	return plan, err
+}
+
+func (r *PostgresRepository) UpdatePlan(ctx context.Context, planID int64, input UpdatePlanInput) (*SubscriptionPlan, error) {
+	featuresJSON, err := json.Marshal(input.Features)
+	if err != nil {
+		return nil, err
+	}
+	var maxManagers *int64
+	if input.MaxManagers != nil {
+		v := int64(*input.MaxManagers)
+		maxManagers = &v
+	}
+	_, err = r.db.ExecContext(ctx, `
+		UPDATE public.subscription_plans SET
+			plan_name = $1, description = $2, monthly_price = $3, yearly_price = $4,
+			max_managers = $5, is_active = $6, features = $7, updated_at = NOW()
+		WHERE plan_id = $8
+	`, input.Name, input.Description, input.SixMonthPrice, input.YearlyPrice,
+		maxManagers, input.IsActive, featuresJSON, planID)
+	if err != nil {
+		return nil, err
+	}
+	return r.FindPlan(ctx, planID)
 }
 
 func (r *PostgresRepository) List(ctx context.Context, input ListSubscriptionsRequest) ([]UserSubscription, int64, error) {
@@ -293,7 +374,8 @@ func (r *PostgresRepository) CreateAuditLog(ctx context.Context, input CreateAud
 func planSelect() string {
 	return `
 		SELECT plan_id, plan_code, plan_name, description, monthly_price, yearly_price,
-			max_users, max_nurseries, COALESCE(is_active, true), created_at, updated_at
+			max_managers, max_nurseries, COALESCE(is_active, true), created_at, updated_at,
+			COALESCE(features, '{}')::jsonb
 		FROM public.subscription_plans
 	`
 }
@@ -346,18 +428,29 @@ func scanPlan(row interface{ Scan(dest ...any) error }) (*SubscriptionPlan, erro
 	var plan SubscriptionPlan
 	var description sql.NullString
 	var monthlyPrice, yearlyPrice sql.NullFloat64
-	var maxUsers, maxNurseries sql.NullInt64
+	var maxManagers, maxNurseries sql.NullInt64
 	var updatedAt sql.NullTime
-	if err := row.Scan(&plan.ID, &plan.Code, &plan.Name, &description, &monthlyPrice, &yearlyPrice, &maxUsers, &maxNurseries, &plan.IsActive, &plan.CreatedAt, &updatedAt); err != nil {
+	var featuresJSON []byte
+	if err := row.Scan(
+		&plan.ID, &plan.Code, &plan.Name, &description,
+		&monthlyPrice, &yearlyPrice,
+		&maxManagers, &maxNurseries,
+		&plan.IsActive, &plan.CreatedAt, &updatedAt,
+		&featuresJSON,
+	); err != nil {
 		return nil, err
 	}
 	plan.Description = nullableString(description)
-	plan.MonthlyPrice = nullableFloat64(monthlyPrice)
+	plan.MonthlyPrice = nullableFloat64(monthlyPrice)  // kept for cycleEndAndAmount
+	plan.SixMonthPrice = nullableFloat64(monthlyPrice) // API-facing field
 	plan.YearlyPrice = nullableFloat64(yearlyPrice)
-	plan.MaxUsers = nullableInt(maxUsers)
+	plan.MaxManagers = nullableInt(maxManagers)
 	plan.MaxNurseries = nullableInt(maxNurseries)
 	if updatedAt.Valid {
 		plan.UpdatedAt = &updatedAt.Time
+	}
+	if len(featuresJSON) > 0 {
+		_ = json.Unmarshal(featuresJSON, &plan.Features)
 	}
 	return &plan, nil
 }
@@ -455,4 +548,210 @@ func stringOrEmpty(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+// ── Promo repository ──────────────────────────────────────────────────────────
+
+func (r *PostgresRepository) ListPromos(ctx context.Context, activeOnly bool) ([]SubscriptionPromo, error) {
+	query := promoSelect()
+	if activeOnly {
+		query += " WHERE p.is_active = true AND p.valid_until >= CURRENT_DATE"
+	}
+	query += " ORDER BY p.promo_id DESC"
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	promos := make([]SubscriptionPromo, 0)
+	for rows.Next() {
+		promo, err := scanPromo(rows)
+		if err != nil {
+			return nil, err
+		}
+		promos = append(promos, *promo)
+	}
+	return promos, rows.Err()
+}
+
+func (r *PostgresRepository) FindPromo(ctx context.Context, promoID int64) (*SubscriptionPromo, error) {
+	promo, err := scanPromo(r.db.QueryRowContext(ctx, promoSelect()+" WHERE p.promo_id = $1", promoID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return promo, err
+}
+
+func (r *PostgresRepository) FindPromoByCode(ctx context.Context, code string) (*SubscriptionPromo, error) {
+	promo, err := scanPromo(r.db.QueryRowContext(ctx, promoSelect()+" WHERE UPPER(p.promo_code) = UPPER($1)", code))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return promo, err
+}
+
+func (r *PostgresRepository) CreatePromo(ctx context.Context, input CreatePromoInput) (*SubscriptionPromo, error) {
+	plansJSON, _ := json.Marshal(input.ApplicablePlans)
+	cyclesJSON, _ := json.Marshal(input.ApplicableCycles)
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
+		INSERT INTO public.subscription_promos
+			(promo_code, name, description, discount_type, discount_value, max_discount_cap,
+			 applicable_plans, applicable_cycles, valid_from, valid_until, max_uses, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::date, $10::date, $11, $12)
+		RETURNING promo_id
+	`, strings.ToUpper(strings.TrimSpace(input.PromoCode)), input.Name, input.Description,
+		input.DiscountType, input.DiscountValue, input.MaxDiscountCap,
+		plansJSON, cyclesJSON, input.ValidFrom, input.ValidUntil, input.MaxUses, input.CreatedBy,
+	).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+	return r.FindPromo(ctx, id)
+}
+
+func (r *PostgresRepository) UpdatePromo(ctx context.Context, promoID int64, input UpdatePromoInput) (*SubscriptionPromo, error) {
+	plansJSON, _ := json.Marshal(input.ApplicablePlans)
+	cyclesJSON, _ := json.Marshal(input.ApplicableCycles)
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE public.subscription_promos SET
+			name = $1, description = $2, discount_type = $3, discount_value = $4, max_discount_cap = $5,
+			applicable_plans = $6::jsonb, applicable_cycles = $7::jsonb,
+			valid_from = $8::date, valid_until = $9::date, is_active = $10, max_uses = $11, updated_at = NOW()
+		WHERE promo_id = $12
+	`, input.Name, input.Description, input.DiscountType, input.DiscountValue, input.MaxDiscountCap,
+		plansJSON, cyclesJSON, input.ValidFrom, input.ValidUntil, input.IsActive, input.MaxUses, promoID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return nil, ErrNotFound
+	}
+	return r.FindPromo(ctx, promoID)
+}
+
+func (r *PostgresRepository) IncrementPromoUsed(ctx context.Context, promoID int64) error {
+	_, err := r.db.ExecContext(ctx,
+		"UPDATE public.subscription_promos SET used_count = used_count + 1, updated_at = NOW() WHERE promo_id = $1",
+		promoID)
+	return err
+}
+
+func (r *PostgresRepository) FindUnsubscribedOwnerIDs(ctx context.Context) ([]int64, error) {
+	const query = `
+		SELECT DISTINCT ur.user_id
+		FROM public.user_roles ur
+		WHERE ur.role_id = 3  -- Nursery Owner
+		  AND NOT EXISTS (
+			SELECT 1 FROM public.user_subscriptions us
+			WHERE us.user_id = ur.user_id
+			  AND us.subscription_status = 'ACTIVE'
+			  AND (us.end_date IS NULL OR us.end_date >= CURRENT_DATE)
+		  )
+	`
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (r *PostgresRepository) BulkCreateNotifications(ctx context.Context, inputs []BulkNotificationInput) (int, error) {
+	if len(inputs) == 0 {
+		return 0, nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO public.notifications (user_id, notification_type, title, message, channel, notification_status, data, sent_at, created_at)
+		VALUES ($1, $2, $3, $4, 'IN_APP', 'SENT', $5::jsonb, NOW(), NOW())
+	`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+	count := 0
+	for _, n := range inputs {
+		if _, err := stmt.ExecContext(ctx, n.UserID, n.Type, n.Title, n.Message, n.DataJSON); err == nil {
+			count++
+		}
+	}
+	return count, tx.Commit()
+}
+
+func promoSelect() string {
+	return `
+		SELECT p.promo_id, p.promo_code, p.name, p.description,
+			p.discount_type, p.discount_value, p.max_discount_cap,
+			p.applicable_plans, p.applicable_cycles,
+			p.valid_from, p.valid_until, p.is_active,
+			p.max_uses, p.used_count, p.created_by,
+			p.created_at, p.updated_at
+		FROM public.subscription_promos p
+	`
+}
+
+func scanPromo(row interface{ Scan(dest ...any) error }) (*SubscriptionPromo, error) {
+	var p SubscriptionPromo
+	var description sql.NullString
+	var maxDiscountCap sql.NullFloat64
+	var maxUses sql.NullInt64
+	var createdBy sql.NullInt64
+	var updatedAt sql.NullTime
+	var plansJSON, cyclesJSON []byte
+	var validFrom, validUntil time.Time
+
+	if err := row.Scan(
+		&p.ID, &p.PromoCode, &p.Name, &description,
+		&p.DiscountType, &p.DiscountValue, &maxDiscountCap,
+		&plansJSON, &cyclesJSON,
+		&validFrom, &validUntil,
+		&p.IsActive, &maxUses, &p.UsedCount, &createdBy,
+		&p.CreatedAt, &updatedAt,
+	); err != nil {
+		return nil, err
+	}
+
+	p.Description = nullableString(description)
+	p.ValidFrom = validFrom.Format("2006-01-02")
+	p.ValidUntil = validUntil.Format("2006-01-02")
+	if maxDiscountCap.Valid {
+		p.MaxDiscountCap = &maxDiscountCap.Float64
+	}
+	if maxUses.Valid {
+		v := int(maxUses.Int64)
+		p.MaxUses = &v
+	}
+	if createdBy.Valid {
+		p.CreatedBy = &createdBy.Int64
+	}
+	if updatedAt.Valid {
+		p.UpdatedAt = &updatedAt.Time
+	}
+	if len(plansJSON) > 0 {
+		_ = json.Unmarshal(plansJSON, &p.ApplicablePlans)
+	}
+	if len(cyclesJSON) > 0 {
+		_ = json.Unmarshal(cyclesJSON, &p.ApplicableCycles)
+	}
+	if p.ApplicablePlans == nil {
+		p.ApplicablePlans = []string{}
+	}
+	if p.ApplicableCycles == nil {
+		p.ApplicableCycles = []string{}
+	}
+	return &p, nil
 }

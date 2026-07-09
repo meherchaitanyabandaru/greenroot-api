@@ -25,6 +25,15 @@ func (m Module) RegisterRoutes(router chi.Router) {
 	router.Route("/subscription-plans", func(r chi.Router) {
 		r.Get("/", m.handler.ListPlans)
 		r.Get("/{id}", m.handler.GetPlan)
+		r.Put("/{id}", m.handler.UpdatePlan)
+	})
+
+	router.Route("/subscription-promos", func(r chi.Router) {
+		r.Get("/", m.handler.ListPromos)
+		r.Post("/", m.handler.CreatePromo)
+		r.Put("/{id}", m.handler.UpdatePromo)
+		r.Post("/validate", m.handler.ValidatePromo)
+		r.Post("/{id}/blast", m.handler.BlastPromo)
 	})
 
 	router.Route("/subscriptions", func(r chi.Router) {
