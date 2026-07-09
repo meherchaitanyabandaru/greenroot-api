@@ -1,4 +1,4 @@
-package requests
+package plantrequests
 
 import (
 	"database/sql"

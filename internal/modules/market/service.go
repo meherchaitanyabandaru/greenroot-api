@@ -1,4 +1,4 @@
-package localmarket
+package market
 
 import (
 	"context"

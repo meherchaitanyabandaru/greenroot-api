@@ -1,4 +1,4 @@
-package requests
+package plantrequests
 
 import "time"
 
@@ -53,7 +53,7 @@ type Pagination struct {
 }
 
 type RequestsResponse struct {
-	Requests   []PlantRequest `json:"requests"`
+	Requests   []PlantRequest `json:"plant_requests"`
 	Pagination Pagination     `json:"pagination"`
 }
 
