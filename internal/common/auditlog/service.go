@@ -7,9 +7,10 @@
 // Design rules:
 //   - Writes are queued on a buffered channel and executed by a single background
 //     goroutine, so callers never block on a DB round-trip.
-//   - If the queue is full (DB down, spike) the event is dropped and logged at WARN;
-//     audit must never slow a customer request.
-//   - Failures are logged internally and never surfaced to callers.
+//   - If the queue is full, a direct DB write is attempted in a one-shot goroutine
+//     (5 s timeout) so no audit record is silently discarded.
+//   - If that fallback write also fails, the error is logged internally; the
+//     business operation is never failed or slowed.
 //   - Call Close() after the HTTP server shuts down to drain pending writes.
 package auditlog
 
@@ -70,7 +71,15 @@ func (s *Service) enqueue(q string, args []any) {
 	select {
 	case s.queue <- writeJob{query: q, args: args}:
 	default:
-		s.log.Warn("audit queue full — event dropped")
+		// Queue full — fall back to a direct write in a one-shot goroutine so the
+		// caller is never blocked. If the direct write also fails, log and move on.
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
+				s.log.Error("audit queue full and direct write failed", "error", err)
+			}
+		}()
 	}
 }
 
