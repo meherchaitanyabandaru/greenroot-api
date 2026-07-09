@@ -53,6 +53,10 @@ func (h *Handler) CreateAd(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	rawActor, _ := authctx.ActorFromContext(r.Context())
+	if !authctx.RequireActiveNursery(w, rawActor) || !authctx.RequireActiveSubscription(w, rawActor) {
+		return
+	}
 	var req CreateAdRequest
 	if !decodeJSON(w, r, &req) {
 		return

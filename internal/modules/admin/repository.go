@@ -10,6 +10,8 @@ import (
 type Repository interface {
 	Summary(context.Context) (Summary, error)
 	ListUsers(context.Context, ListUsersRequest) ([]User, int64, error)
+	UpdateUserStatus(ctx context.Context, userID int64, status string) error
+	UpdateNurseryStatus(ctx context.Context, nurseryID int64, status string) error
 }
 type PostgresRepository struct{ db *sql.DB }
 
@@ -173,6 +175,22 @@ func nullableTime(value sql.NullTime) *string {
 	}
 	formatted := value.Time.Format(time.RFC3339)
 	return &formatted
+}
+
+func (r *PostgresRepository) UpdateUserStatus(ctx context.Context, userID int64, status string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE public.users SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1`,
+		userID, status,
+	)
+	return err
+}
+
+func (r *PostgresRepository) UpdateNurseryStatus(ctx context.Context, nurseryID int64, status string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE public.nurseries SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE nursery_id = $1`,
+		nurseryID, status,
+	)
+	return err
 }
 
 func splitCSV(value sql.NullString) []string {

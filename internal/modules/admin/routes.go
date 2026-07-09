@@ -17,5 +17,7 @@ func (m Module) RegisterRoutes(r chi.Router) {
 	r.Route("/admin", func(r chi.Router) {
 		r.Get("/dashboard", m.handler.Dashboard)
 		r.Get("/users", m.handler.ListUsers)
+		r.Put("/users/{id}/status", m.handler.UpdateUserStatus)
+		r.Put("/nurseries/{id}/status", m.handler.UpdateNurseryStatus)
 	})
 }

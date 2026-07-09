@@ -40,3 +40,13 @@ type ActorContext struct {
 	IPAddress string
 	UserAgent string
 }
+
+type UpdateUserStatusRequest struct {
+	Status string `json:"status"` // ACTIVE | SUSPENDED | DELETED
+	Reason string `json:"reason"`
+}
+
+type UpdateNurseryStatusRequest struct {
+	Status string `json:"status"` // ACTIVE | SUSPENDED
+	Reason string `json:"reason"`
+}

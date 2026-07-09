@@ -3,11 +3,13 @@ package app
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/config"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/logger"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/revocation"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/database"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
@@ -72,6 +74,9 @@ func Bootstrap(ctx context.Context) (*App, error) {
 }
 
 func (a *App) Run(ctx context.Context) error {
+	// Background: expire subscriptions at midnight + clean revocation map every 15 min.
+	go runCronJobs(ctx, a.deps)
+
 	serverErrors := make(chan error, 1)
 	go func() {
 		a.deps.Logger.Info("api server starting", "addr", a.server.Addr, "env", a.deps.Config.App.Env)
@@ -93,4 +98,46 @@ func (a *App) Run(ctx context.Context) error {
 
 func (a *App) Close() error {
 	return errors.Join(a.deps.DB.Close(), a.deps.LogManager.Close())
+}
+
+// runCronJobs runs periodic maintenance tasks:
+//   - every 15 min: clean up expired revocation entries (tiny in-memory map)
+//   - daily at 00:05: mark subscriptions whose end_date has passed as EXPIRED
+func runCronJobs(ctx context.Context, deps Dependencies) {
+	cleanupTicker := time.NewTicker(15 * time.Minute)
+	defer cleanupTicker.Stop()
+
+	// Fire expiry job once at startup (catches any missed midnight), then daily.
+	expireSubscriptions(ctx, deps)
+	expireTicker := time.NewTicker(24 * time.Hour)
+	defer expireTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-cleanupTicker.C:
+			revocation.Cleanup()
+		case <-expireTicker.C:
+			expireSubscriptions(ctx, deps)
+		}
+	}
+}
+
+func expireSubscriptions(ctx context.Context, deps Dependencies) {
+	const q = `
+		UPDATE public.user_subscriptions
+		SET subscription_status = 'EXPIRED', updated_at = CURRENT_TIMESTAMP
+		WHERE subscription_status IN ('ACTIVE', 'TRIAL')
+		  AND end_date IS NOT NULL
+		  AND end_date < CURRENT_DATE
+	`
+	res, err := deps.DB.ExecContext(ctx, q)
+	if err != nil {
+		slog.Error("subscription expiry job failed", "error", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		slog.Info("subscription expiry job: marked expired", "count", n)
+	}
 }

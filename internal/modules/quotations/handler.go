@@ -94,6 +94,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	rawActor, _ := authctx.ActorFromContext(r.Context())
+	if !authctx.RequireActiveNursery(w, rawActor) || !authctx.RequireActiveSubscription(w, rawActor) {
+		return
+	}
 	var req CreateQuotationRequest
 	if !decodeJSON(w, r, &req) {
 		return

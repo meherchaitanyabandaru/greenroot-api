@@ -1,10 +1,12 @@
 package admin
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
@@ -48,6 +50,62 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, UsersResponse{Users: users, Pagination: pagination})
+}
+
+func (h *Handler) UpdateUserStatus(w http.ResponseWriter, r *http.Request) {
+	a, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	idStr := chi.URLParam(r, "id")
+	userID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || userID <= 0 {
+		response.Error(w, http.StatusBadRequest, "invalid_id", "invalid user id")
+		return
+	}
+	var req UpdateUserStatusRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid request body")
+		return
+	}
+	if err := h.service.UpdateUserStatus(r.Context(), a, userID, req); err != nil {
+		switch {
+		case errors.Is(err, ErrForbidden):
+			response.Error(w, http.StatusForbidden, "forbidden", "admin only")
+		default:
+			response.Error(w, http.StatusBadRequest, "invalid_input", err.Error())
+		}
+		return
+	}
+	response.OK(w, map[string]string{"message": "user status updated"})
+}
+
+func (h *Handler) UpdateNurseryStatus(w http.ResponseWriter, r *http.Request) {
+	a, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	idStr := chi.URLParam(r, "id")
+	nurseryID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || nurseryID <= 0 {
+		response.Error(w, http.StatusBadRequest, "invalid_id", "invalid nursery id")
+		return
+	}
+	var req UpdateNurseryStatusRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid request body")
+		return
+	}
+	if err := h.service.UpdateNurseryStatus(r.Context(), a, nurseryID, req); err != nil {
+		switch {
+		case errors.Is(err, ErrForbidden):
+			response.Error(w, http.StatusForbidden, "forbidden", "admin only")
+		default:
+			response.Error(w, http.StatusBadRequest, "invalid_input", err.Error())
+		}
+		return
+	}
+	response.OK(w, map[string]string{"message": "nursery status updated"})
 }
 
 func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, bool) {

@@ -57,7 +57,7 @@ func NewRouter(deps Dependencies) chi.Router {
 	registerDocsRoutes(router)
 
 	router.Route("/api/v1", func(r chi.Router) {
-		r.Use(authctx.EnrichActorMiddleware(deps.JWT, authctx.NewDBRoleFetcher(deps.DB)))
+		r.Use(authctx.EnrichActorMiddleware(deps.JWT))
 		auth.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		admin.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		attachments.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)

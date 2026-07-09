@@ -12,6 +12,30 @@ import (
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 )
 
+// issueTokenPair fetches fresh token context from DB and signs both tokens.
+// This is the ONE place we touch the DB for auth state — never again per request.
+func (s *Service) issueTokenPair(ctx context.Context, user *User, sessionID int64) (accessToken, refreshToken string, err error) {
+	tc, err := s.repository.GetTokenContext(ctx, user.ID)
+	if err != nil {
+		return "", "", err
+	}
+	jtc := jwtplatform.TokenContext{
+		UserStatus:      tc.UserStatus,
+		NurseryID:       tc.NurseryID,
+		NurseryStatus:   tc.NurseryStatus,
+		SubTier:         tc.SubTier,
+		SubExpiresEpoch: tc.SubExpiresEpoch,
+	}
+	userIDStr := strconv.FormatInt(user.ID, 10)
+	sessionIDStr := strconv.FormatInt(sessionID, 10)
+	accessToken, err = s.jwt.IssueAccessToken(userIDStr, sessionIDStr, user.Mobile, user.Roles, jtc)
+	if err != nil {
+		return "", "", err
+	}
+	refreshToken, err = s.jwt.IssueRefreshToken(userIDStr, sessionIDStr, user.Mobile, user.Roles, jtc)
+	return
+}
+
 var (
 	ErrInvalidOTP          = errors.New("invalid otp")
 	ErrUserNotFound        = errors.New("user not found")
@@ -80,13 +104,7 @@ func (s *Service) VerifyOTP(ctx context.Context, req VerifyOTPRequest, client Cl
 		return AuthResponse{}, err
 	}
 
-	userID := strconv.FormatInt(user.ID, 10)
-	sessionIDText := strconv.FormatInt(sessionID, 10)
-	accessToken, err := s.jwt.IssueAccessToken(userID, sessionIDText, user.Mobile, user.Roles)
-	if err != nil {
-		return AuthResponse{}, err
-	}
-	refreshToken, err := s.jwt.IssueRefreshToken(userID, sessionIDText, user.Mobile, user.Roles)
+	accessToken, refreshToken, err := s.issueTokenPair(ctx, user, sessionID)
 	if err != nil {
 		return AuthResponse{}, err
 	}
@@ -160,13 +178,7 @@ func (s *Service) RefreshToken(ctx context.Context, req RefreshTokenRequest) (Au
 		return AuthResponse{}, err
 	}
 
-	sessionIDText := strconv.FormatInt(session.ID, 10)
-	userIDText := strconv.FormatInt(user.ID, 10)
-	accessToken, err := s.jwt.IssueAccessToken(userIDText, sessionIDText, user.Mobile, user.Roles)
-	if err != nil {
-		return AuthResponse{}, err
-	}
-	refreshToken, err := s.jwt.IssueRefreshToken(userIDText, sessionIDText, user.Mobile, user.Roles)
+	accessToken, refreshToken, err := s.issueTokenPair(ctx, user, session.ID)
 	if err != nil {
 		return AuthResponse{}, err
 	}

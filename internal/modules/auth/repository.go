@@ -28,6 +28,17 @@ type Repository interface {
 	CreateAuditLog(ctx context.Context, input CreateAuditInput) error
 	GetWorkspaces(ctx context.Context, userID int64) ([]Workspace, error)
 	GetOwnerDashboard(ctx context.Context, userID int64) (*OwnerDashboard, error)
+	GetTokenContext(ctx context.Context, userID int64) (TokenContext, error)
+}
+
+// TokenContext is the user's runtime state embedded into the JWT at issue time.
+// Fetched once per login/refresh; zero DB queries on each API request.
+type TokenContext struct {
+	UserStatus      string // ACTIVE | SUSPENDED | DELETED
+	NurseryID       int64  // 0 = not nursery-affiliated
+	NurseryStatus   string // ACTIVE | SUSPENDED | PENDING_APPROVAL
+	SubTier         string // TRIAL | GROWTH | ENTERPRISE | ""
+	SubExpiresEpoch int64  // Unix epoch of subscription end_date; 0 = no expiry
 }
 
 type CreateSessionInput struct {
@@ -352,6 +363,63 @@ func nullableText(value string) any {
 		return nil
 	}
 	return value
+}
+
+// GetTokenContext fetches the user's status, nursery affiliation, and active subscription
+// in a single query. Called once at login and at each token refresh — never on every request.
+func (r *PostgresRepository) GetTokenContext(ctx context.Context, userID int64) (TokenContext, error) {
+	var tc TokenContext
+
+	// User status
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COALESCE(status, 'ACTIVE') FROM public.users WHERE user_id = $1`,
+		userID,
+	).Scan(&tc.UserStatus); err != nil {
+		tc.UserStatus = "ACTIVE"
+	}
+
+	// Nursery: owner first, then manager. Whichever matches first wins.
+	// Also captures the nursery owner's user_id so we can look up their subscription.
+	const nurseryQuery = `
+		SELECT n.nursery_id, COALESCE(n.status::text, 'PENDING_APPROVAL'), n.owner_user_id
+		FROM public.nurseries n
+		WHERE n.owner_user_id = $1
+		  AND COALESCE(n.status::text, '') NOT IN ('DELETED')
+		UNION ALL
+		SELECT n.nursery_id, COALESCE(n.status::text, 'ACTIVE'), n.owner_user_id
+		FROM public.nursery_users nu
+		JOIN public.nurseries n ON n.nursery_id = nu.nursery_id
+		WHERE nu.user_id = $1
+		  AND nu.status = 'ACTIVE'
+		  AND COALESCE(n.status::text, '') NOT IN ('DELETED')
+		LIMIT 1
+	`
+	var ownerUserID int64
+	if err := r.db.QueryRowContext(ctx, nurseryQuery, userID).Scan(
+		&tc.NurseryID, &tc.NurseryStatus, &ownerUserID,
+	); err == nil && tc.NurseryID > 0 {
+		// Subscription belongs to the nursery owner (covers both owner and manager tokens).
+		const subQuery = `
+			SELECT sp.plan_code, us.end_date
+			FROM public.user_subscriptions us
+			JOIN public.subscription_plans sp ON sp.plan_id = us.plan_id
+			WHERE us.user_id = $1
+			  AND us.subscription_status IN ('ACTIVE', 'TRIAL', 'EXPIRED')
+			  AND (us.end_date IS NULL OR us.end_date >= CURRENT_DATE - INTERVAL '7 days')
+			ORDER BY us.end_date DESC NULLS FIRST
+			LIMIT 1
+		`
+		var endDate sql.NullTime
+		if err2 := r.db.QueryRowContext(ctx, subQuery, ownerUserID).Scan(&tc.SubTier, &endDate); err2 == nil {
+			if endDate.Valid {
+				// Normalise to midnight UTC of the end date so the math is stable.
+				d := endDate.Time
+				tc.SubExpiresEpoch = time.Date(d.Year(), d.Month(), d.Day(), 23, 59, 59, 0, time.UTC).Unix()
+			}
+		}
+	}
+
+	return tc, nil
 }
 
 // GetWorkspaces returns all workspaces the user can operate in.
