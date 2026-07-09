@@ -32,6 +32,30 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	response.OK(w, ListResponse{AuditLogs: rows, Pagination: p})
 }
+func (h *Handler) ListSecurity(w http.ResponseWriter, r *http.Request) {
+	a, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	in := ListSecurityRequest{
+		Page:      intQ(q.Get("page")),
+		PerPage:   intQ(q.Get("per_page")),
+		EventType: q.Get("event_type"),
+		UserID:    int64Q(q.Get("user_id")),
+	}
+	rows, p, err := h.service.ListSecurity(r.Context(), a, in)
+	if err != nil {
+		if errors.Is(err, ErrForbidden) {
+			response.Error(w, 403, "forbidden", "admin only")
+		} else {
+			response.Error(w, 500, "security_log_error", "security log request failed")
+		}
+		return
+	}
+	response.OK(w, ListSecurityResponse{SecurityLogs: rows, Pagination: p})
+}
+
 func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, bool) {
 	actor, ok := authctx.FromRequest(w, r, h.jwt)
 	if !ok {

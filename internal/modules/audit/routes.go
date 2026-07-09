@@ -13,4 +13,7 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service) Module {
 	s := NewService(r)
 	return Module{handler: NewHandler(s, jwt)}
 }
-func (m Module) RegisterRoutes(r chi.Router) { r.Get("/audit-logs", m.handler.List) }
+func (m Module) RegisterRoutes(r chi.Router) {
+	r.Get("/audit-logs", m.handler.List)
+	r.Get("/security-logs", m.handler.ListSecurity)
+}

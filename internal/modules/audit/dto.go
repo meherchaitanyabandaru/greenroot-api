@@ -21,3 +21,15 @@ type ListResponse struct {
 	AuditLogs  []AuditLog `json:"audit_logs"`
 	Pagination Pagination `json:"pagination"`
 }
+
+type ListSecurityRequest struct {
+	Page      int
+	PerPage   int
+	EventType string
+	UserID    int64
+}
+
+type ListSecurityResponse struct {
+	SecurityLogs []SecurityLog `json:"security_logs"`
+	Pagination   Pagination    `json:"pagination"`
+}

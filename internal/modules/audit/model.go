@@ -19,6 +19,19 @@ type AuditLog struct {
 	ChangedAt   time.Time `json:"changed_at"`
 }
 
+type SecurityLog struct {
+	ID          int64     `json:"id"`
+	EventType   string    `json:"event_type"`
+	Description *string   `json:"description,omitempty"`
+	UserID      *int64    `json:"user_id,omitempty"`
+	NurseryID   *int64    `json:"nursery_id,omitempty"`
+	RequestID   *string   `json:"request_id,omitempty"`
+	IPAddress   *string   `json:"ip_address,omitempty"`
+	DeviceInfo  *string   `json:"device_info,omitempty"`
+	Metadata    *string   `json:"metadata,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type ActorContext struct {
 	UserID    int64
 	Roles     []string
