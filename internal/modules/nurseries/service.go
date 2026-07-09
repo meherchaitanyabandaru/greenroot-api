@@ -3,6 +3,7 @@ package nurseries
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -88,7 +89,7 @@ func (s *Service) AddManager(ctx context.Context, actor ActorContext, nurseryID 
 	if err != nil {
 		return UserLink{}, err
 	}
-	s.audit(ctx, actor, "nursery_users", manager.ID, actionInsert, input)
+	s.audit(ctx, actor, auditlog.EntityNurseryUser, manager.ID, auditlog.ActionCreate, "Manager added", nil, input)
 	return *manager, nil
 }
 
@@ -172,7 +173,8 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateNu
 	if err != nil {
 		return Nursery{}, err
 	}
-	s.audit(ctx, actor, "nurseries", nursery.ID, actionInsert, input)
+	s.audit(ctx, actor, auditlog.EntityNursery, nursery.ID, auditlog.ActionCreate,
+		fmt.Sprintf("Nursery %q registered", nursery.Name), nil, input)
 	return *nursery, nil
 }
 
@@ -184,11 +186,13 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, nurseryID int6
 	if err := validateNursery(input); err != nil {
 		return Nursery{}, err
 	}
+	old, _ := s.repository.FindByID(ctx, nurseryID)
 	nursery, err := s.repository.Update(ctx, actor.UserID, nurseryID, input)
 	if err != nil {
 		return Nursery{}, err
 	}
-	s.audit(ctx, actor, "nurseries", nursery.ID, actionUpdate, input)
+	s.audit(ctx, actor, auditlog.EntityNursery, nursery.ID, auditlog.ActionUpdate,
+		fmt.Sprintf("Nursery %q updated", nursery.Name), old, input)
 	return *nursery, nil
 }
 
@@ -200,11 +204,19 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, nurseryI
 	if status == "" {
 		return Nursery{}, ErrInvalidInput
 	}
+	old, _ := s.repository.FindByID(ctx, nurseryID)
 	nursery, err := s.repository.UpdateStatusOnly(ctx, actor.UserID, nurseryID, status)
 	if err != nil {
 		return Nursery{}, err
 	}
-	s.audit(ctx, actor, "nurseries", nursery.ID, actionUpdate, map[string]any{"status": status})
+	oldStatus := ""
+	if old != nil {
+		oldStatus = old.Status
+	}
+	s.audit(ctx, actor, auditlog.EntityNursery, nursery.ID, auditlog.ActionUpdate,
+		fmt.Sprintf("Nursery status %s → %s", oldStatus, status),
+		map[string]any{"status": oldStatus},
+		map[string]any{"status": status})
 
 	// Auto-create 6-month TRIAL subscription when admin approves a nursery.
 	if status == "APPROVED" && s.trialSvc != nil && nursery.OwnerUserID != nil {
@@ -218,10 +230,16 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, nurseryID int6
 	if !canManageNurseries(actor) {
 		return ErrForbidden
 	}
+	old, _ := s.repository.FindByID(ctx, nurseryID)
 	if err := s.repository.Delete(ctx, actor.UserID, nurseryID); err != nil {
 		return err
 	}
-	s.audit(ctx, actor, "nurseries", nurseryID, actionDelete, map[string]any{"status": "DELETED"})
+	name := ""
+	if old != nil {
+		name = old.Name
+	}
+	s.audit(ctx, actor, auditlog.EntityNursery, nurseryID, auditlog.ActionDelete,
+		fmt.Sprintf("Nursery %q deleted", name), old, map[string]any{"status": "DELETED"})
 	return nil
 }
 
@@ -249,7 +267,7 @@ func (s *Service) CreateAddress(ctx context.Context, actor ActorContext, nursery
 	if err != nil {
 		return Address{}, err
 	}
-	s.audit(ctx, actor, "nursery_addresses", address.ID, actionInsert, input)
+	s.audit(ctx, actor, auditlog.EntityNurseryAddr, address.ID, auditlog.ActionCreate, "Nursery address added", nil, input)
 	return *address, nil
 }
 
@@ -264,7 +282,7 @@ func (s *Service) UpdateAddress(ctx context.Context, actor ActorContext, address
 	if err != nil {
 		return Address{}, err
 	}
-	s.audit(ctx, actor, "nursery_addresses", address.ID, actionUpdate, input)
+	s.audit(ctx, actor, auditlog.EntityNurseryAddr, address.ID, auditlog.ActionUpdate, "Nursery address updated", nil, input)
 	return *address, nil
 }
 
@@ -275,7 +293,7 @@ func (s *Service) DeleteAddress(ctx context.Context, actor ActorContext, address
 	if err := s.repository.DeleteAddress(ctx, addressID); err != nil {
 		return err
 	}
-	s.audit(ctx, actor, "nursery_addresses", addressID, actionDelete, map[string]any{"deleted": true})
+	s.audit(ctx, actor, auditlog.EntityNurseryAddr, addressID, auditlog.ActionDelete, "Nursery address removed", nil, map[string]any{"deleted": true})
 	return nil
 }
 
@@ -303,7 +321,7 @@ func (s *Service) AddUser(ctx context.Context, actor ActorContext, nurseryID int
 	if err != nil {
 		return UserLink{}, err
 	}
-	s.audit(ctx, actor, "nursery_users", user.ID, actionInsert, input)
+	s.audit(ctx, actor, auditlog.EntityNurseryUser, user.ID, auditlog.ActionCreate, "Nursery user added", nil, input)
 	return *user, nil
 }
 
@@ -314,20 +332,23 @@ func (s *Service) RemoveUser(ctx context.Context, actor ActorContext, nurseryID 
 	if err := s.repository.RemoveUser(ctx, nurseryID, userID); err != nil {
 		return err
 	}
-	s.audit(ctx, actor, "nursery_users", userID, actionDelete, map[string]any{"nursery_id": nurseryID, "user_id": userID})
+	s.audit(ctx, actor, auditlog.EntityNurseryUser, userID, auditlog.ActionDelete,
+		"Nursery user removed", nil, map[string]any{"nursery_id": nurseryID, "user_id": userID})
 	return nil
 }
 
-func (s *Service) audit(ctx context.Context, actor ActorContext, entityType string, entityID int64, action auditlog.Action, newValue any) {
+func (s *Service) audit(ctx context.Context, actor ActorContext, entityType string, entityID int64, action auditlog.Action, description string, oldValue, newValue any) {
 	s.auditSvc.Log(ctx, auditlog.Entry{
-		UserID:     actor.UserID,
-		Module:     auditlog.ModuleNurseries,
-		EntityType: entityType,
-		EntityID:   entityID,
-		Action:     action,
-		NewValue:   newValue,
-		IPAddress:  actor.IPAddress,
-		DeviceInfo: actor.UserAgent,
+		UserID:      actor.UserID,
+		Module:      auditlog.ModuleNurseries,
+		EntityType:  entityType,
+		EntityID:    entityID,
+		Action:      action,
+		Description: description,
+		OldValue:    oldValue,
+		NewValue:    newValue,
+		IPAddress:   actor.IPAddress,
+		DeviceInfo:  actor.UserAgent,
 	})
 }
 

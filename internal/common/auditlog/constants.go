@@ -1,5 +1,31 @@
 package auditlog
 
+// EntityType identifies the kind of record that was affected.
+type EntityType = string
+
+const (
+	EntityOrder        EntityType = "order"
+	EntityOrderItem    EntityType = "order_item"
+	EntityPlant        EntityType = "plant"
+	EntityVehicle      EntityType = "vehicle"
+	EntityUser         EntityType = "user"
+	EntityUserAddress  EntityType = "user_address"
+	EntityNursery      EntityType = "nursery"
+	EntityNurseryUser  EntityType = "nursery_user"
+	EntityNurseryAddr  EntityType = "nursery_address"
+	EntityQuotation    EntityType = "quotation"
+	EntityPayment      EntityType = "payment"
+	EntitySubscription EntityType = "subscription"
+	EntityInvite       EntityType = "invite"
+	EntityDispatch     EntityType = "dispatch"
+	EntityDriver       EntityType = "driver"
+	EntityRequest      EntityType = "request"
+	EntityInventory    EntityType = "inventory"
+	EntityNotification EntityType = "notification"
+	EntitySourcing     EntityType = "sourcing_post"
+	EntityMarketAd     EntityType = "market_ad"
+)
+
 // Module identifies the business domain that produced the event.
 type Module = string
 

@@ -76,7 +76,8 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateOr
 	if err != nil {
 		return Order{}, err
 	}
-	s.audit(ctx, actor, "orders", order.ID, actionInsert, input)
+	s.audit(ctx, actor, auditlog.EntityOrder, order.ID, auditlog.ActionCreate,
+		fmt.Sprintf("Order %s created", order.OrderNumber), nil, input)
 	return *order, nil
 }
 
@@ -99,7 +100,10 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID 
 	if err != nil {
 		return Order{}, err
 	}
-	s.audit(ctx, actor, "orders", order.ID, actionUpdate, map[string]any{"order_status": status})
+	s.audit(ctx, actor, auditlog.EntityOrder, order.ID, auditlog.ActionUpdate,
+		fmt.Sprintf("Order #%d status %s → %s", orderID, current.Status, status),
+		map[string]any{"status": current.Status},
+		map[string]any{"status": status})
 	return *order, nil
 }
 
@@ -119,7 +123,10 @@ func (s *Service) StartLoading(ctx context.Context, actor ActorContext, orderID 
 	if err != nil {
 		return Order{}, err
 	}
-	s.audit(ctx, actor, "orders", orderID, actionUpdate, map[string]any{"order_status": "LOADING"})
+	s.audit(ctx, actor, auditlog.EntityOrder, orderID, auditlog.ActionUpdate,
+		fmt.Sprintf("Order #%d status %s → LOADING", orderID, order.Status),
+		map[string]any{"status": order.Status},
+		map[string]any{"status": "LOADING"})
 	return *updated, nil
 }
 
@@ -152,7 +159,10 @@ func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, order
 		msg := fmt.Sprintf("Order %s was loaded with reduced quantities. Please review your updated order.", updated.OrderCode)
 		_ = s.repository.CreateNotification(ctx, *order.BuyerUserID, "ORDER_PARTIAL", "Partial Delivery Notice", msg)
 	}
-	s.audit(ctx, actor, "orders", orderID, actionUpdate, map[string]any{"order_status": finalStatus})
+	s.audit(ctx, actor, auditlog.EntityOrder, orderID, auditlog.ActionUpdate,
+		fmt.Sprintf("Order #%d status LOADING → %s", orderID, finalStatus),
+		map[string]any{"status": "LOADING"},
+		map[string]any{"status": finalStatus})
 	return *updated, nil
 }
 
@@ -183,7 +193,10 @@ func (s *Service) SetLoadedQuantity(ctx context.Context, actor ActorContext, ord
 	if err != nil {
 		return OrderItem{}, err
 	}
-	s.audit(ctx, actor, "order_items", itemID, actionUpdate, map[string]any{"loaded_quantity": qty})
+	s.audit(ctx, actor, auditlog.EntityOrderItem, itemID, auditlog.ActionUpdate,
+		fmt.Sprintf("Order item #%d loaded quantity → %.2f", itemID, qty),
+		map[string]any{"loaded_quantity": item.LoadedQuantity},
+		map[string]any{"loaded_quantity": qty})
 	return *updated, nil
 }
 
@@ -207,7 +220,10 @@ func (s *Service) Cancel(ctx context.Context, actor ActorContext, orderID int64,
 	if err != nil {
 		return Order{}, err
 	}
-	s.audit(ctx, actor, "orders", orderID, actionUpdate, map[string]any{"order_status": "CANCELLED", "reason": reason})
+	s.audit(ctx, actor, auditlog.EntityOrder, orderID, auditlog.ActionUpdate,
+		fmt.Sprintf("Order #%d cancelled: %s", orderID, reason),
+		map[string]any{"status": order.Status},
+		map[string]any{"status": "CANCELLED", "reason": reason})
 	return *updated, nil
 }
 
@@ -234,7 +250,10 @@ func (s *Service) AssignManager(ctx context.Context, actor ActorContext, orderID
 	if err != nil {
 		return Order{}, err
 	}
-	s.audit(ctx, actor, "orders", orderID, actionUpdate, map[string]any{"assigned_manager_user_id": managerUserID})
+	s.audit(ctx, actor, auditlog.EntityOrder, orderID, auditlog.ActionUpdate,
+		fmt.Sprintf("Order #%d manager assigned", orderID),
+		map[string]any{"assigned_manager_user_id": order.AssignedManagerUserID},
+		map[string]any{"assigned_manager_user_id": managerUserID})
 	return *updated, nil
 }
 
@@ -252,7 +271,9 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, orderID int64)
 	if err := s.repository.Delete(ctx, orderID); err != nil {
 		return err
 	}
-	s.audit(ctx, actor, "orders", orderID, actionDelete, map[string]any{"deleted": true})
+	s.audit(ctx, actor, auditlog.EntityOrder, orderID, auditlog.ActionDelete,
+		fmt.Sprintf("Order #%d deleted", orderID),
+		map[string]any{"status": order.Status}, nil)
 	return nil
 }
 
@@ -285,7 +306,9 @@ func (s *Service) CreateItem(ctx context.Context, actor ActorContext, orderID in
 	if err != nil {
 		return OrderItem{}, err
 	}
-	s.audit(ctx, actor, "order_items", item.ID, actionInsert, input)
+	s.audit(ctx, actor, auditlog.EntityOrderItem, item.ID, auditlog.ActionCreate,
+		fmt.Sprintf("Item added to order #%d", orderID),
+		nil, input)
 	return *item, nil
 }
 
@@ -311,7 +334,9 @@ func (s *Service) UpdateItem(ctx context.Context, actor ActorContext, itemID int
 	if err != nil {
 		return OrderItem{}, err
 	}
-	s.audit(ctx, actor, "order_items", item.ID, actionUpdate, input)
+	s.audit(ctx, actor, auditlog.EntityOrderItem, item.ID, auditlog.ActionUpdate,
+		fmt.Sprintf("Order item #%d updated", item.ID),
+		current, input)
 	return *item, nil
 }
 
@@ -333,7 +358,9 @@ func (s *Service) DeleteItem(ctx context.Context, actor ActorContext, itemID int
 	if err := s.repository.DeleteItem(ctx, itemID); err != nil {
 		return err
 	}
-	s.audit(ctx, actor, "order_items", itemID, actionDelete, map[string]any{"deleted": true})
+	s.audit(ctx, actor, auditlog.EntityOrderItem, itemID, auditlog.ActionDelete,
+		fmt.Sprintf("Order item #%d removed from order #%d", itemID, item.OrderID),
+		item, nil)
 	return nil
 }
 
@@ -575,16 +602,18 @@ func totalPages(total int64, perPage int) int {
 	return int((total + int64(perPage) - 1) / int64(perPage))
 }
 
-func (s *Service) audit(ctx context.Context, actor ActorContext, entityType string, entityID int64, action auditlog.Action, newValue any) {
+func (s *Service) audit(ctx context.Context, actor ActorContext, entityType string, entityID int64, action auditlog.Action, description string, oldValue, newValue any) {
 	s.auditSvc.Log(ctx, auditlog.Entry{
-		UserID:     actor.UserID,
-		Module:     auditlog.ModuleOrders,
-		EntityType: entityType,
-		EntityID:   entityID,
-		Action:     action,
-		NewValue:   newValue,
-		IPAddress:  actor.IPAddress,
-		DeviceInfo: actor.UserAgent,
+		UserID:      actor.UserID,
+		Module:      auditlog.ModuleOrders,
+		EntityType:  entityType,
+		EntityID:    entityID,
+		Action:      action,
+		Description: description,
+		OldValue:    oldValue,
+		NewValue:    newValue,
+		IPAddress:   actor.IPAddress,
+		DeviceInfo:  actor.UserAgent,
 	})
 }
 

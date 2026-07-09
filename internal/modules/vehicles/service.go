@@ -3,6 +3,7 @@ package vehicles
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 
@@ -65,7 +66,8 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input VehicleR
 	if err != nil {
 		return Vehicle{}, err
 	}
-	s.audit(ctx, actor, vehicle.ID, actionInsert, input)
+	s.audit(ctx, actor, vehicle.ID, auditlog.ActionCreate,
+		fmt.Sprintf("Vehicle %s registered", vehicle.VehicleNumber), nil, input)
 	return *vehicle, nil
 }
 
@@ -83,11 +85,13 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, vehicleID int6
 	if duplicate {
 		return Vehicle{}, ErrDuplicate
 	}
+	old, _ := s.repository.FindByID(ctx, vehicleID)
 	vehicle, err := s.repository.Update(ctx, vehicleID, input)
 	if err != nil {
 		return Vehicle{}, err
 	}
-	s.audit(ctx, actor, vehicle.ID, actionUpdate, input)
+	s.audit(ctx, actor, vehicle.ID, auditlog.ActionUpdate,
+		fmt.Sprintf("Vehicle %s updated", vehicle.VehicleNumber), old, input)
 	return *vehicle, nil
 }
 
@@ -95,10 +99,12 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, vehicleID int6
 	if !hasRole(actor, "ADMIN") {
 		return ErrForbidden
 	}
+	old, _ := s.repository.FindByID(ctx, vehicleID)
 	if err := s.repository.Delete(ctx, vehicleID); err != nil {
 		return err
 	}
-	s.audit(ctx, actor, vehicleID, actionDelete, map[string]any{"status": "RETIRED"})
+	s.audit(ctx, actor, vehicleID, auditlog.ActionDelete,
+		fmt.Sprintf("Vehicle %s retired", vehicleNumber(old, vehicleID)), old, map[string]any{"status": "RETIRED"})
 	return nil
 }
 
@@ -158,15 +164,24 @@ func totalPages(total int64, perPage int) int {
 	return int(math.Ceil(float64(total) / float64(perPage)))
 }
 
-func (s *Service) audit(ctx context.Context, actor ActorContext, entityID int64, action auditlog.Action, newValue any) {
+func (s *Service) audit(ctx context.Context, actor ActorContext, entityID int64, action auditlog.Action, description string, oldValue, newValue any) {
 	s.auditSvc.Log(ctx, auditlog.Entry{
-		UserID:     actor.UserID,
-		Module:     auditlog.ModuleVehicles,
-		EntityType: "vehicle",
-		EntityID:   entityID,
-		Action:     action,
-		NewValue:   newValue,
-		IPAddress:  actor.IPAddress,
-		DeviceInfo: actor.UserAgent,
+		UserID:      actor.UserID,
+		Module:      auditlog.ModuleVehicles,
+		EntityType:  auditlog.EntityVehicle,
+		EntityID:    entityID,
+		Action:      action,
+		Description: description,
+		OldValue:    oldValue,
+		NewValue:    newValue,
+		IPAddress:   actor.IPAddress,
+		DeviceInfo:  actor.UserAgent,
 	})
+}
+
+func vehicleNumber(v *Vehicle, id int64) string {
+	if v != nil {
+		return v.VehicleNumber
+	}
+	return fmt.Sprintf("#%d", id)
 }

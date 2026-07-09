@@ -3,6 +3,7 @@ package plants
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
@@ -60,7 +61,8 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreatePl
 	if err != nil {
 		return Plant{}, err
 	}
-	s.audit(ctx, actor, plant.ID, actionInsert, input)
+	s.audit(ctx, actor, plant.ID, auditlog.ActionCreate,
+		fmt.Sprintf("Plant %q created", plant.ScientificName), nil, input)
 	return *plant, nil
 }
 
@@ -72,11 +74,13 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, plantID int64,
 	if err := validatePlantInput(input); err != nil {
 		return Plant{}, err
 	}
+	old, _ := s.repository.FindByID(ctx, plantID)
 	plant, err := s.repository.Update(ctx, plantID, input)
 	if err != nil {
 		return Plant{}, err
 	}
-	s.audit(ctx, actor, plant.ID, actionUpdate, input)
+	s.audit(ctx, actor, plant.ID, auditlog.ActionUpdate,
+		fmt.Sprintf("Plant %q updated", plant.ScientificName), old, input)
 	return *plant, nil
 }
 
@@ -84,10 +88,12 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, plantID int64)
 	if !canManagePlants(actor) {
 		return ErrForbidden
 	}
+	old, _ := s.repository.FindByID(ctx, plantID)
 	if err := s.repository.Delete(ctx, plantID); err != nil {
 		return err
 	}
-	s.audit(ctx, actor, plantID, actionDelete, map[string]any{"is_active": false})
+	s.audit(ctx, actor, plantID, auditlog.ActionDelete,
+		fmt.Sprintf("Plant %q deleted", nameOrID(old, plantID)), old, map[string]any{"is_active": false})
 	return nil
 }
 
@@ -136,7 +142,8 @@ func (s *Service) CreateImage(ctx context.Context, actor ActorContext, plantID i
 	if err != nil {
 		return Image{}, err
 	}
-	s.audit(ctx, actor, plantID, actionUpdate, map[string]any{"image_id": image.ID, "image_url": image.ImageURL})
+	s.audit(ctx, actor, plantID, auditlog.ActionUpdate,
+		"Plant image added", nil, map[string]any{"image_id": image.ID, "image_url": image.ImageURL})
 	return *image, nil
 }
 
@@ -148,17 +155,26 @@ func (s *Service) GetCareGuide(ctx context.Context, plantID int64) (CareGuide, e
 	return *guide, nil
 }
 
-func (s *Service) audit(ctx context.Context, actor ActorContext, entityID int64, action auditlog.Action, newValue any) {
+func (s *Service) audit(ctx context.Context, actor ActorContext, entityID int64, action auditlog.Action, description string, oldValue, newValue any) {
 	s.auditSvc.Log(ctx, auditlog.Entry{
-		UserID:     actor.UserID,
-		Module:     auditlog.ModulePlants,
-		EntityType: "plant",
-		EntityID:   entityID,
-		Action:     action,
-		NewValue:   newValue,
-		IPAddress:  actor.IPAddress,
-		DeviceInfo: actor.UserAgent,
+		UserID:      actor.UserID,
+		Module:      auditlog.ModulePlants,
+		EntityType:  auditlog.EntityPlant,
+		EntityID:    entityID,
+		Action:      action,
+		Description: description,
+		OldValue:    oldValue,
+		NewValue:    newValue,
+		IPAddress:   actor.IPAddress,
+		DeviceInfo:  actor.UserAgent,
 	})
+}
+
+func nameOrID(p *Plant, id int64) string {
+	if p != nil && p.ScientificName != "" {
+		return p.ScientificName
+	}
+	return fmt.Sprintf("#%d", id)
 }
 
 func normalizeListRequest(input ListPlantsRequest) ListPlantsRequest {

@@ -2,11 +2,6 @@ package vehicles
 
 import "time"
 
-const (
-	actionInsert = "INSERT"
-	actionUpdate = "UPDATE"
-	actionDelete = "DELETE"
-)
 
 type Vehicle struct {
 	ID            int64      `json:"id"`

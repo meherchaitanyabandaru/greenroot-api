@@ -199,15 +199,30 @@ func (s *Service) recordChange(ctx context.Context, actor ActorContext, table st
 		DataJSON: dataJSON,
 		At:       time.Now(),
 	})
+
+	auditAction := auditlog.ActionUpdate
+	switch action {
+	case "INSERT":
+		auditAction = auditlog.ActionCreate
+	case "DELETE":
+		auditAction = auditlog.ActionDelete
+	}
+
+	entityType := auditlog.EntityUser
+	if entity == "USER_ADDRESS" {
+		entityType = auditlog.EntityUserAddress
+	}
+
 	s.auditSvc.Log(ctx, auditlog.Entry{
-		UserID:     actor.UserID,
-		Module:     auditlog.ModuleUsers,
-		EntityType: entity,
-		EntityID:   entityID,
-		Action:     action,
-		NewValue:   data,
-		IPAddress:  actor.IPAddress,
-		DeviceInfo: actor.UserAgent,
+		UserID:      actor.UserID,
+		Module:      auditlog.ModuleUsers,
+		EntityType:  entityType,
+		EntityID:    entityID,
+		Action:      auditAction,
+		Description: activityType,
+		NewValue:    data,
+		IPAddress:   actor.IPAddress,
+		DeviceInfo:  actor.UserAgent,
 	})
 }
 

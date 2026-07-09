@@ -2,11 +2,6 @@ package nurseries
 
 import "time"
 
-const (
-	actionInsert = "INSERT"
-	actionUpdate = "UPDATE"
-	actionDelete = "DELETE"
-)
 
 type Nursery struct {
 	ID              int64      `json:"id"`

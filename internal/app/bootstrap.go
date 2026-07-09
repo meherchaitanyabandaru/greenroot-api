@@ -99,6 +99,8 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 func (a *App) Close() error {
+	// Drain pending audit writes before closing the DB connection.
+	a.deps.Audit.Close()
 	return errors.Join(a.deps.DB.Close(), a.deps.LogManager.Close())
 }
 

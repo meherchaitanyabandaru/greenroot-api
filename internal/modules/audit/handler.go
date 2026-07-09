@@ -41,7 +41,15 @@ func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, b
 }
 func listReq(r *http.Request) ListRequest {
 	q := r.URL.Query()
-	return ListRequest{Page: intQ(q.Get("page")), PerPage: intQ(q.Get("per_page")), TableName: q.Get("table_name"), Action: q.Get("action_type"), ChangedBy: int64Q(q.Get("changed_by")), RecordID: int64Q(q.Get("record_id"))}
+	return ListRequest{
+		Page:       intQ(q.Get("page")),
+		PerPage:    intQ(q.Get("per_page")),
+		Module:     q.Get("module"),
+		EntityType: q.Get("entity_type"),
+		Action:     q.Get("action_type"),
+		UserID:     int64Q(q.Get("user_id")),
+		RecordID:   int64Q(q.Get("record_id")),
+	}
 }
 func intQ(v string) int     { n, _ := strconv.Atoi(v); return n }
 func int64Q(v string) int64 { n, _ := strconv.ParseInt(v, 10, 64); return n }

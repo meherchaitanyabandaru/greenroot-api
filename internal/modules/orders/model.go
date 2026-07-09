@@ -2,12 +2,6 @@ package orders
 
 import "time"
 
-const (
-	actionInsert = "CREATE"
-	actionUpdate = "UPDATE"
-	actionDelete = "DELETE"
-)
-
 type Order struct {
 	ID                        int64       `json:"id"`
 	OrderCode                 string      `json:"order_code"`
