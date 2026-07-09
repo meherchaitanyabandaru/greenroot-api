@@ -97,7 +97,7 @@ func Load() Config {
 		Database: DatabaseConfig{
 			URL:             getString("DATABASE_URL", ""),
 			MaxOpenConns:    getInt("DB_MAX_OPEN_CONNS", 25),
-			MaxIdleConns:    getInt("DB_MAX_IDLE_CONNS", 25),
+			MaxIdleConns:    getInt("DB_MAX_IDLE_CONNS", 5),
 			ConnMaxLifetime: getDuration("DB_CONN_MAX_LIFETIME", 5*time.Minute),
 			ConnectTimeout:  getDuration("DB_CONNECT_TIMEOUT", 5*time.Second),
 		},

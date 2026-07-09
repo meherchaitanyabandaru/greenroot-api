@@ -5,12 +5,12 @@
 //   - Service.LogSecurity   — auth / security events (login, permission denied …)
 //
 // Design rules:
-//   - Writes are queued on a buffered channel and executed by a single background
-//     goroutine, so callers never block on a DB round-trip.
-//   - If the queue is full, a direct DB write is attempted in a one-shot goroutine
-//     (5 s timeout) so no audit record is silently discarded.
-//   - If that fallback write also fails, the error is logged internally; the
-//     business operation is never failed or slowed.
+//   - Writes are queued on a buffered channel (512) and executed by a single
+//     background goroutine, so callers never block on a DB round-trip.
+//   - If the queue is full, a fallback pool of 4 goroutines attempts a direct DB
+//     write (5 s timeout) so no audit record is silently discarded.
+//   - If all 4 fallback slots are busy the event is dropped and logged at ERROR;
+//     this protects Postgres from an unbounded goroutine storm under heavy load.
 //   - Call Close() after the HTTP server shuts down to drain pending writes.
 package auditlog
 
@@ -31,17 +31,19 @@ type writeJob struct {
 
 // Service writes audit events for both business and security tables.
 type Service struct {
-	db    *sql.DB
-	log   *slog.Logger
-	queue chan writeJob
-	wg    sync.WaitGroup
+	db       *sql.DB
+	log      *slog.Logger
+	queue    chan writeJob
+	fallback chan struct{} // semaphore: caps concurrent fallback writers at 4
+	wg       sync.WaitGroup
 }
 
 func NewService(db *sql.DB, log *slog.Logger) *Service {
 	s := &Service{
-		db:    db,
-		log:   log,
-		queue: make(chan writeJob, 512),
+		db:       db,
+		log:      log,
+		queue:    make(chan writeJob, 512),
+		fallback: make(chan struct{}, 4),
 	}
 	s.wg.Add(1)
 	go s.drain()
@@ -71,15 +73,21 @@ func (s *Service) enqueue(q string, args []any) {
 	select {
 	case s.queue <- writeJob{query: q, args: args}:
 	default:
-		// Queue full — fall back to a direct write in a one-shot goroutine so the
-		// caller is never blocked. If the direct write also fails, log and move on.
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
-				s.log.Error("audit queue full and direct write failed", "error", err)
-			}
-		}()
+		// Primary queue full — try to grab a fallback slot (max 4 concurrent).
+		select {
+		case s.fallback <- struct{}{}:
+			go func() {
+				defer func() { <-s.fallback }()
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
+					s.log.Error("audit fallback write failed", "error", err)
+				}
+			}()
+		default:
+			// All 4 fallback slots busy — drop rather than spawn unbounded goroutines.
+			s.log.Error("audit queue and fallback pool full — event dropped")
+		}
 	}
 }
 
