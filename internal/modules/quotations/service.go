@@ -125,6 +125,18 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQu
 		}
 	}
 
+	// Owner-only: validate pre-assigned manager is an active nursery member.
+	if input.AssignedManagerUserID != nil && *input.AssignedManagerUserID > 0 {
+		if !s.isNurseryOwner(ctx, actor, Quotation{NurseryID: input.NurseryID}) {
+			input.AssignedManagerUserID = nil // non-owners cannot pre-assign
+		} else if input.NurseryID != nil {
+			member, err := s.repository.IsNurseryMember(ctx, *input.NurseryID, *input.AssignedManagerUserID)
+			if err != nil || !member {
+				return Quotation{}, ErrInvalidInput
+			}
+		}
+	}
+
 	createdByName, _ := s.repository.GetUserName(ctx, actor.UserID)
 	q, err := s.repository.Create(ctx, actor.UserID, input, createdByName, nurseryName, nurseryPhone)
 	if err != nil {
@@ -168,6 +180,14 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, inpu
 	if err := s.canManage(ctx, actor, *q); err != nil {
 		return Quotation{}, err
 	}
+	// Exclusive-editor rule: once a quotation is assigned to a manager, only that
+	// manager may edit its content.  The owner regains edit access only after
+	// reassigning the quotation to themselves or removing the assignment.
+	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+		if q.AssignedManagerUserID != nil && *q.AssignedManagerUserID != actor.UserID {
+			return Quotation{}, ErrForbidden
+		}
+	}
 	updated, err := s.repository.Update(ctx, id, input)
 	if err != nil {
 		return Quotation{}, err
@@ -180,6 +200,10 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, id int64) erro
 	q, err := s.repository.FindByID(ctx, id)
 	if err != nil {
 		return err
+	}
+	// Converted quotations are permanently locked — no role may delete them.
+	if q.ConvertedOrderID != nil {
+		return ErrAlreadyConverted
 	}
 	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
 		if err := s.repository.SoftDelete(ctx, id); err != nil {
@@ -217,6 +241,17 @@ func (s *Service) Approve(ctx context.Context, actor ActorContext, quotationID i
 		return Quotation{}, err
 	}
 	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_SENT"})
+	// Notify the buyer if their account is linked.
+	if approved.CustomerUserID != nil {
+		nurseryName := ""
+		if approved.NurseryName != nil {
+			nurseryName = *approved.NurseryName
+		}
+		_ = s.repository.CreateNotification(ctx, *approved.CustomerUserID,
+			"QUOTATION_SENT",
+			"Quotation Ready for Review",
+			fmt.Sprintf("Quotation %s from %s is ready for your review.", approved.QuotationCode, nurseryName))
+	}
 	return *approved, nil
 }
 
@@ -274,6 +309,9 @@ func (s *Service) AssignManager(ctx context.Context, actor ActorContext, quotati
 	if err != nil {
 		return Quotation{}, err
 	}
+	if q.ConvertedOrderID != nil {
+		return Quotation{}, ErrAlreadyConverted
+	}
 	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
 		if !s.isNurseryOwner(ctx, actor, *q) {
 			return Quotation{}, ErrForbidden
@@ -291,6 +329,33 @@ func (s *Service) AssignManager(ctx context.Context, actor ActorContext, quotati
 		return Quotation{}, err
 	}
 	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, req)
+	_ = s.repository.CreateNotification(ctx, req.ManagerUserID,
+		"QUOTATION_ASSIGNED",
+		"Quotation Assigned to You",
+		fmt.Sprintf("You have been assigned to quotation %s.", updated.QuotationCode))
+	return *updated, nil
+}
+
+// UnassignManager removes the assigned manager from a quotation, making it owner-private again.
+// Only the nursery owner or admin may do this.
+func (s *Service) UnassignManager(ctx context.Context, actor ActorContext, quotationID int64) (Quotation, error) {
+	q, err := s.repository.FindByID(ctx, quotationID)
+	if err != nil {
+		return Quotation{}, err
+	}
+	if q.ConvertedOrderID != nil {
+		return Quotation{}, ErrAlreadyConverted
+	}
+	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+		if !s.isNurseryOwner(ctx, actor, *q) {
+			return Quotation{}, ErrForbidden
+		}
+	}
+	updated, err := s.repository.UnassignManager(ctx, quotationID)
+	if err != nil {
+		return Quotation{}, err
+	}
+	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"assigned_manager_user_id": nil})
 	return *updated, nil
 }
 
@@ -311,6 +376,12 @@ func (s *Service) BuyerAccept(ctx context.Context, actor ActorContext, quotation
 		return Quotation{}, err
 	}
 	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_ACCEPTED"})
+	if ownerID, err := s.repository.FindNurseryOwnerID(ctx, quotationID); err == nil {
+		_ = s.repository.CreateNotification(ctx, ownerID,
+			"QUOTATION_ACCEPTED",
+			"Quotation Accepted",
+			fmt.Sprintf("Buyer accepted quotation %s.", updated.QuotationCode))
+	}
 	return *updated, nil
 }
 
@@ -335,7 +406,33 @@ func (s *Service) BuyerReject(ctx context.Context, actor ActorContext, quotation
 		return Quotation{}, err
 	}
 	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_REJECTED", "reason": reason})
+	if ownerID, err := s.repository.FindNurseryOwnerID(ctx, quotationID); err == nil {
+		msg := fmt.Sprintf("Buyer rejected quotation %s.", updated.QuotationCode)
+		if reason != "" {
+			msg += " Reason: " + reason
+		}
+		_ = s.repository.CreateNotification(ctx, ownerID,
+			"QUOTATION_REJECTED",
+			"Quotation Rejected",
+			msg)
+	}
 	return *updated, nil
+}
+
+// RecordDownload records a quotation PDF generation/download event in the audit log.
+// It verifies the actor may view the quotation before writing the record.
+func (s *Service) RecordDownload(ctx context.Context, actor ActorContext, quotationID int64, masked bool) error {
+	q, err := s.repository.FindByID(ctx, quotationID)
+	if err != nil {
+		return err
+	}
+	if err := s.canView(ctx, actor, *q); err != nil {
+		return err
+	}
+	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, auditlog.ActionDownload, map[string]any{
+		"masked": masked,
+	})
+	return nil
 }
 
 // canBuyerAct verifies the actor is the buyer on this quotation.
@@ -403,6 +500,12 @@ func (s *Service) canView(ctx context.Context, actor ActorContext, q Quotation) 
 		if err == nil && owner {
 			return nil
 		}
+		// Manager-only actors: already checked creator and assignee above.
+		// Don't grant access to any other nursery member — they must be explicitly
+		// assigned by the owner to see a quotation they didn't create themselves.
+		if isManagerOnly(actor) {
+			return ErrForbidden
+		}
 		member, err := s.repository.IsNurseryMember(ctx, *q.NurseryID, actor.UserID)
 		if err != nil {
 			return ErrForbidden
@@ -458,8 +561,7 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 		return nil
 	}
 	// Seller perspective: always force scope to the actor's own nursery.
-	// Never trust a client-supplied nursery_id — an owner could otherwise read
-	// another nursery's quotations by passing ?nursery_id=X.
+	// Never trust a client-supplied nursery_id — an owner could read another nursery by passing ?nursery_id=X.
 	if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
 		nurseryID, _ := s.repository.GetOwnedNurseryID(ctx, actor.UserID)
 		if nurseryID == nil && hasRole(actor, "MANAGER") {
@@ -471,6 +573,12 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 		} else {
 			input.NurseryID = 0
 			input.UserID = actor.UserID
+		}
+		// Manager-only: restrict to quotations they created or are assigned to.
+		// Owner (or owner+manager dual-role) always sees the full nursery list.
+		if isManagerOnly(actor) {
+			input.ManagerScopeUserID = actor.UserID
+			input.UnassignedOnly = false // managers never see the "unassigned" owner view
 		}
 		return nil
 	}

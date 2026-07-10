@@ -32,6 +32,7 @@ type Repository interface {
 	SoftDelete(ctx context.Context, id int64) error
 	FindNurseryOwnerID(ctx context.Context, quotationID int64) (int64, error)
 	AssignManager(ctx context.Context, quotationID int64, managerUserID int64) (*Quotation, error)
+	UnassignManager(ctx context.Context, quotationID int64) (*Quotation, error)
 	MarkConverted(ctx context.Context, quotationID int64, orderID int64, byUserID int64) error
 	CreateOrderAndConvert(ctx context.Context, q *Quotation, byUserID int64) (orderID int64, err error)
 	GetNurseryInfo(ctx context.Context, nurseryID int64) (name string, phone string, err error)
@@ -44,6 +45,7 @@ type Repository interface {
 	GetOwnedNurseryID(ctx context.Context, userID int64) (*int64, error)
 	GetManagerNurseryID(ctx context.Context, userID int64) (*int64, error)
 	GetOrderNurseryID(ctx context.Context, orderID int64) (*int64, error)
+	CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error
 }
 
 type PostgresRepository struct {
@@ -120,11 +122,15 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 		INSERT INTO public.quotations (
 			quotation_code, created_by_user_id, created_by_name,
 			nursery_id, nursery_name, nursery_phone,
+			quotation_type,
+			assigned_manager_user_id,
 			recipient_name, recipient_mobile, notes,
 			buyer_nursery_id,
+			customer_user_id,
+			valid_until,
 			total_amount, status, created_at, updated_at
 		)
-		VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),$10,0,$11,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),NULLIF($10,''),NULLIF($11,''),$12,$13,$14,0,$15,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
 		RETURNING quotation_id
 	`
 	var id int64
@@ -135,10 +141,14 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 		int64OrNil(input.NurseryID),
 		stringOrNil(nurseryName),
 		stringOrNil(nurseryPhone),
+		quotationType,
+		int64OrNil(input.AssignedManagerUserID),
 		stringOrEmpty(input.RecipientName),
 		stringOrEmpty(input.RecipientMobile),
 		stringOrEmpty(input.Notes),
 		int64OrNil(input.BuyerNurseryID),
+		int64OrNil(input.CustomerUserID),
+		input.ValidUntil, // nil → NULL; non-nil → stored as-is
 		initialStatus,
 	).Scan(&id); err != nil {
 		return nil, err
@@ -170,13 +180,15 @@ func (r *PostgresRepository) Update(ctx context.Context, id int64, input UpdateQ
 		SET recipient_name    = NULLIF($1,''),
 		    recipient_mobile  = NULLIF($2,''),
 		    notes             = NULLIF($3,''),
+		    valid_until       = COALESCE($4, valid_until),
 		    updated_at        = CURRENT_TIMESTAMP
-		WHERE quotation_id = $4
+		WHERE quotation_id = $5
 	`
 	res, err := tx.ExecContext(ctx, q,
 		stringOrEmpty(input.RecipientName),
 		stringOrEmpty(input.RecipientMobile),
 		stringOrEmpty(input.Notes),
+		input.ValidUntil, // nil keeps existing value; non-nil overwrites
 		id,
 	)
 	if err != nil {
@@ -205,7 +217,7 @@ func (r *PostgresRepository) Update(ctx context.Context, id int64, input UpdateQ
 
 func (r *PostgresRepository) SoftDelete(ctx context.Context, id int64) error {
 	result, err := r.db.ExecContext(ctx,
-		`UPDATE public.quotations SET deleted_at = CURRENT_TIMESTAMP, status = 'DELETED', updated_at = CURRENT_TIMESTAMP WHERE quotation_id = $1 AND deleted_at IS NULL`,
+		`UPDATE public.quotations SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE quotation_id = $1 AND deleted_at IS NULL`,
 		id,
 	)
 	if err != nil {
@@ -241,6 +253,20 @@ func (r *PostgresRepository) AssignManager(ctx context.Context, quotationID int6
 	result, err := r.db.ExecContext(ctx,
 		`UPDATE public.quotations SET assigned_manager_user_id = $2, updated_at = CURRENT_TIMESTAMP WHERE quotation_id = $1 AND deleted_at IS NULL`,
 		quotationID, managerUserID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return nil, ErrNotFound
+	}
+	return r.FindByID(ctx, quotationID)
+}
+
+func (r *PostgresRepository) UnassignManager(ctx context.Context, quotationID int64) (*Quotation, error) {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE public.quotations SET assigned_manager_user_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE quotation_id = $1 AND deleted_at IS NULL`,
+		quotationID,
 	)
 	if err != nil {
 		return nil, err
@@ -340,7 +366,7 @@ func (r *PostgresRepository) Approve(ctx context.Context, id int64, byUserID int
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE public.quotations
 		SET status = 'CUSTOMER_SENT',
-		    valid_until = CURRENT_TIMESTAMP + INTERVAL '15 days',
+		    valid_until = COALESCE(valid_until, CURRENT_TIMESTAMP + INTERVAL '15 days'),
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE quotation_id = $1 AND status = 'CUSTOMER_DRAFT' AND deleted_at IS NULL
 	`, id)
@@ -386,7 +412,9 @@ func (r *PostgresRepository) BuyerAccept(ctx context.Context, id int64, byUserID
 func (r *PostgresRepository) BuyerReject(ctx context.Context, id int64, byUserID int64, reason string) (*Quotation, error) {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE public.quotations
-		SET status = 'CUSTOMER_REJECTED', notes = CASE WHEN $2 <> '' THEN COALESCE(notes || E'\n', '') || $2 ELSE notes END, updated_at = CURRENT_TIMESTAMP
+		SET status = 'CUSTOMER_REJECTED',
+		    rejection_reason = NULLIF($2, ''),
+		    updated_at = CURRENT_TIMESTAMP
 		WHERE quotation_id = $1 AND status = 'CUSTOMER_SENT' AND deleted_at IS NULL
 	`, id, reason)
 	if err != nil {
@@ -609,12 +637,15 @@ func baseSelect() string {
 		       q.created_by_user_id, q.created_by_name,
 		       q.nursery_id, q.nursery_name, q.nursery_phone,
 		       q.customer_user_id, q.assigned_manager_user_id, q.converted_order_id,
-		       q.recipient_name, q.recipient_mobile, q.notes,
+		       q.recipient_name, q.recipient_mobile, q.notes, q.rejection_reason,
 		       COALESCE(q.total_amount, 0), q.status, q.valid_until, q.deleted_at, q.created_at, q.updated_at,
 		       q.buyer_nursery_id,
-		       NULLIF(TRIM(COALESCE(um.first_name, '') || ' ' || COALESCE(um.last_name, '')), '') AS assigned_manager_name
+		       NULLIF(TRIM(COALESCE(um.first_name, '') || ' ' || COALESCE(um.last_name, '')), '') AS assigned_manager_name,
+		       o.order_code AS converted_order_code,
+		       q.converted_at
 		FROM public.quotations q
 		LEFT JOIN public.users um ON um.user_id = q.assigned_manager_user_id
+		LEFT JOIN public.orders o ON o.order_id = q.converted_order_id
 		WHERE q.deleted_at IS NULL
 	`
 }
@@ -665,6 +696,18 @@ func buildWhere(input ListQuotationsRequest) (string, []any) {
 			args = append(args, input.NurseryID)
 			clauses = append(clauses, fmt.Sprintf("q.nursery_id = $%d", len(args)))
 		}
+		// Manager scope: restrict to quotations this manager created or is assigned to.
+		if input.ManagerScopeUserID > 0 {
+			args = append(args, input.ManagerScopeUserID)
+			n := len(args)
+			clauses = append(clauses, fmt.Sprintf(
+				"(q.created_by_user_id = $%d OR q.assigned_manager_user_id = $%d)", n, n,
+			))
+		}
+		// Owner unassigned filter: only quotations with no assigned manager.
+		if input.UnassignedOnly {
+			clauses = append(clauses, "q.assigned_manager_user_id IS NULL")
+		}
 	}
 	if input.Status != "" {
 		args = append(args, input.Status)
@@ -673,6 +716,24 @@ func buildWhere(input ListQuotationsRequest) (string, []any) {
 	if input.Search != "" {
 		args = append(args, "%"+input.Search+"%")
 		clauses = append(clauses, fmt.Sprintf("(q.quotation_code ILIKE $%d OR q.created_by_name ILIKE $%d OR q.recipient_name ILIKE $%d OR q.nursery_name ILIKE $%d)", len(args), len(args), len(args), len(args)))
+	}
+	if input.DateFrom != nil {
+		args = append(args, *input.DateFrom)
+		clauses = append(clauses, fmt.Sprintf("q.created_at >= $%d", len(args)))
+	}
+	if input.DateTo != nil {
+		// Include the full end day by going to start of next day.
+		endOfDay := input.DateTo.AddDate(0, 0, 1)
+		args = append(args, endOfDay)
+		clauses = append(clauses, fmt.Sprintf("q.created_at < $%d", len(args)))
+	}
+	if input.AmountMin != nil {
+		args = append(args, *input.AmountMin)
+		clauses = append(clauses, fmt.Sprintf("q.total_amount >= $%d", len(args)))
+	}
+	if input.AmountMax != nil {
+		args = append(args, *input.AmountMax)
+		clauses = append(clauses, fmt.Sprintf("q.total_amount <= $%d", len(args)))
 	}
 	if len(clauses) == 0 {
 		return "", args
@@ -722,20 +783,24 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 		recipientName         sql.NullString
 		recipientMobile       sql.NullString
 		notes                 sql.NullString
+		rejectionReason       sql.NullString
 		validUntil            sql.NullTime
 		deletedAt             sql.NullTime
 		buyerNurseryID        sql.NullInt64
 		totalAmount           sql.NullString
 		assignedManagerName   sql.NullString
+		convertedOrderCode    sql.NullString
+		convertedAt           sql.NullTime
 	)
 	if err := row.Scan(
 		&q.ID, &q.QuotationCode, &q.QuotationType,
 		&q.CreatedByUserID, &createdByName,
 		&nurseryID, &nurseryName, &nurseryPhone,
 		&customerUserID, &assignedManagerUserID, &convertedOrderID,
-		&recipientName, &recipientMobile, &notes,
+		&recipientName, &recipientMobile, &notes, &rejectionReason,
 		&totalAmount, &q.Status, &validUntil, &deletedAt, &q.CreatedAt, &q.UpdatedAt,
 		&buyerNurseryID, &assignedManagerName,
+		&convertedOrderCode, &convertedAt,
 	); err != nil {
 		return Quotation{}, err
 	}
@@ -751,9 +816,14 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 	q.AssignedManagerUserID = nullableInt64(assignedManagerUserID)
 	q.AssignedManagerName = nullableString(assignedManagerName)
 	q.ConvertedOrderID = nullableInt64(convertedOrderID)
+	q.ConvertedOrderCode = nullableString(convertedOrderCode)
+	if convertedAt.Valid {
+		q.ConvertedAt = &convertedAt.Time
+	}
 	q.RecipientName = nullableString(recipientName)
 	q.RecipientMobile = nullableString(recipientMobile)
 	q.Notes = nullableString(notes)
+	q.RejectionReason = nullableString(rejectionReason)
 	if validUntil.Valid {
 		q.ValidUntil = &validUntil.Time
 	}
@@ -832,4 +902,13 @@ func int64OrNil(v *int64) any {
 func validateItemMath(item QuotationItemRequest) bool {
 	expected := item.Quantity * item.UnitPrice
 	return math.Abs(expected-item.TotalPrice) <= 0.01
+}
+
+func (r *PostgresRepository) CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO public.notifications (user_id, notification_type, title, message, channel, notification_status)
+		 VALUES ($1, $2, $3, $4, 'IN_APP', 'PENDING')`,
+		userID, notifType, title, message,
+	)
+	return err
 }

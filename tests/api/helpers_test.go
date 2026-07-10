@@ -106,6 +106,43 @@ func assertStatus(t *testing.T, resp *http.Response, want int) {
 	}
 }
 
+func putReq(t *testing.T, path string, body any, token string) *http.Response {
+	t.Helper()
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPut, baseURL+path, bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PUT %s: %v", path, err)
+	}
+	return resp
+}
+
+func deleteReq(t *testing.T, path, token string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodDelete, baseURL+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE %s: %v", path, err)
+	}
+	return resp
+}
+
 func url(format string, args ...any) string {
 	return fmt.Sprintf(format, args...)
 }

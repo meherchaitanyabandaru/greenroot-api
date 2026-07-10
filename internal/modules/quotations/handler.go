@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
@@ -168,6 +169,23 @@ func (h *Handler) AssignManager(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, QuotationResponse{Quotation: q})
 }
 
+func (h *Handler) UnassignManager(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	q, err := h.service.UnassignManager(r.Context(), actor, id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, QuotationResponse{Quotation: q})
+}
+
 func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {
@@ -219,6 +237,28 @@ func (h *Handler) ConvertToOrder(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, QuotationResponse{Quotation: q})
 }
 
+func (h *Handler) RecordDownload(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req struct {
+		Masked bool `json:"masked"`
+	}
+	// Body is optional — ignore decode errors (empty body is valid; masked defaults to false).
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	r.Body.Close()
+	if err := h.service.RecordDownload(r.Context(), actor, id, req.Masked); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, bool) {
 	actor, ok := authctx.FromRequest(w, r, h.jwt)
 	if !ok {
@@ -230,14 +270,19 @@ func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, b
 func listRequest(r *http.Request) ListQuotationsRequest {
 	q := r.URL.Query()
 	return ListQuotationsRequest{
-		Page:      intQuery(q.Get("page")),
-		PerPage:   intQuery(q.Get("per_page")),
-		Search:    q.Get("search"),
-		NurseryID: int64Query(q.Get("nursery_id")),
-		Status:    q.Get("status"),
-		SortBy:    q.Get("sort_by"),
-		SortOrder: q.Get("sort_order"),
-		Buying:    q.Get("buying") == "true" || q.Get("buying") == "1",
+		Page:           intQuery(q.Get("page")),
+		PerPage:        intQuery(q.Get("per_page")),
+		Search:         q.Get("search"),
+		NurseryID:      int64Query(q.Get("nursery_id")),
+		Status:         q.Get("status"),
+		SortBy:         q.Get("sort_by"),
+		SortOrder:      q.Get("sort_order"),
+		Buying:         q.Get("buying") == "true" || q.Get("buying") == "1",
+		UnassignedOnly: q.Get("unassigned") == "true" || q.Get("unassigned") == "1",
+		DateFrom:       timeQuery(q.Get("date_from")),
+		DateTo:         timeQuery(q.Get("date_to")),
+		AmountMin:      float64PtrQuery(q.Get("amount_min")),
+		AmountMax:      float64PtrQuery(q.Get("amount_max")),
 	}
 }
 
@@ -267,6 +312,28 @@ func intQuery(v string) int {
 func int64Query(v string) int64 {
 	n, _ := strconv.ParseInt(v, 10, 64)
 	return n
+}
+
+func timeQuery(v string) *time.Time {
+	if v == "" {
+		return nil
+	}
+	t, err := time.Parse("2006-01-02", v)
+	if err != nil {
+		return nil
+	}
+	return &t
+}
+
+func float64PtrQuery(v string) *float64 {
+	if v == "" {
+		return nil
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return nil
+	}
+	return &f
 }
 
 func writeError(w http.ResponseWriter, err error) {

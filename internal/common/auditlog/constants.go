@@ -68,8 +68,9 @@ const (
 	ActionLogin    Action = "LOGIN"
 	ActionLogout   Action = "LOGOUT"
 	ActionAccept   Action = "ACCEPT"
-	ActionRecall   Action = "RECALL"
-	ActionRenew    Action = "RENEW"
+	ActionRecall    Action = "RECALL"
+	ActionDownload  Action = "DOWNLOAD"
+	ActionRenew     Action = "RENEW"
 	ActionBlock    Action = "BLOCK"
 	ActionUnblock  Action = "UNBLOCK"
 )

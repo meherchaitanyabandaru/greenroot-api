@@ -26,8 +26,11 @@ type Quotation struct {
 	RecipientName   *string `json:"recipient_name,omitempty"`
 	RecipientMobile *string `json:"recipient_mobile,omitempty"`
 	// Conversion
-	ConvertedOrderID *int64     `json:"converted_order_id,omitempty"`
+	ConvertedOrderID   *int64     `json:"converted_order_id,omitempty"`
+	ConvertedOrderCode *string    `json:"converted_order_code,omitempty"`
+	ConvertedAt        *time.Time `json:"converted_at,omitempty"`
 	Notes            *string    `json:"notes,omitempty"`
+	RejectionReason  *string    `json:"rejection_reason,omitempty"`
 	TotalAmount      float64    `json:"total_amount"`
 	Status           string     `json:"status"`
 	ValidUntil       *time.Time `json:"valid_until,omitempty"`
