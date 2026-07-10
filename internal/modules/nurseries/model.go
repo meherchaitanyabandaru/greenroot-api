@@ -72,6 +72,15 @@ type UserLink struct {
 	IsActive  bool       `json:"is_active"`
 }
 
+// Customer represents a buyer who accepted a CUSTOMER_INVITE for this nursery.
+type Customer struct {
+	UserID     int64      `json:"user_id"`
+	FirstName  string     `json:"first_name"`
+	Mobile     string     `json:"mobile"`
+	Email      *string    `json:"email,omitempty"`
+	AcceptedAt *time.Time `json:"accepted_at,omitempty"`
+}
+
 type ActorContext struct {
 	UserID    int64
 	Roles     []string

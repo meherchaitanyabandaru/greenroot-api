@@ -18,6 +18,7 @@ type mockRepo struct {
 	addresses map[int64]*Address
 	users     map[int64][]*UserLink
 	nDrivers  map[int64][]*NurseryDriver
+	customers map[int64][]Customer // nurseryID → customers
 
 	nextNurseryID  int64
 	nextAddressID  int64
@@ -35,6 +36,7 @@ func newMock() *mockRepo {
 		addresses: make(map[int64]*Address),
 		users:     make(map[int64][]*UserLink),
 		nDrivers:  make(map[int64][]*NurseryDriver),
+		customers: make(map[int64][]Customer),
 		nextNurseryID:  100,
 		nextAddressID:  200,
 		nextUserLinkID: 300,
@@ -260,6 +262,10 @@ func (m *mockRepo) ListConnectedDrivers(_ context.Context, nurseryID int64) ([]N
 		result = append(result, *nd)
 	}
 	return result, nil
+}
+
+func (m *mockRepo) GetCustomers(_ context.Context, nurseryID int64) ([]Customer, error) {
+	return m.customers[nurseryID], nil
 }
 
 // ─── actors ──────────────────────────────────────────────────────────────────
@@ -670,5 +676,84 @@ func TestApproveDriverConnection_OwnerSuccess(t *testing.T) {
 	}
 	if repo.nDrivers[1][0].ConnectionStatus != "APPROVED" {
 		t.Error("driver connection should be APPROVED")
+	}
+}
+
+// ─── GetCustomers ─────────────────────────────────────────────────────────────
+
+func TestGetCustomers_AdminSuccess(t *testing.T) {
+	repo := newMock()
+	repo.customers[1] = []Customer{
+		{UserID: 20, FirstName: "Ravi", Mobile: "9300000000"},
+		{UserID: 21, FirstName: "Priya", Mobile: "9310000000"},
+	}
+
+	customers, err := svc(repo).GetCustomers(context.Background(), adminActor(1), 1)
+	if err != nil {
+		t.Fatalf("admin should see customers: %v", err)
+	}
+	if len(customers) != 2 {
+		t.Errorf("want 2 customers, got %d", len(customers))
+	}
+}
+
+func TestGetCustomers_OwnerSuccess(t *testing.T) {
+	repo := newMock()
+	repo.owners[10] = 1 // user 10 owns nursery 1
+	repo.customers[1] = []Customer{{UserID: 20, FirstName: "Ravi", Mobile: "9300000000"}}
+
+	customers, err := svc(repo).GetCustomers(context.Background(), ownerActor(10), 1)
+	if err != nil {
+		t.Fatalf("nursery owner should see customers: %v", err)
+	}
+	if len(customers) != 1 {
+		t.Errorf("want 1 customer, got %d", len(customers))
+	}
+	if customers[0].FirstName != "Ravi" {
+		t.Errorf("want Ravi, got %s", customers[0].FirstName)
+	}
+}
+
+func TestGetCustomers_MemberManagerSuccess(t *testing.T) {
+	repo := newMock()
+	repo.members[mkKeyInt(1, 30)] = true // user 30 is a member of nursery 1
+	repo.customers[1] = []Customer{{UserID: 20, FirstName: "Ravi", Mobile: "9300000000"}}
+
+	customers, err := svc(repo).GetCustomers(context.Background(), managerActor(30), 1)
+	if err != nil {
+		t.Fatalf("nursery member should see customers: %v", err)
+	}
+	if len(customers) != 1 {
+		t.Errorf("want 1 customer, got %d", len(customers))
+	}
+}
+
+func TestGetCustomers_NonMemberForbidden(t *testing.T) {
+	repo := newMock()
+	repo.customers[1] = []Customer{{UserID: 20, FirstName: "Ravi", Mobile: "9300000000"}}
+
+	_, err := svc(repo).GetCustomers(context.Background(), ownerActor(99), 1) // user 99 owns nothing
+	if !errors.Is(err, ErrForbidden) {
+		t.Errorf("want ErrForbidden for non-member owner, got %v", err)
+	}
+}
+
+func TestGetCustomers_BuyerForbidden(t *testing.T) {
+	_, err := svc(newMock()).GetCustomers(context.Background(), buyerActor(20), 1)
+	if !errors.Is(err, ErrForbidden) {
+		t.Errorf("want ErrForbidden for buyer, got %v", err)
+	}
+}
+
+func TestGetCustomers_EmptyListOK(t *testing.T) {
+	repo := newMock()
+	repo.owners[10] = 1
+
+	customers, err := svc(repo).GetCustomers(context.Background(), ownerActor(10), 1)
+	if err != nil {
+		t.Fatalf("should return empty list, not error: %v", err)
+	}
+	if len(customers) != 0 {
+		t.Errorf("want 0 customers, got %d", len(customers))
 	}
 }

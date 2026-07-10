@@ -48,5 +48,8 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Get("/{id}/drivers", m.handler.ListDrivers)
 		r.Post("/{id}/drivers", m.handler.ConnectDriver)
 		r.Post("/{id}/drivers/{driverUserId}/approve", m.handler.ApproveDriver)
+
+		// Customers
+		r.Get("/{id}/customers", m.handler.GetCustomers)
 	})
 }

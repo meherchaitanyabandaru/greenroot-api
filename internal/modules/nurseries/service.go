@@ -325,6 +325,23 @@ func (s *Service) AddUser(ctx context.Context, actor ActorContext, nurseryID int
 	return *user, nil
 }
 
+// GetCustomers returns buyers who accepted a CUSTOMER_INVITE for a nursery.
+// ADMIN/SUPER_ADMIN see all; NURSERY_OWNER must own it; MANAGER must be a member.
+func (s *Service) GetCustomers(ctx context.Context, actor ActorContext, nurseryID int64) ([]Customer, error) {
+	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+		return s.repository.GetCustomers(ctx, nurseryID)
+	}
+	isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
+	if isOwner {
+		return s.repository.GetCustomers(ctx, nurseryID)
+	}
+	isMember, _ := s.repository.IsNurseryMember(ctx, nurseryID, actor.UserID)
+	if isMember {
+		return s.repository.GetCustomers(ctx, nurseryID)
+	}
+	return nil, ErrForbidden
+}
+
 func (s *Service) RemoveUser(ctx context.Context, actor ActorContext, nurseryID int64, userID int64) error {
 	if !canManageNurseries(actor) {
 		return ErrForbidden

@@ -375,6 +375,23 @@ func (h *Handler) ApproveDriver(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, MessageResponse{Message: "Driver connection approved"})
 }
 
+func (h *Handler) GetCustomers(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	nurseryID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	customers, err := h.service.GetCustomers(r.Context(), actor, nurseryID)
+	if err != nil {
+		writeNurseriesError(w, err)
+		return
+	}
+	response.OK(w, CustomersResponse{Customers: customers})
+}
+
 func (h *Handler) RemoveUser(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {

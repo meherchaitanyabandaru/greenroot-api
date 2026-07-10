@@ -39,6 +39,7 @@ type Repository interface {
 	ConnectDriver(ctx context.Context, nurseryID int64, driverUserID int64, invitedByUserID int64) (*NurseryDriver, error)
 	ApproveDriverConnection(ctx context.Context, nurseryID int64, driverUserID int64, approvedByUserID int64) error
 	ListConnectedDrivers(ctx context.Context, nurseryID int64) ([]NurseryDriver, error)
+	GetCustomers(ctx context.Context, nurseryID int64) ([]Customer, error)
 }
 
 type PostgresRepository struct {
@@ -678,6 +679,39 @@ func (r *PostgresRepository) ListByUserID(ctx context.Context, userID int64) ([]
 	return nurseries, rows.Err()
 }
 
+
+// GetCustomers returns all buyers who have accepted a CUSTOMER_INVITE for this nursery.
+func (r *PostgresRepository) GetCustomers(ctx context.Context, nurseryID int64) ([]Customer, error) {
+	const query = `
+		SELECT u.user_id, u.first_name, u.mobile, u.email, i.accepted_at
+		FROM public.invites i
+		JOIN public.users u ON u.user_id = i.accepted_by_user_id
+		WHERE i.nursery_id = $1
+		  AND i.invite_type = 'CUSTOMER_INVITE'
+		  AND i.status = 'ACCEPTED'
+		ORDER BY i.accepted_at DESC
+	`
+	rows, err := r.db.QueryContext(ctx, query, nurseryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	customers := make([]Customer, 0)
+	for rows.Next() {
+		var c Customer
+		var email sql.NullString
+		var acceptedAt sql.NullTime
+		if err := rows.Scan(&c.UserID, &c.FirstName, &c.Mobile, &email, &acceptedAt); err != nil {
+			return nil, err
+		}
+		c.Email = nullableString(email)
+		if acceptedAt.Valid {
+			c.AcceptedAt = &acceptedAt.Time
+		}
+		customers = append(customers, c)
+	}
+	return customers, rows.Err()
+}
 
 func buildNurseryWhere(input ListNurseriesRequest) (string, []any) {
 	clauses := []string{"COALESCE(n.status::text, '') <> 'DELETED'"}
