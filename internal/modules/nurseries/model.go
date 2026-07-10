@@ -2,7 +2,6 @@ package nurseries
 
 import "time"
 
-
 type Nursery struct {
 	ID              int64      `json:"id"`
 	Code            *string    `json:"code,omitempty"`
@@ -61,6 +60,8 @@ type UserLink struct {
 	NurseryID int64      `json:"nursery_id"`
 	UserID    int64      `json:"user_id"`
 	FirstName string     `json:"first_name"`
+	LastName  *string    `json:"last_name,omitempty"`
+	FullName  string     `json:"full_name"`
 	Mobile    string     `json:"mobile"`
 	Email     *string    `json:"email,omitempty"`
 	RoleID    int16      `json:"role_id,omitempty"`
@@ -76,6 +77,8 @@ type UserLink struct {
 type Customer struct {
 	UserID     int64      `json:"user_id"`
 	FirstName  string     `json:"first_name"`
+	LastName   *string    `json:"last_name,omitempty"`
+	FullName   string     `json:"full_name"`
 	Mobile     string     `json:"mobile"`
 	Email      *string    `json:"email,omitempty"`
 	AcceptedAt *time.Time `json:"accepted_at,omitempty"`

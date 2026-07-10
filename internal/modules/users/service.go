@@ -19,6 +19,8 @@ var (
 	ErrInvalidAddress = errors.New("invalid address")
 )
 
+const defaultUserFirstName = "GreenRoot"
+
 type Service struct {
 	repository Repository
 	storage    *platformstorage.Client
@@ -52,16 +54,17 @@ func (s *Service) UpdateMe(ctx context.Context, actor ActorContext, input Update
 		}
 	}
 
-	// Lock fields that are already set — once a user fills a field it cannot
-	// be changed, even via direct API calls.
+	// Lock real profile fields once a user fills them. The OTP placeholder
+	// first name can still be replaced during profile completion.
 	current, err := s.repository.FindUserByID(ctx, actor.UserID)
 	if err != nil {
 		return User{}, err
 	}
-	if current.FirstName != "" {
+	firstNameLocked := isLockedName(current.FirstName)
+	if firstNameLocked {
 		input.FirstName = current.FirstName
 	}
-	if current.LastName != nil && *current.LastName != "" {
+	if firstNameLocked && current.LastName != nil && *current.LastName != "" {
 		input.LastName = current.LastName
 	}
 	if current.Gender != nil && *current.Gender != "" {
@@ -85,6 +88,11 @@ func (s *Service) UpdateMe(ctx context.Context, actor ActorContext, input Update
 	})
 
 	return *user, nil
+}
+
+func isLockedName(name string) bool {
+	name = strings.TrimSpace(name)
+	return name != "" && !strings.EqualFold(name, defaultUserFirstName)
 }
 
 func (s *Service) UploadAvatar(ctx context.Context, actor ActorContext, data []byte, contentType string, ext string) (User, error) {

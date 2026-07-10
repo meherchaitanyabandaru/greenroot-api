@@ -55,6 +55,30 @@ type QuotationItem struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+type QuotationVerification struct {
+	VerificationID int64      `json:"verification_id"`
+	QuotationID    int64      `json:"quotation_id"`
+	Token          string     `json:"token"`
+	Status         string     `json:"status"` // ACTIVE | REVOKED
+	CreatedAt      time.Time  `json:"created_at"`
+	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
+	RevokedBy      *int64     `json:"revoked_by,omitempty"`
+}
+
+type QuotationDocument struct {
+	DocID           int64     `json:"doc_id"`
+	QuotationID     int64     `json:"quotation_id"`
+	Version         int       `json:"version"`
+	ObjectKey       string    `json:"object_key"`
+	SHA256Hash      string    `json:"sha256_hash"`
+	MimeType        string    `json:"mime_type"`
+	FileSize        int64     `json:"file_size"`
+	GeneratedBy     *int64    `json:"generated_by,omitempty"`
+	GeneratedByName *string   `json:"generated_by_name,omitempty"`
+	IsCurrent       bool      `json:"is_current"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
 type ActorContext struct {
 	UserID    int64
 	Roles     []string

@@ -48,6 +48,16 @@ type Repository interface {
 	GetManagerNurseryID(ctx context.Context, userID int64) (*int64, error)
 	GetOrderNurseryID(ctx context.Context, orderID int64) (*int64, error)
 	CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error
+	// Document methods
+	CreateDocument(ctx context.Context, doc QuotationDocument) (*QuotationDocument, error)
+	GetCurrentDocument(ctx context.Context, quotationID int64) (*QuotationDocument, error)
+	ListDocuments(ctx context.Context, quotationID int64) ([]QuotationDocument, error)
+	MarkDocumentsNotCurrent(ctx context.Context, quotationID int64) error
+	// Verification token methods
+	GetActiveVerificationToken(ctx context.Context, quotationID int64) (*QuotationVerification, error)
+	GetVerificationByToken(ctx context.Context, token string) (*QuotationVerification, error)
+	CreateVerificationToken(ctx context.Context, quotationID int64, token string) (*QuotationVerification, error)
+	RevokeVerificationTokens(ctx context.Context, quotationID int64, revokedByUserID int64) error
 }
 
 type PostgresRepository struct {
@@ -964,6 +974,170 @@ func (r *PostgresRepository) IsNurseryCustomer(ctx context.Context, nurseryID in
 func validateItemMath(item QuotationItemRequest) bool {
 	expected := item.Quantity * item.UnitPrice
 	return math.Abs(expected-item.TotalPrice) <= 0.01
+}
+
+func (r *PostgresRepository) GetActiveVerificationToken(ctx context.Context, quotationID int64) (*QuotationVerification, error) {
+	const q = `
+		SELECT verification_id, quotation_id, token, status, created_at, revoked_at, revoked_by
+		FROM public.quotation_verifications
+		WHERE quotation_id = $1 AND status = 'ACTIVE'
+	`
+	return scanVerification(r.db.QueryRowContext(ctx, q, quotationID))
+}
+
+func (r *PostgresRepository) GetVerificationByToken(ctx context.Context, token string) (*QuotationVerification, error) {
+	const q = `
+		SELECT verification_id, quotation_id, token, status, created_at, revoked_at, revoked_by
+		FROM public.quotation_verifications
+		WHERE token = $1
+	`
+	return scanVerification(r.db.QueryRowContext(ctx, q, token))
+}
+
+func (r *PostgresRepository) CreateVerificationToken(ctx context.Context, quotationID int64, token string) (*QuotationVerification, error) {
+	const q = `
+		INSERT INTO public.quotation_verifications (quotation_id, token, status)
+		VALUES ($1, $2, 'ACTIVE')
+		RETURNING verification_id, quotation_id, token, status, created_at, revoked_at, revoked_by
+	`
+	return scanVerification(r.db.QueryRowContext(ctx, q, quotationID, token))
+}
+
+func (r *PostgresRepository) RevokeVerificationTokens(ctx context.Context, quotationID int64, revokedByUserID int64) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE public.quotation_verifications
+		SET status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP, revoked_by = $2
+		WHERE quotation_id = $1 AND status = 'ACTIVE'
+	`, quotationID, revokedByUserID)
+	return err
+}
+
+func scanVerification(row interface{ Scan(dest ...any) error }) (*QuotationVerification, error) {
+	var v QuotationVerification
+	var revokedAt sql.NullTime
+	var revokedBy sql.NullInt64
+	err := row.Scan(&v.VerificationID, &v.QuotationID, &v.Token, &v.Status, &v.CreatedAt, &revokedAt, &revokedBy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if revokedAt.Valid {
+		v.RevokedAt = &revokedAt.Time
+	}
+	if revokedBy.Valid {
+		v.RevokedBy = &revokedBy.Int64
+	}
+	return &v, nil
+}
+
+func (r *PostgresRepository) CreateDocument(ctx context.Context, doc QuotationDocument) (*QuotationDocument, error) {
+	const q = `
+		INSERT INTO public.quotation_documents
+			(quotation_id, version, object_key, sha256_hash, mime_type, file_size, generated_by, generated_by_name, is_current)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)
+		RETURNING doc_id, quotation_id, version, object_key, sha256_hash, mime_type, file_size,
+		          generated_by, generated_by_name, is_current, created_at
+	`
+	var d QuotationDocument
+	var generatedBy sql.NullInt64
+	var generatedByName sql.NullString
+	if doc.GeneratedBy != nil {
+		generatedBy = sql.NullInt64{Int64: *doc.GeneratedBy, Valid: true}
+	}
+	if doc.GeneratedByName != nil {
+		generatedByName = sql.NullString{String: *doc.GeneratedByName, Valid: true}
+	}
+	err := r.db.QueryRowContext(ctx, q,
+		doc.QuotationID, doc.Version, doc.ObjectKey, doc.SHA256Hash,
+		doc.MimeType, doc.FileSize, generatedBy, generatedByName,
+	).Scan(
+		&d.DocID, &d.QuotationID, &d.Version, &d.ObjectKey, &d.SHA256Hash,
+		&d.MimeType, &d.FileSize, &generatedBy, &generatedByName, &d.IsCurrent, &d.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if generatedBy.Valid {
+		d.GeneratedBy = &generatedBy.Int64
+	}
+	if generatedByName.Valid {
+		d.GeneratedByName = &generatedByName.String
+	}
+	return &d, nil
+}
+
+func (r *PostgresRepository) GetCurrentDocument(ctx context.Context, quotationID int64) (*QuotationDocument, error) {
+	const q = `
+		SELECT doc_id, quotation_id, version, object_key, sha256_hash, mime_type, file_size,
+		       generated_by, generated_by_name, is_current, created_at
+		FROM public.quotation_documents
+		WHERE quotation_id = $1 AND is_current = TRUE
+	`
+	var d QuotationDocument
+	var generatedBy sql.NullInt64
+	var generatedByName sql.NullString
+	err := r.db.QueryRowContext(ctx, q, quotationID).Scan(
+		&d.DocID, &d.QuotationID, &d.Version, &d.ObjectKey, &d.SHA256Hash,
+		&d.MimeType, &d.FileSize, &generatedBy, &generatedByName, &d.IsCurrent, &d.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if generatedBy.Valid {
+		d.GeneratedBy = &generatedBy.Int64
+	}
+	if generatedByName.Valid {
+		d.GeneratedByName = &generatedByName.String
+	}
+	return &d, nil
+}
+
+func (r *PostgresRepository) ListDocuments(ctx context.Context, quotationID int64) ([]QuotationDocument, error) {
+	const q = `
+		SELECT doc_id, quotation_id, version, object_key, sha256_hash, mime_type, file_size,
+		       generated_by, generated_by_name, is_current, created_at
+		FROM public.quotation_documents
+		WHERE quotation_id = $1
+		ORDER BY version DESC
+	`
+	rows, err := r.db.QueryContext(ctx, q, quotationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	docs := make([]QuotationDocument, 0)
+	for rows.Next() {
+		var d QuotationDocument
+		var generatedBy sql.NullInt64
+		var generatedByName sql.NullString
+		if err := rows.Scan(
+			&d.DocID, &d.QuotationID, &d.Version, &d.ObjectKey, &d.SHA256Hash,
+			&d.MimeType, &d.FileSize, &generatedBy, &generatedByName, &d.IsCurrent, &d.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if generatedBy.Valid {
+			d.GeneratedBy = &generatedBy.Int64
+		}
+		if generatedByName.Valid {
+			d.GeneratedByName = &generatedByName.String
+		}
+		docs = append(docs, d)
+	}
+	return docs, rows.Err()
+}
+
+func (r *PostgresRepository) MarkDocumentsNotCurrent(ctx context.Context, quotationID int64) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE public.quotation_documents SET is_current = FALSE WHERE quotation_id = $1 AND is_current = TRUE`,
+		quotationID,
+	)
+	return err
 }
 
 func (r *PostgresRepository) CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error {

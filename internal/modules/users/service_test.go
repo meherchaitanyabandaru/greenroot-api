@@ -178,6 +178,26 @@ func TestUpdateMe_Success(t *testing.T) {
 	}
 }
 
+func TestUpdateMe_ReplacesDefaultGreenRootFirstName(t *testing.T) {
+	repo := newMock()
+	repo.seedUser(10, "GreenRoot", "9300000000")
+	lastName := "Kumar"
+
+	user, err := svc(repo).UpdateMe(context.Background(), buyerActor(10), UpdateProfileRequest{
+		FirstName: "Ravi",
+		LastName:  &lastName,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if user.FirstName != "Ravi" {
+		t.Fatalf("default first name was not replaced, got %q", user.FirstName)
+	}
+	if user.LastName == nil || *user.LastName != "Kumar" {
+		t.Fatalf("last name was not saved: %v", user.LastName)
+	}
+}
+
 func TestUpdateMe_EmptyFirstNameInvalid(t *testing.T) {
 	repo := newMock()
 	// User with no first name set — empty first_name in request should fail

@@ -2,13 +2,18 @@ package quotations
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 )
 
 var (
@@ -18,7 +23,75 @@ var (
 	ErrCustomerRequired  = errors.New("customer information required for customer quotations")
 	ErrInvalidTransition = errors.New("action not allowed in current quotation status")
 	ErrQuotationExpired  = errors.New("quotation has expired")
+	ErrDocumentNotFound  = errors.New("no official PDF document found for this quotation")
+	ErrFileTooLarge      = errors.New("file exceeds maximum allowed size")
+	ErrInvalidPDF        = errors.New("file is not a valid PDF")
+	ErrRateLimited       = errors.New("too many requests")
 )
+
+const maxPDFSize = 10 * 1024 * 1024 // 10 MB
+
+// ── In-memory sliding-window rate limiter for public verification endpoint ────
+
+type ipRateLimiter struct {
+	mu     sync.Mutex
+	hits   map[string][]time.Time
+	window time.Duration
+	max    int
+}
+
+func newIPRateLimiter(window time.Duration, max int) *ipRateLimiter {
+	rl := &ipRateLimiter{hits: make(map[string][]time.Time), window: window, max: max}
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		for range ticker.C {
+			rl.cleanup()
+		}
+	}()
+	return rl
+}
+
+func (rl *ipRateLimiter) Allow(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	cutoff := now.Add(-rl.window)
+	hits := rl.hits[ip]
+	valid := hits[:0]
+	for _, h := range hits {
+		if h.After(cutoff) {
+			valid = append(valid, h)
+		}
+	}
+	if len(valid) >= rl.max {
+		rl.hits[ip] = valid
+		return false
+	}
+	rl.hits[ip] = append(valid, now)
+	return true
+}
+
+func (rl *ipRateLimiter) cleanup() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	cutoff := time.Now().Add(-rl.window)
+	for k, hits := range rl.hits {
+		valid := hits[:0]
+		for _, h := range hits {
+			if h.After(cutoff) {
+				valid = append(valid, h)
+			}
+		}
+		if len(valid) == 0 {
+			delete(rl.hits, k)
+		} else {
+			rl.hits[k] = valid
+		}
+	}
+}
+
+// publicVerifyLimiter: 30 requests per IP per 10 minutes.
+var publicVerifyLimiter = newIPRateLimiter(10*time.Minute, 30)
 
 var nonDigit = regexp.MustCompile(`\D`)
 
@@ -31,10 +104,12 @@ var editableStatuses = map[string]bool{
 type Service struct {
 	repository Repository
 	auditSvc   *auditlog.Service
+	storage    *storage.Client
+	webBaseURL string // e.g. "https://app.greenroot.in" — used to build QR verify URLs
 }
 
-func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
-	return &Service{repository: repository, auditSvc: auditSvc}
+func NewService(repository Repository, auditSvc *auditlog.Service, storageCli *storage.Client, webBaseURL string) *Service {
+	return &Service{repository: repository, auditSvc: auditSvc, storage: storageCli, webBaseURL: webBaseURL}
 }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListQuotationsRequest) ([]Quotation, Pagination, error) {
@@ -692,6 +767,332 @@ func totalPages(total int64, perPage int) int {
 		return 0
 	}
 	return int((total + int64(perPage) - 1) / int64(perPage))
+}
+
+// ── Verification token methods ────────────────────────────────────────────────
+
+// GetOrCreateVerifyToken returns the existing ACTIVE token for a quotation,
+// creating one if none exists. Only owner and manager may call this.
+func (s *Service) GetOrCreateVerifyToken(ctx context.Context, actor ActorContext, quotationID int64) (VerifyTokenResponse, error) {
+	q, err := s.repository.FindByID(ctx, quotationID)
+	if err != nil {
+		return VerifyTokenResponse{}, err
+	}
+	if err := s.canManage(ctx, actor, *q); err != nil {
+		return VerifyTokenResponse{}, err
+	}
+
+	existing, err := s.repository.GetActiveVerificationToken(ctx, quotationID)
+	if err != nil {
+		return VerifyTokenResponse{}, err
+	}
+	if existing != nil {
+		return VerifyTokenResponse{
+			Token:     existing.Token,
+			VerifyURL: s.verifyURL(existing.Token),
+			CreatedAt: existing.CreatedAt,
+		}, nil
+	}
+
+	token, err := generateToken()
+	if err != nil {
+		return VerifyTokenResponse{}, fmt.Errorf("generate token: %w", err)
+	}
+	created, err := s.repository.CreateVerificationToken(ctx, quotationID, token)
+	if err != nil {
+		return VerifyTokenResponse{}, fmt.Errorf("store token: %w", err)
+	}
+	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, auditlog.ActionCreate,
+		map[string]any{"event": "verify_token_created", "token_prefix": token[:8]})
+	return VerifyTokenResponse{
+		Token:     created.Token,
+		VerifyURL: s.verifyURL(created.Token),
+		CreatedAt: created.CreatedAt,
+	}, nil
+}
+
+// RevokeAndRegenerateToken revokes the current active token and issues a new one.
+// Only the nursery owner may call this.
+func (s *Service) RevokeAndRegenerateToken(ctx context.Context, actor ActorContext, quotationID int64) (VerifyTokenResponse, error) {
+	q, err := s.repository.FindByID(ctx, quotationID)
+	if err != nil {
+		return VerifyTokenResponse{}, err
+	}
+	if !s.isNurseryOwner(ctx, actor, *q) {
+		return VerifyTokenResponse{}, ErrForbidden
+	}
+
+	if err := s.repository.RevokeVerificationTokens(ctx, quotationID, actor.UserID); err != nil {
+		return VerifyTokenResponse{}, fmt.Errorf("revoke token: %w", err)
+	}
+	token, err := generateToken()
+	if err != nil {
+		return VerifyTokenResponse{}, fmt.Errorf("generate token: %w", err)
+	}
+	created, err := s.repository.CreateVerificationToken(ctx, quotationID, token)
+	if err != nil {
+		return VerifyTokenResponse{}, fmt.Errorf("store token: %w", err)
+	}
+	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, auditlog.ActionUpdate,
+		map[string]any{"event": "verify_token_revoked_and_regenerated", "token_prefix": token[:8]})
+	return VerifyTokenResponse{
+		Token:     created.Token,
+		VerifyURL: s.verifyURL(created.Token),
+		CreatedAt: created.CreatedAt,
+	}, nil
+}
+
+// PublicVerify is the unauthenticated endpoint for QR code scans.
+// Returns only safe public fields — never reveals nursery name, customer, prices, or hash.
+func (s *Service) PublicVerify(ctx context.Context, token string, remoteIP string) (PublicVerifyResponse, error) {
+	if !publicVerifyLimiter.Allow(remoteIP) {
+		return PublicVerifyResponse{}, ErrRateLimited
+	}
+
+	v, err := s.repository.GetVerificationByToken(ctx, token)
+	if err != nil {
+		return PublicVerifyResponse{}, err
+	}
+
+	now := time.Now()
+
+	// Audit the scan (no user ID — public access).
+	if s.auditSvc != nil {
+		s.auditSvc.Log(ctx, auditlog.Entry{
+			Module:     auditlog.ModuleQuotations,
+			EntityType: auditlog.EntityQuotation,
+			Action:     "QR_SCAN",
+			IPAddress:  remoteIP,
+			NewValue:   map[string]any{"token_prefix": token[:min(8, len(token))], "found": v != nil},
+		})
+	}
+
+	if v == nil || v.Status == "REVOKED" {
+		return PublicVerifyResponse{
+			Authenticity:      "INVALID",
+			QuotationStatus:   "UNKNOWN",
+			DocumentIntegrity: "UNVERIFIED",
+			VerifiedAt:        now,
+		}, nil
+	}
+
+	q, err := s.repository.FindByID(ctx, v.QuotationID)
+	if err != nil {
+		return PublicVerifyResponse{}, err
+	}
+
+	// Determine quotation status (offer state, independent of authenticity).
+	quotationStatus := publicQuotationStatus(*q)
+
+	// Document integrity: check if an official PDF has been stored.
+	doc, _ := s.repository.GetCurrentDocument(ctx, v.QuotationID)
+	documentIntegrity := "UNVERIFIED"
+	if doc != nil {
+		documentIntegrity = "UNMODIFIED"
+	}
+
+	return PublicVerifyResponse{
+		QuotationCode:     q.QuotationCode,
+		Authenticity:      "VERIFIED",
+		QuotationStatus:   quotationStatus,
+		DocumentIntegrity: documentIntegrity,
+		IssuedAt:          q.CreatedAt,
+		ValidUntil:        q.ValidUntil,
+		VerifiedAt:        now,
+	}, nil
+}
+
+// GetByToken returns the full quotation for authenticated users who are the
+// nursery owner (seller) or the customer (buyer). All other roles get 403.
+func (s *Service) GetByToken(ctx context.Context, actor ActorContext, token string) (Quotation, error) {
+	v, err := s.repository.GetVerificationByToken(ctx, token)
+	if err != nil {
+		return Quotation{}, err
+	}
+	if v == nil {
+		return Quotation{}, ErrNotFound
+	}
+
+	q, err := s.repository.FindByID(ctx, v.QuotationID)
+	if err != nil {
+		return Quotation{}, err
+	}
+
+	// Strict two-party RBAC: only the nursery owner (seller) or the buyer.
+	isOwner := s.isNurseryOwner(ctx, actor, *q)
+	isBuyer := q.CustomerUserID != nil && *q.CustomerUserID == actor.UserID
+	if !isOwner && !isBuyer {
+		s.audit(ctx, actor, auditlog.EntityQuotation, q.ID, "UNAUTHORIZED_VIEW_ATTEMPT",
+			map[string]any{"token_prefix": token[:min(8, len(token))]})
+		return Quotation{}, ErrForbidden
+	}
+
+	s.audit(ctx, actor, auditlog.EntityQuotation, q.ID, auditlog.ActionDownload,
+		map[string]any{"event": "full_view_by_token"})
+	return *q, nil
+}
+
+func (s *Service) verifyURL(token string) string {
+	if s.webBaseURL == "" {
+		return token
+	}
+	return s.webBaseURL + "/verify/" + token
+}
+
+func generateToken() (string, error) {
+	b := make([]byte, 32) // 256-bit entropy
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// publicQuotationStatus maps the internal quotation status to the public-facing label.
+// "Expired" means the offer window has passed — not that the document is invalid.
+func publicQuotationStatus(q Quotation) string {
+	switch q.Status {
+	case "CUSTOMER_SENT":
+		if q.ValidUntil != nil && time.Now().After(*q.ValidUntil) {
+			return "EXPIRED"
+		}
+		return "ACTIVE"
+	case "CUSTOMER_ACCEPTED":
+		return "ACTIVE"
+	case "CUSTOMER_REJECTED", "INTERNAL_DRAFT", "CUSTOMER_DRAFT":
+		return "CANCELLED"
+	case "CONVERTED":
+		return "CONVERTED"
+	default:
+		return "CANCELLED"
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// ── Document methods ──────────────────────────────────────────────────────────
+
+// UploadDocument stores an official PDF for a quotation in MinIO and records metadata.
+// If the quotation hasn't changed since the last upload, the existing document is reused.
+// A new version is created when quotation.updated_at is newer than the current document.
+func (s *Service) UploadDocument(ctx context.Context, actor ActorContext, quotationID int64, pdfBytes []byte) (QuotationDocument, string, error) {
+	if int64(len(pdfBytes)) > maxPDFSize {
+		return QuotationDocument{}, "", ErrFileTooLarge
+	}
+
+	q, err := s.repository.FindByID(ctx, quotationID)
+	if err != nil {
+		return QuotationDocument{}, "", err
+	}
+	// Admin/super-admin = read-only; drivers/buyers cannot upload
+	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") || hasRole(actor, "DRIVER") {
+		return QuotationDocument{}, "", ErrForbidden
+	}
+	if err := s.canManage(ctx, actor, *q); err != nil {
+		return QuotationDocument{}, "", err
+	}
+
+	// Idempotency: reuse existing PDF if quotation data hasn't changed since last upload.
+	currentDoc, err := s.repository.GetCurrentDocument(ctx, quotationID)
+	if err != nil {
+		return QuotationDocument{}, "", err
+	}
+	if currentDoc != nil && !q.UpdatedAt.After(currentDoc.CreatedAt) {
+		url, _ := s.storage.PresignGet(ctx, storage.BucketQuotationPDFs, currentDoc.ObjectKey, time.Hour)
+		return *currentDoc, url, nil
+	}
+
+	hash := sha256.Sum256(pdfBytes)
+	hashHex := hex.EncodeToString(hash[:])
+
+	version := 1
+	if currentDoc != nil {
+		version = currentDoc.Version + 1
+		if err := s.repository.MarkDocumentsNotCurrent(ctx, quotationID); err != nil {
+			return QuotationDocument{}, "", fmt.Errorf("mark old documents: %w", err)
+		}
+	}
+
+	nurseryID := int64(0)
+	if q.NurseryID != nil {
+		nurseryID = *q.NurseryID
+	}
+	objectKey := fmt.Sprintf("quotations/%d/%d/quotation-v%d.pdf", nurseryID, quotationID, version)
+
+	if _, err := s.storage.PutObject(ctx, storage.BucketQuotationPDFs, objectKey, "application/pdf", pdfBytes); err != nil {
+		return QuotationDocument{}, "", fmt.Errorf("upload PDF to storage: %w", err)
+	}
+
+	generatedByName, _ := s.repository.GetUserName(ctx, actor.UserID)
+	doc := QuotationDocument{
+		QuotationID:     quotationID,
+		Version:         version,
+		ObjectKey:       objectKey,
+		SHA256Hash:      hashHex,
+		MimeType:        "application/pdf",
+		FileSize:        int64(len(pdfBytes)),
+		GeneratedBy:     &actor.UserID,
+		GeneratedByName: &generatedByName,
+		IsCurrent:       true,
+	}
+	created, err := s.repository.CreateDocument(ctx, doc)
+	if err != nil {
+		return QuotationDocument{}, "", fmt.Errorf("store document metadata: %w", err)
+	}
+
+	url, _ := s.storage.PresignGet(ctx, storage.BucketQuotationPDFs, objectKey, time.Hour)
+
+	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, auditlog.ActionUpload, map[string]any{
+		"doc_id":  created.DocID,
+		"version": version,
+		"sha256":  hashHex,
+		"size":    created.FileSize,
+	})
+
+	return *created, url, nil
+}
+
+// GetCurrentDocument returns the current official PDF for a quotation + a 1-hour presigned GET URL.
+func (s *Service) GetCurrentDocument(ctx context.Context, actor ActorContext, quotationID int64) (QuotationDocument, string, error) {
+	q, err := s.repository.FindByID(ctx, quotationID)
+	if err != nil {
+		return QuotationDocument{}, "", err
+	}
+	if err := s.canView(ctx, actor, *q); err != nil {
+		return QuotationDocument{}, "", err
+	}
+
+	doc, err := s.repository.GetCurrentDocument(ctx, quotationID)
+	if err != nil {
+		return QuotationDocument{}, "", err
+	}
+	if doc == nil {
+		return QuotationDocument{}, "", ErrDocumentNotFound
+	}
+
+	url, err := s.storage.PresignGet(ctx, storage.BucketQuotationPDFs, doc.ObjectKey, time.Hour)
+	if err != nil {
+		return *doc, "", fmt.Errorf("presign URL: %w", err)
+	}
+	return *doc, url, nil
+}
+
+// ListDocuments returns all PDF versions for a quotation (owner and admin only).
+func (s *Service) ListDocuments(ctx context.Context, actor ActorContext, quotationID int64) ([]QuotationDocument, error) {
+	q, err := s.repository.FindByID(ctx, quotationID)
+	if err != nil {
+		return nil, err
+	}
+	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+		if !s.isNurseryOwner(ctx, actor, *q) {
+			return nil, ErrForbidden
+		}
+	}
+	return s.repository.ListDocuments(ctx, quotationID)
 }
 
 func (s *Service) audit(ctx context.Context, actor ActorContext, entityType string, entityID int64, action auditlog.Action, newValue any) {

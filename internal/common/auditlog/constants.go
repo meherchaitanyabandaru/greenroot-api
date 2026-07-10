@@ -70,6 +70,7 @@ const (
 	ActionAccept   Action = "ACCEPT"
 	ActionRecall    Action = "RECALL"
 	ActionDownload  Action = "DOWNLOAD"
+	ActionUpload    Action = "UPLOAD"
 	ActionRenew     Action = "RENEW"
 	ActionBlock    Action = "BLOCK"
 	ActionUnblock  Action = "UNBLOCK"

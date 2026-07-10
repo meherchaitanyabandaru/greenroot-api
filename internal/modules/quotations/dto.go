@@ -86,3 +86,31 @@ type UnassignManagerRequest struct{}
 type MessageResponse struct {
 	Message string `json:"message"`
 }
+
+// VerifyTokenResponse is returned when an owner/manager requests the QR token.
+type VerifyTokenResponse struct {
+	Token     string    `json:"token"`
+	VerifyURL string    `json:"verify_url"` // full public URL to embed in QR code
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// PublicVerifyResponse is the response for the unauthenticated public verification endpoint.
+// Never includes nursery name, customer details, prices, or SHA-256 hash.
+type PublicVerifyResponse struct {
+	QuotationCode     string     `json:"quotation_code"`
+	Authenticity      string     `json:"authenticity"`       // VERIFIED | INVALID
+	QuotationStatus   string     `json:"quotation_status"`   // ACTIVE | EXPIRED | CANCELLED | CONVERTED
+	DocumentIntegrity string     `json:"document_integrity"` // UNMODIFIED | UNVERIFIED
+	IssuedAt          time.Time  `json:"issued_at"`
+	ValidUntil        *time.Time `json:"valid_until,omitempty"`
+	VerifiedAt        time.Time  `json:"verified_at"`
+}
+
+type DocumentResponse struct {
+	Document    QuotationDocument `json:"document"`
+	DownloadURL string            `json:"download_url"`
+}
+
+type DocumentsResponse struct {
+	Documents []QuotationDocument `json:"documents"`
+}

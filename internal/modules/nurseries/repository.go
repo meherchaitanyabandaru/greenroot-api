@@ -442,7 +442,10 @@ func (r *PostgresRepository) DeleteAddress(ctx context.Context, addressID int64)
 // ListManagers returns all active managers for a nursery using the V1 text role column.
 func (r *PostgresRepository) ListManagers(ctx context.Context, nurseryID int64) ([]UserLink, error) {
 	const query = `
-		SELECT nu.nursery_user_id, nu.nursery_id, nu.user_id, u.first_name, u.mobile, u.email,
+		SELECT nu.nursery_user_id, nu.nursery_id, nu.user_id,
+			u.first_name, u.last_name,
+			NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''),
+			u.mobile, u.email,
 			COALESCE(nu.nursery_role_id, 0),
 			COALESCE(nu.role, 'MANAGER'), COALESCE(nu.role, 'MANAGER'),
 			nu.role, COALESCE(nu.status, 'ACTIVE'),
@@ -692,11 +695,14 @@ func (r *PostgresRepository) ListByUserID(ctx context.Context, userID int64) ([]
 	return nurseries, rows.Err()
 }
 
-
 // GetCustomers returns all buyers who have accepted a CUSTOMER_INVITE for this nursery.
 func (r *PostgresRepository) GetCustomers(ctx context.Context, nurseryID int64) ([]Customer, error) {
 	const query = `
-		SELECT u.user_id, u.first_name, u.mobile, u.email, i.accepted_at
+		SELECT u.user_id,
+		       u.first_name,
+		       u.last_name,
+		       NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''),
+		       u.mobile, u.email, i.accepted_at
 		FROM public.invites i
 		JOIN public.users u ON u.user_id = i.accepted_by_user_id
 		WHERE i.nursery_id = $1
@@ -712,10 +718,16 @@ func (r *PostgresRepository) GetCustomers(ctx context.Context, nurseryID int64) 
 	customers := make([]Customer, 0)
 	for rows.Next() {
 		var c Customer
-		var email sql.NullString
+		var lastName, fullName, email sql.NullString
 		var acceptedAt sql.NullTime
-		if err := rows.Scan(&c.UserID, &c.FirstName, &c.Mobile, &email, &acceptedAt); err != nil {
+		if err := rows.Scan(&c.UserID, &c.FirstName, &lastName, &fullName, &c.Mobile, &email, &acceptedAt); err != nil {
 			return nil, err
+		}
+		c.LastName = nullableString(lastName)
+		if fullName.Valid && strings.TrimSpace(fullName.String) != "" {
+			c.FullName = fullName.String
+		} else {
+			c.FullName = c.FirstName
 		}
 		c.Email = nullableString(email)
 		if acceptedAt.Valid {
@@ -789,7 +801,10 @@ func (r *PostgresRepository) findUserLink(ctx context.Context, nurseryUserID int
 
 func (r *PostgresRepository) findManagerLink(ctx context.Context, nurseryUserID int64) (*UserLink, error) {
 	const query = `
-		SELECT nu.nursery_user_id, nu.nursery_id, nu.user_id, u.first_name, u.mobile, u.email,
+		SELECT nu.nursery_user_id, nu.nursery_id, nu.user_id,
+			u.first_name, u.last_name,
+			NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''),
+			u.mobile, u.email,
 			COALESCE(nu.nursery_role_id, 0),
 			COALESCE(nu.role, 'MANAGER'), COALESCE(nu.role, 'MANAGER'),
 			COALESCE(nu.role, 'MANAGER'), COALESCE(nu.status, 'ACTIVE'),
@@ -902,13 +917,19 @@ func scanManagerLinkRows(rows *sql.Rows) (UserLink, error) {
 
 func scanManagerLink(row interface{ Scan(dest ...any) error }) (UserLink, error) {
 	var user UserLink
-	var email sql.NullString
+	var lastName, fullName, email sql.NullString
 	var joinedAt sql.NullTime
-	// columns: id, nursery_id, user_id, first_name, mobile, email,
+	// columns: id, nursery_id, user_id, first_name, last_name, full_name, mobile, email,
 	//          role_id(legacy), role_code, role_name, role(v1), status, joined_at, is_active
-	if err := row.Scan(&user.ID, &user.NurseryID, &user.UserID, &user.FirstName, &user.Mobile, &email,
+	if err := row.Scan(&user.ID, &user.NurseryID, &user.UserID, &user.FirstName, &lastName, &fullName, &user.Mobile, &email,
 		&user.RoleID, &user.RoleCode, &user.RoleName, &user.Role, &user.Status, &joinedAt, &user.IsActive); err != nil {
 		return UserLink{}, err
+	}
+	user.LastName = nullableString(lastName)
+	if fullName.Valid && strings.TrimSpace(fullName.String) != "" {
+		user.FullName = fullName.String
+	} else {
+		user.FullName = user.FirstName
 	}
 	user.Email = nullableString(email)
 	if joinedAt.Valid {

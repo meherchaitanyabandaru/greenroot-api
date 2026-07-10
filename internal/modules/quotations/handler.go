@@ -3,6 +3,7 @@ package quotations
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -284,6 +285,165 @@ func (h *Handler) RecordDownload(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ── Verification handlers ─────────────────────────────────────────────────────
+
+// GetOrCreateVerifyToken returns the ACTIVE QR token for a quotation (creating one if needed).
+// Auth: owner or manager only.
+func (h *Handler) GetOrCreateVerifyToken(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	resp, err := h.service.GetOrCreateVerifyToken(r.Context(), actor, id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, resp)
+}
+
+// RevokeAndRegenerateToken revokes the current QR token and issues a fresh one.
+// Auth: nursery owner only.
+func (h *Handler) RevokeAndRegenerateToken(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	resp, err := h.service.RevokeAndRegenerateToken(r.Context(), actor, id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, resp)
+}
+
+// PublicVerify is the unauthenticated QR-scan endpoint.
+// Returns authenticity, quotation status, and document integrity without revealing
+// any confidential information (no nursery name, customer, prices, or SHA-256 hash).
+func (h *Handler) PublicVerify(w http.ResponseWriter, r *http.Request) {
+	token := chi.URLParam(r, "token")
+	if len(token) == 0 {
+		response.Error(w, http.StatusBadRequest, "invalid_token", "verification token is required")
+		return
+	}
+	remoteIP := r.RemoteAddr
+	if ip := r.Header.Get("X-Real-IP"); ip != "" {
+		remoteIP = ip
+	}
+	resp, err := h.service.PublicVerify(r.Context(), token, remoteIP)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, resp)
+}
+
+// GetByToken returns the full quotation for the authenticated nursery owner or buyer.
+// All other roles receive 403.
+func (h *Handler) GetByToken(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	token := chi.URLParam(r, "token")
+	if len(token) == 0 {
+		response.Error(w, http.StatusBadRequest, "invalid_token", "verification token is required")
+		return
+	}
+	q, err := h.service.GetByToken(r.Context(), actor, token)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, QuotationResponse{Quotation: q})
+}
+
+func (h *Handler) UploadDocument(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := r.ParseMultipartForm(maxPDFSize + 1*1024*1024); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_form", "invalid multipart form")
+		return
+	}
+	file, header, err := r.FormFile("pdf")
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "missing_file", "pdf field is required")
+		return
+	}
+	defer file.Close()
+	if header.Size > maxPDFSize {
+		response.Error(w, http.StatusRequestEntityTooLarge, "file_too_large", "PDF must not exceed 10 MB")
+		return
+	}
+	pdfBytes, err := io.ReadAll(file)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "read_error", "failed to read uploaded file")
+		return
+	}
+	if !isPDF(pdfBytes) {
+		response.Error(w, http.StatusBadRequest, "invalid_pdf", "uploaded file is not a valid PDF")
+		return
+	}
+	doc, downloadURL, err := h.service.UploadDocument(r.Context(), actor, id, pdfBytes)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, DocumentResponse{Document: doc, DownloadURL: downloadURL})
+}
+
+func (h *Handler) GetCurrentDocument(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	doc, downloadURL, err := h.service.GetCurrentDocument(r.Context(), actor, id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, DocumentResponse{Document: doc, DownloadURL: downloadURL})
+}
+
+func (h *Handler) ListDocuments(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	docs, err := h.service.ListDocuments(r.Context(), actor, id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, DocumentsResponse{Documents: docs})
+}
+
+func isPDF(data []byte) bool {
+	return len(data) >= 5 && string(data[:5]) == "%PDF-"
+}
+
 func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, bool) {
 	actor, ok := authctx.FromRequest(w, r, h.jwt)
 	if !ok {
@@ -375,6 +535,14 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusBadRequest, "customer_required", "customer information required for customer quotations")
 	case errors.Is(err, ErrPlantNotFound):
 		response.Error(w, http.StatusNotFound, "plant_not_found", err.Error())
+	case errors.Is(err, ErrRateLimited):
+		response.Error(w, http.StatusTooManyRequests, "rate_limited", "too many requests — try again later")
+	case errors.Is(err, ErrDocumentNotFound):
+		response.Error(w, http.StatusNotFound, "document_not_found", "no official PDF found for this quotation")
+	case errors.Is(err, ErrFileTooLarge):
+		response.Error(w, http.StatusRequestEntityTooLarge, "file_too_large", "PDF must not exceed 10 MB")
+	case errors.Is(err, ErrInvalidPDF):
+		response.Error(w, http.StatusBadRequest, "invalid_pdf", "file is not a valid PDF")
 	case errors.Is(err, ErrNotFound):
 		response.Error(w, http.StatusNotFound, "not_found", "quotation not found")
 	case errors.Is(err, ErrInvalidInput):
