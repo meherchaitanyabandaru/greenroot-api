@@ -23,6 +23,7 @@ type Repository interface {
 	FindByID(ctx context.Context, id int64) (*Quotation, error)
 	Create(ctx context.Context, actorID int64, input CreateQuotationRequest, createdByName string, nurseryName *string, nurseryPhone *string) (*Quotation, error)
 	Update(ctx context.Context, id int64, input UpdateQuotationRequest) (*Quotation, error)
+	UpdateCustomer(ctx context.Context, id int64, input UpdateQuotationCustomerRequest) (*Quotation, error)
 	Approve(ctx context.Context, id int64, byUserID int64) (*Quotation, error)
 	Recall(ctx context.Context, id int64) (*Quotation, error)
 	// Buyer actions
@@ -41,6 +42,7 @@ type Repository interface {
 	GetPlantInfo(ctx context.Context, plantID int64) (scientificName string, commonName string, err error)
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error)
+	IsNurseryCustomer(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	IsNurseryActive(ctx context.Context, nurseryID int64) (bool, error)
 	GetOwnedNurseryID(ctx context.Context, userID int64) (*int64, error)
 	GetManagerNurseryID(ctx context.Context, userID int64) (*int64, error)
@@ -177,14 +179,16 @@ func (r *PostgresRepository) Update(ctx context.Context, id int64, input UpdateQ
 
 	const q = `
 		UPDATE public.quotations
-		SET recipient_name    = NULLIF($1,''),
-		    recipient_mobile  = NULLIF($2,''),
-		    notes             = NULLIF($3,''),
-		    valid_until       = COALESCE($4, valid_until),
+		SET customer_user_id  = $1,
+		    recipient_name    = NULLIF($2,''),
+		    recipient_mobile  = NULLIF($3,''),
+		    notes             = NULLIF($4,''),
+		    valid_until       = COALESCE($5, valid_until),
 		    updated_at        = CURRENT_TIMESTAMP
-		WHERE quotation_id = $5
+		WHERE quotation_id = $6
 	`
 	res, err := tx.ExecContext(ctx, q,
+		int64OrNil(input.CustomerUserID),
 		stringOrEmpty(input.RecipientName),
 		stringOrEmpty(input.RecipientMobile),
 		stringOrEmpty(input.Notes),
@@ -211,6 +215,31 @@ func (r *PostgresRepository) Update(ctx context.Context, id int64, input UpdateQ
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
+	}
+	return r.FindByID(ctx, id)
+}
+
+func (r *PostgresRepository) UpdateCustomer(ctx context.Context, id int64, input UpdateQuotationCustomerRequest) (*Quotation, error) {
+	const q = `
+		UPDATE public.quotations
+		SET customer_user_id = $1,
+		    recipient_name   = NULLIF($2,''),
+		    recipient_mobile = NULLIF($3,''),
+		    updated_at       = CURRENT_TIMESTAMP
+		WHERE quotation_id = $4
+		  AND deleted_at IS NULL
+	`
+	res, err := r.db.ExecContext(ctx, q,
+		int64OrNil(input.CustomerUserID),
+		stringOrEmpty(input.RecipientName),
+		stringOrEmpty(input.RecipientMobile),
+		id,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, ErrNotFound
 	}
 	return r.FindByID(ctx, id)
 }
@@ -915,6 +944,21 @@ func int64OrNil(v *int64) any {
 		return nil
 	}
 	return *v
+}
+
+func (r *PostgresRepository) IsNurseryCustomer(ctx context.Context, nurseryID int64, userID int64) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM public.invites
+			WHERE nursery_id = $1
+			  AND accepted_by_user_id = $2
+			  AND invite_type = 'CUSTOMER_INVITE'
+			  AND status = 'ACCEPTED'
+		)
+	`, nurseryID, userID).Scan(&exists)
+	return exists, err
 }
 
 func validateItemMath(item QuotationItemRequest) bool {

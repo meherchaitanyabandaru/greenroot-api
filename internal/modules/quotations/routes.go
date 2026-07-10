@@ -24,6 +24,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Post("/", m.handler.Create)
 		r.Get("/{id}", m.handler.Get)
 		r.Put("/{id}", m.handler.Update)
+		r.Put("/{id}/customer", m.handler.UpdateCustomer)
 		r.Delete("/{id}", m.handler.Delete)
 		r.Post("/{id}/assign-manager", m.handler.AssignManager)
 		r.Delete("/{id}/assign-manager", m.handler.UnassignManager)

@@ -132,6 +132,27 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, QuotationResponse{Quotation: q})
 }
 
+func (h *Handler) UpdateCustomer(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req UpdateQuotationCustomerRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	q, err := h.service.UpdateCustomer(r.Context(), actor, id, req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, QuotationResponse{Quotation: q})
+}
+
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {

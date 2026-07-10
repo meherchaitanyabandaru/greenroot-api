@@ -17,6 +17,7 @@ type mockRepo struct {
 	ownedNurseries   map[int64]int64   // user_id → nursery_id (owners)
 	managedNurseries map[int64]int64   // user_id → nursery_id (managers)
 	activeNurseries  map[int64]bool    // nursery_id → is active
+	nurseryCustomers map[int64][]int64 // nursery_id → connected customer user_ids
 	orders           map[int64]int64   // order_id → nursery_id
 	userMobiles      map[int64]string
 	softDeleted      []int64
@@ -31,6 +32,7 @@ func newMockRepo() *mockRepo {
 		ownedNurseries:   make(map[int64]int64),
 		managedNurseries: make(map[int64]int64),
 		activeNurseries:  make(map[int64]bool),
+		nurseryCustomers: make(map[int64][]int64),
 		orders:           make(map[int64]int64),
 		userMobiles:      make(map[int64]string),
 	}
@@ -51,6 +53,10 @@ func (m *mockRepo) addNursery(nurseryID, ownerUserID int64, memberIDs ...int64) 
 }
 
 func (m *mockRepo) addOrder(orderID, nurseryID int64) { m.orders[orderID] = nurseryID }
+
+func (m *mockRepo) addCustomer(nurseryID, userID int64) {
+	m.nurseryCustomers[nurseryID] = append(m.nurseryCustomers[nurseryID], userID)
+}
 
 func (m *mockRepo) List(_ context.Context, input ListQuotationsRequest) ([]Quotation, int64, error) {
 	m.lastListInput = input
@@ -97,7 +103,23 @@ func (m *mockRepo) Update(_ context.Context, id int64, input UpdateQuotationRequ
 	if !ok {
 		return nil, ErrNotFound
 	}
+	q.CustomerUserID = input.CustomerUserID
+	q.RecipientName = input.RecipientName
+	q.RecipientMobile = input.RecipientMobile
 	q.Notes = input.Notes
+	q.UpdatedAt = time.Now()
+	cp := *q
+	return &cp, nil
+}
+
+func (m *mockRepo) UpdateCustomer(_ context.Context, id int64, input UpdateQuotationCustomerRequest) (*Quotation, error) {
+	q, ok := m.quotations[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	q.CustomerUserID = input.CustomerUserID
+	q.RecipientName = input.RecipientName
+	q.RecipientMobile = input.RecipientMobile
 	q.UpdatedAt = time.Now()
 	cp := *q
 	return &cp, nil
@@ -242,6 +264,15 @@ func (m *mockRepo) IsNurseryOwner(_ context.Context, nurseryID int64, userID int
 	return ownerID == userID, nil
 }
 
+func (m *mockRepo) IsNurseryCustomer(_ context.Context, nurseryID int64, userID int64) (bool, error) {
+	for _, customerID := range m.nurseryCustomers[nurseryID] {
+		if customerID == userID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (m *mockRepo) GetOwnedNurseryID(_ context.Context, userID int64) (*int64, error) {
 	nurseryID, ok := m.ownedNurseries[userID]
 	if !ok {
@@ -304,6 +335,7 @@ func baseQuotation(id int64, status string) Quotation {
 	return Quotation{
 		ID:              id,
 		QuotationCode:   "QT-001",
+		QuotationType:   "CUSTOMER",
 		Status:          status,
 		CreatedByUserID: 1,
 		NurseryID:       &nurseryID,
@@ -371,6 +403,63 @@ func TestUpdate_NonMemberForbidden(t *testing.T) {
 	_, err := svc.Update(context.Background(), ownerActor(99), 1, UpdateQuotationRequest{Items: []QuotationItemRequest{validItem()}})
 	if !errors.Is(err, ErrForbidden) {
 		t.Errorf("expected ErrForbidden, got %v", err)
+	}
+}
+
+func TestUpdateCustomer_OwnerCanChangeCustomerWhenSent(t *testing.T) {
+	repo := newMockRepo()
+	repo.addNursery(10, 1)
+	repo.addCustomer(10, 20)
+	repo.addQuotation(baseQuotation(1, "CUSTOMER_SENT"))
+	svc := NewService(repo, nil)
+
+	name := "Ravi"
+	mobile := "9300000000"
+	customerID := int64(20)
+	got, err := svc.UpdateCustomer(context.Background(), ownerActor(1), 1, UpdateQuotationCustomerRequest{
+		CustomerUserID:  &customerID,
+		RecipientName:   &name,
+		RecipientMobile: &mobile,
+	})
+	if err != nil {
+		t.Fatalf("owner should update customer while sent: %v", err)
+	}
+	if got.CustomerUserID == nil || *got.CustomerUserID != customerID {
+		t.Fatalf("customer_user_id not saved: %+v", got.CustomerUserID)
+	}
+	if got.RecipientName == nil || *got.RecipientName != name {
+		t.Fatalf("recipient_name not saved: %+v", got.RecipientName)
+	}
+}
+
+func TestUpdateCustomer_ManagerForbidden(t *testing.T) {
+	repo := newMockRepo()
+	repo.addNursery(10, 1, 2)
+	repo.addCustomer(10, 20)
+	repo.addQuotation(baseQuotation(1, "CUSTOMER_SENT"))
+	svc := NewService(repo, nil)
+
+	customerID := int64(20)
+	_, err := svc.UpdateCustomer(context.Background(), managerActor(2), 1, UpdateQuotationCustomerRequest{
+		CustomerUserID: &customerID,
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("manager should not update customer: got %v", err)
+	}
+}
+
+func TestUpdateCustomer_RejectsUnlinkedCustomer(t *testing.T) {
+	repo := newMockRepo()
+	repo.addNursery(10, 1)
+	repo.addQuotation(baseQuotation(1, "CUSTOMER_SENT"))
+	svc := NewService(repo, nil)
+
+	customerID := int64(99)
+	_, err := svc.UpdateCustomer(context.Background(), ownerActor(1), 1, UpdateQuotationCustomerRequest{
+		CustomerUserID: &customerID,
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("unlinked customer should be forbidden: got %v", err)
 	}
 }
 

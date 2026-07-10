@@ -93,6 +93,9 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQu
 		}
 		input.RecipientMobile = &normalized
 	}
+	if err := s.validateCustomerSelection(ctx, Quotation{NurseryID: input.NurseryID}, input.CustomerUserID); err != nil {
+		return Quotation{}, err
+	}
 
 	var nurseryName, nurseryPhone *string
 	if input.NurseryID != nil && *input.NurseryID > 0 {
@@ -188,11 +191,49 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, inpu
 			return Quotation{}, ErrForbidden
 		}
 	}
+	if err := s.validateCustomerSelection(ctx, *q, input.CustomerUserID); err != nil {
+		return Quotation{}, err
+	}
 	updated, err := s.repository.Update(ctx, id, input)
 	if err != nil {
 		return Quotation{}, err
 	}
 	s.audit(ctx, actor, "quotations", id, actionUpdate, input)
+	return *updated, nil
+}
+
+func (s *Service) UpdateCustomer(ctx context.Context, actor ActorContext, id int64, input UpdateQuotationCustomerRequest) (Quotation, error) {
+	if input.RecipientMobile != nil {
+		normalized := normalizeIndianMobile(*input.RecipientMobile)
+		if normalized == "" && *input.RecipientMobile != "" {
+			return Quotation{}, fmt.Errorf("invalid recipient_mobile: %w", ErrInvalidInput)
+		}
+		input.RecipientMobile = &normalized
+	}
+	q, err := s.repository.FindByID(ctx, id)
+	if err != nil {
+		return Quotation{}, err
+	}
+	if q.QuotationType == "INTERNAL" {
+		return Quotation{}, ErrInvalidInput
+	}
+	if q.ConvertedOrderID != nil || q.CustomerRespondedAt != nil {
+		return Quotation{}, ErrInvalidTransition
+	}
+	if !s.isNurseryOwner(ctx, actor, *q) {
+		return Quotation{}, ErrForbidden
+	}
+	if err := s.validateCustomerSelection(ctx, *q, input.CustomerUserID); err != nil {
+		return Quotation{}, err
+	}
+	if input.CustomerUserID == nil && optionalStringValue(input.RecipientName) == "" && optionalStringValue(input.RecipientMobile) == "" {
+		return Quotation{}, ErrCustomerRequired
+	}
+	updated, err := s.repository.UpdateCustomer(ctx, id, input)
+	if err != nil {
+		return Quotation{}, err
+	}
+	s.audit(ctx, actor, "quotations", id, actionUpdate, map[string]any{"customer": input})
 	return *updated, nil
 }
 
@@ -681,6 +722,30 @@ func isManagerOnly(actor ActorContext) bool {
 func redactCustomerContact(q *Quotation) {
 	q.RecipientName = nil
 	q.RecipientMobile = nil
+}
+
+func (s *Service) validateCustomerSelection(ctx context.Context, q Quotation, customerUserID *int64) error {
+	if customerUserID == nil {
+		return nil
+	}
+	if q.NurseryID == nil || *q.NurseryID <= 0 || *customerUserID <= 0 {
+		return ErrInvalidInput
+	}
+	linked, err := s.repository.IsNurseryCustomer(ctx, *q.NurseryID, *customerUserID)
+	if err != nil {
+		return err
+	}
+	if !linked {
+		return ErrForbidden
+	}
+	return nil
+}
+
+func optionalStringValue(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return strings.TrimSpace(*v)
 }
 
 // normalizeIndianMobile strips non-digits and country prefix, returning a clean
