@@ -42,6 +42,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		// Document (PDF storage) endpoints
 		r.Post("/{id}/documents", m.handler.UploadDocument)
 		r.Get("/{id}/documents/current", m.handler.GetCurrentDocument)
+		r.Get("/{id}/documents/render", m.handler.RenderDocument)
 		r.Get("/{id}/documents", m.handler.ListDocuments)
 		// Verification token endpoints (auth required)
 		r.Post("/{id}/verify-token", m.handler.GetOrCreateVerifyToken)

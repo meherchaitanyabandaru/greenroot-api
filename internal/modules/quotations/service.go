@@ -148,6 +148,19 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, id int64) (Quotat
 	return *q, nil
 }
 
+func (s *Service) RenderPDF(ctx context.Context, actor ActorContext, id int64) ([]byte, string, error) {
+	q, err := s.Get(ctx, actor, id)
+	if err != nil {
+		return nil, "", err
+	}
+	pdfBytes := buildQuotationPDF(q)
+	s.audit(ctx, actor, auditlog.EntityQuotation, id, auditlog.ActionDownload, map[string]any{
+		"masked":    isManagerOnly(actor),
+		"generated": true,
+	})
+	return pdfBytes, q.QuotationCode + ".pdf", nil
+}
+
 func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQuotationRequest) (Quotation, error) {
 	// Business rule: admins and drivers do not participate in business transactions.
 	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") || hasRole(actor, "DRIVER") {
@@ -771,15 +784,20 @@ func totalPages(total int64, perPage int) int {
 
 // ── Verification token methods ────────────────────────────────────────────────
 
-// GetOrCreateVerifyToken returns the existing ACTIVE token for a quotation,
-// creating one if none exists. Only owner and manager may call this.
+// GetOrCreateVerifyToken returns the existing ACTIVE token for a quotation.
+// Owner and manager may also create one if none exists. Admin and buyer can
+// only read an existing token — they receive ErrDocumentNotFound if none exists.
 func (s *Service) GetOrCreateVerifyToken(ctx context.Context, actor ActorContext, quotationID int64) (VerifyTokenResponse, error) {
 	q, err := s.repository.FindByID(ctx, quotationID)
 	if err != nil {
 		return VerifyTokenResponse{}, err
 	}
-	if err := s.canManage(ctx, actor, *q); err != nil {
-		return VerifyTokenResponse{}, err
+
+	canCreate := s.canManage(ctx, actor, *q) == nil
+	if !canCreate {
+		if err := s.canView(ctx, actor, *q); err != nil {
+			return VerifyTokenResponse{}, ErrForbidden
+		}
 	}
 
 	existing, err := s.repository.GetActiveVerificationToken(ctx, quotationID)
@@ -792,6 +810,10 @@ func (s *Service) GetOrCreateVerifyToken(ctx context.Context, actor ActorContext
 			VerifyURL: s.verifyURL(existing.Token),
 			CreatedAt: existing.CreatedAt,
 		}, nil
+	}
+
+	if !canCreate {
+		return VerifyTokenResponse{}, ErrDocumentNotFound
 	}
 
 	token, err := generateToken()

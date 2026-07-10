@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -423,6 +424,27 @@ func (h *Handler) GetCurrentDocument(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, DocumentResponse{Document: doc, DownloadURL: downloadURL})
 }
 
+func (h *Handler) RenderDocument(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	pdfBytes, filename, err := h.service.RenderPDF(r.Context(), actor, id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+safePDFFileName(filename)+`"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(pdfBytes)
+}
+
 func (h *Handler) ListDocuments(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {
@@ -442,6 +464,23 @@ func (h *Handler) ListDocuments(w http.ResponseWriter, r *http.Request) {
 
 func isPDF(data []byte) bool {
 	return len(data) >= 5 && string(data[:5]) == "%PDF-"
+}
+
+func safePDFFileName(name string) string {
+	if name == "" {
+		return "quotation.pdf"
+	}
+	var b strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			b.WriteRune(r)
+		}
+	}
+	cleaned := b.String()
+	if cleaned == "" {
+		return "quotation.pdf"
+	}
+	return cleaned
 }
 
 func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, bool) {
