@@ -361,11 +361,13 @@ func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int6
 	return exists, err
 }
 
-
 func (r *PostgresRepository) Approve(ctx context.Context, id int64, byUserID int64) (*Quotation, error) {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE public.quotations
 		SET status = 'CUSTOMER_SENT',
+		    sent_at = CURRENT_TIMESTAMP,
+		    customer_responded_at = NULL,
+		    rejection_reason = NULL,
 		    valid_until = COALESCE(valid_until, CURRENT_TIMESTAMP + INTERVAL '15 days'),
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE quotation_id = $1 AND status = 'CUSTOMER_DRAFT' AND deleted_at IS NULL
@@ -397,7 +399,9 @@ func (r *PostgresRepository) Recall(ctx context.Context, id int64) (*Quotation, 
 func (r *PostgresRepository) BuyerAccept(ctx context.Context, id int64, byUserID int64) (*Quotation, error) {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE public.quotations
-		SET status = 'CUSTOMER_ACCEPTED', updated_at = CURRENT_TIMESTAMP
+		SET status = 'CUSTOMER_ACCEPTED',
+		    customer_responded_at = CURRENT_TIMESTAMP,
+		    updated_at = CURRENT_TIMESTAMP
 		WHERE quotation_id = $1 AND status IN ('CUSTOMER_SENT') AND deleted_at IS NULL
 	`, id)
 	if err != nil {
@@ -414,6 +418,7 @@ func (r *PostgresRepository) BuyerReject(ctx context.Context, id int64, byUserID
 		UPDATE public.quotations
 		SET status = 'CUSTOMER_REJECTED',
 		    rejection_reason = NULLIF($2, ''),
+		    customer_responded_at = CURRENT_TIMESTAMP,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE quotation_id = $1 AND status = 'CUSTOMER_SENT' AND deleted_at IS NULL
 	`, id, reason)
@@ -638,7 +643,9 @@ func baseSelect() string {
 		       q.nursery_id, q.nursery_name, q.nursery_phone,
 		       q.customer_user_id, q.assigned_manager_user_id, q.converted_order_id,
 		       q.recipient_name, q.recipient_mobile, q.notes, q.rejection_reason,
-		       COALESCE(q.total_amount, 0), q.status, q.valid_until, q.deleted_at, q.created_at, q.updated_at,
+		       COALESCE(q.total_amount, 0), q.status, q.valid_until,
+		       q.sent_at, q.customer_responded_at,
+		       q.deleted_at, q.created_at, q.updated_at,
 		       q.buyer_nursery_id,
 		       NULLIF(TRIM(COALESCE(um.first_name, '') || ' ' || COALESCE(um.last_name, '')), '') AS assigned_manager_name,
 		       o.order_code AS converted_order_code,
@@ -670,6 +677,7 @@ func buildWhere(input ListQuotationsRequest) (string, []any) {
 	if input.Buying {
 		// Buyer perspective: quotations where this user (or their nursery) is the buyer/recipient.
 		// Matches both linked accounts (customer_user_id) and unlinked mobile-only quotations.
+		clauses = append(clauses, "q.status IN ('CUSTOMER_SENT', 'CUSTOMER_ACCEPTED', 'CUSTOMER_REJECTED', 'CONVERTED')")
 		buyerClauses := make([]string, 0)
 		if input.UserID > 0 {
 			args = append(args, input.UserID)
@@ -785,6 +793,8 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 		notes                 sql.NullString
 		rejectionReason       sql.NullString
 		validUntil            sql.NullTime
+		sentAt                sql.NullTime
+		customerRespondedAt   sql.NullTime
 		deletedAt             sql.NullTime
 		buyerNurseryID        sql.NullInt64
 		totalAmount           sql.NullString
@@ -798,7 +808,9 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 		&nurseryID, &nurseryName, &nurseryPhone,
 		&customerUserID, &assignedManagerUserID, &convertedOrderID,
 		&recipientName, &recipientMobile, &notes, &rejectionReason,
-		&totalAmount, &q.Status, &validUntil, &deletedAt, &q.CreatedAt, &q.UpdatedAt,
+		&totalAmount, &q.Status, &validUntil,
+		&sentAt, &customerRespondedAt,
+		&deletedAt, &q.CreatedAt, &q.UpdatedAt,
 		&buyerNurseryID, &assignedManagerName,
 		&convertedOrderCode, &convertedAt,
 	); err != nil {
@@ -826,6 +838,12 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 	q.RejectionReason = nullableString(rejectionReason)
 	if validUntil.Valid {
 		q.ValidUntil = &validUntil.Time
+	}
+	if sentAt.Valid {
+		q.SentAt = &sentAt.Time
+	}
+	if customerRespondedAt.Valid {
+		q.CustomerRespondedAt = &customerRespondedAt.Time
 	}
 	if deletedAt.Valid {
 		q.DeletedAt = &deletedAt.Time

@@ -999,6 +999,8 @@ CREATE TABLE public.quotations (
     notes                    TEXT,
     total_amount             NUMERIC(12,2) NOT NULL DEFAULT 0,
     status                   VARCHAR(20)  NOT NULL DEFAULT 'DRAFT',
+    sent_at                  TIMESTAMP,
+    customer_responded_at    TIMESTAMP,
     converted_order_id       BIGINT,       -- FK to orders added after orders table
     converted_by_user_id     BIGINT,
     converted_at             TIMESTAMP,

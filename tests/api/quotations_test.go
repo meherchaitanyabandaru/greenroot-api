@@ -65,6 +65,58 @@ func TestQuotationCreate_Owner(t *testing.T) {
 	assertStatus(t, resp, http.StatusCreated)
 }
 
+func TestQuotationSendWorkflow_DraftHiddenUntilSend(t *testing.T) {
+	ownerToken := login(t, ownerPhone)
+	buyerToken := login(t, buyerPhone)
+	nurseryID := getOwnerNurseryID(t, ownerToken)
+
+	body := map[string]any{
+		"quotation_type":   "CUSTOMER",
+		"nursery_id":       nurseryID,
+		"recipient_name":   "Buyer",
+		"recipient_mobile": buyerPhone,
+		"notes":            "send workflow",
+		"items":            []map[string]any{{"plant_id": 1, "quantity": 1, "unit_price": 100, "total_price": 100}},
+	}
+	createResp := post(t, "/api/v1/quotations", body, ownerToken)
+	assertStatus(t, createResp, http.StatusCreated)
+	var created struct {
+		Quotation struct {
+			ID     int64  `json:"id"`
+			Status string `json:"status"`
+		} `json:"quotation"`
+	}
+	decode(t, createResp, &created)
+	if created.Quotation.Status != "CUSTOMER_DRAFT" {
+		t.Fatalf("new customer quotation should be CUSTOMER_DRAFT, got %s", created.Quotation.Status)
+	}
+
+	directDraft := get(t, fmt.Sprintf("/api/v1/quotations/%d", created.Quotation.ID), buyerToken)
+	assertStatus(t, directDraft, http.StatusForbidden)
+
+	acceptDraft := post(t, fmt.Sprintf("/api/v1/quotations/%d/buyer-accept", created.Quotation.ID), nil, buyerToken)
+	assertStatus(t, acceptDraft, http.StatusConflict)
+
+	sendResp := post(t, fmt.Sprintf("/api/v1/quotations/%d/send", created.Quotation.ID), nil, ownerToken)
+	assertStatus(t, sendResp, http.StatusOK)
+	var sent struct {
+		Quotation struct {
+			Status string  `json:"status"`
+			SentAt *string `json:"sent_at"`
+		} `json:"quotation"`
+	}
+	decode(t, sendResp, &sent)
+	if sent.Quotation.Status != "CUSTOMER_SENT" {
+		t.Fatalf("send should move quotation to CUSTOMER_SENT, got %s", sent.Quotation.Status)
+	}
+	if sent.Quotation.SentAt == nil || *sent.Quotation.SentAt == "" {
+		t.Fatal("send should stamp sent_at")
+	}
+
+	directSent := get(t, fmt.Sprintf("/api/v1/quotations/%d", created.Quotation.ID), buyerToken)
+	assertStatus(t, directSent, http.StatusOK)
+}
+
 // ── Owner creates quotation pre-assigned to manager ───────────────────────────
 
 func TestQuotationCreate_Owner_WithManagerAssignment(t *testing.T) {

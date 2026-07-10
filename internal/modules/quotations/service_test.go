@@ -3,6 +3,7 @@ package quotations
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -17,8 +18,9 @@ type mockRepo struct {
 	managedNurseries map[int64]int64   // user_id → nursery_id (managers)
 	activeNurseries  map[int64]bool    // nursery_id → is active
 	orders           map[int64]int64   // order_id → nursery_id
-	userMobiles map[int64]string
-	softDeleted []int64
+	userMobiles      map[int64]string
+	softDeleted      []int64
+	lastListInput    ListQuotationsRequest
 }
 
 func newMockRepo() *mockRepo {
@@ -50,7 +52,8 @@ func (m *mockRepo) addNursery(nurseryID, ownerUserID int64, memberIDs ...int64) 
 
 func (m *mockRepo) addOrder(orderID, nurseryID int64) { m.orders[orderID] = nurseryID }
 
-func (m *mockRepo) List(_ context.Context, _ ListQuotationsRequest) ([]Quotation, int64, error) {
+func (m *mockRepo) List(_ context.Context, input ListQuotationsRequest) ([]Quotation, int64, error) {
+	m.lastListInput = input
 	return nil, 0, nil
 }
 
@@ -173,6 +176,16 @@ func (m *mockRepo) AssignManager(_ context.Context, quotationID int64, managerUs
 	return &cp, nil
 }
 
+func (m *mockRepo) UnassignManager(_ context.Context, quotationID int64) (*Quotation, error) {
+	q, ok := m.quotations[quotationID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	q.AssignedManagerUserID = nil
+	cp := *q
+	return &cp, nil
+}
+
 func (m *mockRepo) MarkConverted(_ context.Context, quotationID int64, orderID int64, _ int64) error {
 	q, ok := m.quotations[quotationID]
 	if !ok {
@@ -255,6 +268,10 @@ func (m *mockRepo) GetOrderNurseryID(_ context.Context, orderID int64) (*int64, 
 		return nil, ErrNotFound
 	}
 	return &nurseryID, nil
+}
+
+func (m *mockRepo) CreateNotification(_ context.Context, _ int64, _, _, _ string) error {
+	return nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -388,6 +405,75 @@ func TestApprove_FromCustomerDraftSucceeds(t *testing.T) {
 	}
 	if q.Status != "CUSTOMER_SENT" {
 		t.Errorf("expected CUSTOMER_SENT, got %s", q.Status)
+	}
+}
+
+func TestSendToCustomer_FromCustomerDraftSucceeds(t *testing.T) {
+	repo := newMockRepo()
+	repo.addNursery(10, 1)
+	repo.addQuotation(baseQuotation(1, "CUSTOMER_DRAFT"))
+	svc := NewService(repo, nil)
+
+	q, err := svc.SendToCustomer(context.Background(), ownerActor(1), 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if q.Status != "CUSTOMER_SENT" {
+		t.Errorf("expected CUSTOMER_SENT, got %s", q.Status)
+	}
+}
+
+func TestBuyerCannotViewCustomerDraftDirectly(t *testing.T) {
+	repo := newMockRepo()
+	repo.addNursery(10, 1)
+	q := baseQuotation(1, "CUSTOMER_DRAFT")
+	q.QuotationType = "CUSTOMER"
+	buyerID := int64(99)
+	q.CustomerUserID = &buyerID
+	repo.addQuotation(q)
+	svc := NewService(repo, nil)
+
+	_, err := svc.Get(context.Background(), buyerActor(99), 1)
+	if !errors.Is(err, ErrForbidden) {
+		t.Errorf("expected ErrForbidden, got %v", err)
+	}
+}
+
+func TestBuyerCanViewAfterSend(t *testing.T) {
+	repo := newMockRepo()
+	repo.addNursery(10, 1)
+	q := baseQuotation(1, "CUSTOMER_SENT")
+	buyerID := int64(99)
+	q.CustomerUserID = &buyerID
+	repo.addQuotation(q)
+	svc := NewService(repo, nil)
+
+	got, err := svc.Get(context.Background(), buyerActor(99), 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ID != 1 {
+		t.Errorf("expected quotation 1, got %d", got.ID)
+	}
+}
+
+func TestBuyerListIsBuyingScoped(t *testing.T) {
+	repo := newMockRepo()
+	svc := NewService(repo, nil)
+
+	_, _, err := svc.List(context.Background(), buyerActor(99), ListQuotationsRequest{Buying: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !repo.lastListInput.Buying || repo.lastListInput.UserID != 99 {
+		t.Errorf("expected buying list scoped to user 99, got %+v", repo.lastListInput)
+	}
+}
+
+func TestBuildWhereBuyingHidesDrafts(t *testing.T) {
+	where, _ := buildWhere(ListQuotationsRequest{Buying: true, UserID: 99})
+	if !strings.Contains(where, "CUSTOMER_SENT") || strings.Contains(where, "CUSTOMER_DRAFT") {
+		t.Errorf("buyer where clause should include only customer-visible statuses, got %s", where)
 	}
 }
 
@@ -911,6 +997,7 @@ func TestGet_ManagerCannotSeeRecipientContact(t *testing.T) {
 	q := baseQuotation(1, "CUSTOMER_SENT")
 	q.RecipientName = &name
 	q.RecipientMobile = &mobile
+	q.AssignedManagerUserID = ptr(int64(2))
 	repo.addQuotation(q)
 	svc := NewService(repo, nil)
 

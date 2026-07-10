@@ -9,35 +9,37 @@ const (
 )
 
 type Quotation struct {
-	ID                    int64           `json:"id"`
-	QuotationCode         string          `json:"quotation_code"`
-	QuotationType         string          `json:"quotation_type"`
-	CreatedByUserID       int64           `json:"created_by_user_id"`
-	CreatedByName         *string         `json:"created_by_name,omitempty"`
+	ID              int64   `json:"id"`
+	QuotationCode   string  `json:"quotation_code"`
+	QuotationType   string  `json:"quotation_type"`
+	CreatedByUserID int64   `json:"created_by_user_id"`
+	CreatedByName   *string `json:"created_by_name,omitempty"`
 	// Seller side
-	NurseryID             *int64          `json:"nursery_id,omitempty"`
-	NurseryName           *string         `json:"nursery_name,omitempty"`
-	NurseryPhone          *string         `json:"nursery_phone,omitempty"`
-	AssignedManagerUserID *int64          `json:"assigned_manager_user_id,omitempty"`
-	AssignedManagerName   *string         `json:"assigned_manager_name,omitempty"`
+	NurseryID             *int64  `json:"nursery_id,omitempty"`
+	NurseryName           *string `json:"nursery_name,omitempty"`
+	NurseryPhone          *string `json:"nursery_phone,omitempty"`
+	AssignedManagerUserID *int64  `json:"assigned_manager_user_id,omitempty"`
+	AssignedManagerName   *string `json:"assigned_manager_name,omitempty"`
 	// Buyer side
 	CustomerUserID  *int64  `json:"customer_user_id,omitempty"`
 	BuyerNurseryID  *int64  `json:"buyer_nursery_id,omitempty"`
 	RecipientName   *string `json:"recipient_name,omitempty"`
 	RecipientMobile *string `json:"recipient_mobile,omitempty"`
 	// Conversion
-	ConvertedOrderID   *int64     `json:"converted_order_id,omitempty"`
-	ConvertedOrderCode *string    `json:"converted_order_code,omitempty"`
-	ConvertedAt        *time.Time `json:"converted_at,omitempty"`
-	Notes            *string    `json:"notes,omitempty"`
-	RejectionReason  *string    `json:"rejection_reason,omitempty"`
-	TotalAmount      float64    `json:"total_amount"`
-	Status           string     `json:"status"`
-	ValidUntil       *time.Time `json:"valid_until,omitempty"`
-	DeletedAt        *time.Time `json:"deleted_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
-	Items            []QuotationItem `json:"items,omitempty"`
+	ConvertedOrderID    *int64          `json:"converted_order_id,omitempty"`
+	ConvertedOrderCode  *string         `json:"converted_order_code,omitempty"`
+	ConvertedAt         *time.Time      `json:"converted_at,omitempty"`
+	Notes               *string         `json:"notes,omitempty"`
+	RejectionReason     *string         `json:"rejection_reason,omitempty"`
+	TotalAmount         float64         `json:"total_amount"`
+	Status              string          `json:"status"`
+	ValidUntil          *time.Time      `json:"valid_until,omitempty"`
+	SentAt              *time.Time      `json:"sent_at,omitempty"`
+	CustomerRespondedAt *time.Time      `json:"customer_responded_at,omitempty"`
+	DeletedAt           *time.Time      `json:"deleted_at,omitempty"`
+	CreatedAt           time.Time       `json:"created_at"`
+	UpdatedAt           time.Time       `json:"updated_at"`
+	Items               []QuotationItem `json:"items,omitempty"`
 }
 
 type QuotationItem struct {

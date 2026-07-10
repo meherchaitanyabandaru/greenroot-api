@@ -165,7 +165,7 @@ See `BUSINESS_RULES.md` for the full rule set. Key enforcements:
 | audit | `GET /audit-logs` |
 | admin | `GET /admin/dashboard` · `GET /admin/users` |
 | health | `GET /health` · `/healthz` · `/readyz` |
-| quotations | `POST /quotations/:id/approve` · `POST /quotations/:id/convert-to-order` |
+| quotations | `POST /quotations/:id/send` · `POST /quotations/:id/convert-to-order` |
 | invites | `POST /invites` · `GET /invites/:uuid` · accept, cancel · nursery invites + managers |
 | me/workspaces | `GET /me/workspaces` — returns PERSONAL, OWNED_NURSERY, MANAGER_NURSERY, DRIVER workspaces |
 
@@ -187,7 +187,7 @@ All module routes below are mounted under `/api/v1` unless noted.
 | Inventory | 7 | `GET /api/v1/inventory`, `POST /api/v1/inventory`, `GET /api/v1/inventory/{id}`, `PUT /api/v1/inventory/{id}`, `DELETE /api/v1/inventory/{id}`, `GET /api/v1/nurseries/{nurseryId}/inventory`, `GET /api/v1/plants/{plantId}/inventory` |
 | Plant Requests | 9 | `GET /api/v1/plant-requests`, `POST /api/v1/plant-requests`, `GET /api/v1/plant-requests/{id}`, `PUT /api/v1/plant-requests/{id}`, `PUT /api/v1/plant-requests/{id}/status`, `DELETE /api/v1/plant-requests/{id}`, `GET /api/v1/plant-requests/{id}/responses`, `POST /api/v1/plant-requests/{id}/responses`, `PUT /api/v1/plant-requests/responses/{responseId}` |
 | Orders | 14 | `GET /api/v1/orders`, `POST /api/v1/orders`, `GET /api/v1/orders/{id}`, `PUT /api/v1/orders/{id}/status`, `DELETE /api/v1/orders/{id}`, `POST /api/v1/orders/{id}/start-loading`, `POST /api/v1/orders/{id}/complete-loading`, `POST /api/v1/orders/{id}/cancel`, `POST /api/v1/orders/{id}/assign-manager`, `GET /api/v1/orders/{id}/items`, `POST /api/v1/orders/{id}/items`, `PUT /api/v1/orders/{id}/items/{itemId}`, `DELETE /api/v1/orders/{id}/items/{itemId}`, `PUT /api/v1/orders/{id}/items/{itemId}/loaded-quantity` |
-| Quotations | 13 | `GET /api/v1/quotations`, `POST /api/v1/quotations`, `GET /api/v1/quotations/{id}`, `PUT /api/v1/quotations/{id}`, `DELETE /api/v1/quotations/{id}`, `POST /api/v1/quotations/{id}/assign-manager`, `DELETE /api/v1/quotations/{id}/assign-manager`, `POST /api/v1/quotations/{id}/approve`, `POST /api/v1/quotations/{id}/recall`, `POST /api/v1/quotations/{id}/convert-to-order`, `POST /api/v1/quotations/{id}/buyer-accept`, `POST /api/v1/quotations/{id}/buyer-reject`, `POST /api/v1/quotations/{id}/record-download` |
+| Quotations | 14 | `GET /api/v1/quotations`, `POST /api/v1/quotations`, `GET /api/v1/quotations/{id}`, `PUT /api/v1/quotations/{id}`, `DELETE /api/v1/quotations/{id}`, `POST /api/v1/quotations/{id}/assign-manager`, `DELETE /api/v1/quotations/{id}/assign-manager`, `POST /api/v1/quotations/{id}/send`, `POST /api/v1/quotations/{id}/approve` (alias), `POST /api/v1/quotations/{id}/recall`, `POST /api/v1/quotations/{id}/convert-to-order`, `POST /api/v1/quotations/{id}/buyer-accept`, `POST /api/v1/quotations/{id}/buyer-reject`, `POST /api/v1/quotations/{id}/record-download` |
 | Payments | 6 | `GET /api/v1/payments`, `POST /api/v1/payments/manual`, `GET /api/v1/payments/{id}`, `PUT /api/v1/payments/{id}/status`, `GET /api/v1/orders/{orderId}/payments`, `GET /api/v1/subscriptions/{subscriptionId}/payments` |
 | Subscriptions | 9 | `GET /api/v1/subscription-plans`, `GET /api/v1/subscription-plans/{id}`, `GET /api/v1/subscriptions`, `POST /api/v1/subscriptions`, `GET /api/v1/subscriptions/me`, `GET /api/v1/subscriptions/{id}`, `PUT /api/v1/subscriptions/{id}/status`, `POST /api/v1/subscriptions/{id}/renew`, `POST /api/v1/subscriptions/{id}/cancel` |
 | Dispatches | 10 | `GET /api/v1/track/{uuid}`, `GET /api/v1/dispatches`, `POST /api/v1/dispatches`, `GET /api/v1/dispatches/code/{code}`, `GET /api/v1/dispatches/{id}`, `PUT /api/v1/dispatches/{id}/status`, `POST /api/v1/dispatches/{id}/accept`, `POST /api/v1/dispatches/{id}/items`, `POST /api/v1/dispatches/{id}/trip-events`, `GET /api/v1/orders/{orderId}/dispatches` |
@@ -275,4 +275,4 @@ Retention: `LOG_RETENTION_DAYS` (default 90 days).
 | `GET /me/workspaces` returns 500 | Owner via `nurseries.owner_user_id`; manager via `nursery_users.status='ACTIVE'` |
 | Driver approve returns 404 | `WHERE driver_id=$1` (was incorrectly `WHERE user_id=$1`) |
 | Invite accept had no side effects | MANAGER_INVITE → inserts `nursery_users`; NURSERY_ONBOARDING_INVITE → grants NURSERY_OWNER role |
-| Missing quotation endpoints | Added `POST /quotations/:id/approve` and `POST /quotations/:id/convert-to-order` |
+| Missing quotation endpoints | Added explicit `POST /quotations/:id/send`; `POST /quotations/:id/approve` remains an alias |

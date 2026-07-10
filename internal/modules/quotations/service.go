@@ -223,9 +223,9 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, id int64) erro
 	return nil
 }
 
-// Approve sends a CUSTOMER_DRAFT quotation to the buyer (status → CUSTOMER_SENT).
-// Only nursery owner, manager, or admin may do this.
-func (s *Service) Approve(ctx context.Context, actor ActorContext, quotationID int64) (Quotation, error) {
+// SendToCustomer makes a CUSTOMER_DRAFT quotation visible to the buyer
+// (status -> CUSTOMER_SENT). Only nursery owner, manager, or admin may do this.
+func (s *Service) SendToCustomer(ctx context.Context, actor ActorContext, quotationID int64) (Quotation, error) {
 	q, err := s.repository.FindByID(ctx, quotationID)
 	if err != nil {
 		return Quotation{}, err
@@ -253,6 +253,11 @@ func (s *Service) Approve(ctx context.Context, actor ActorContext, quotationID i
 			fmt.Sprintf("Quotation %s from %s is ready for your review.", approved.QuotationCode, nurseryName))
 	}
 	return *approved, nil
+}
+
+// Approve is kept as a backward-compatible alias for older clients.
+func (s *Service) Approve(ctx context.Context, actor ActorContext, quotationID int64) (Quotation, error) {
+	return s.SendToCustomer(ctx, actor, quotationID)
 }
 
 // Recall pulls a CUSTOMER_SENT quotation back to CUSTOMER_DRAFT so it can be edited before re-sending.
@@ -477,6 +482,9 @@ func (s *Service) canView(ctx context.Context, actor ActorContext, q Quotation) 
 	if q.AssignedManagerUserID != nil && *q.AssignedManagerUserID == actor.UserID {
 		return nil
 	}
+	if q.QuotationType == "CUSTOMER" && q.Status == "CUSTOMER_DRAFT" {
+		return ErrForbidden
+	}
 	if q.CustomerUserID != nil && *q.CustomerUserID == actor.UserID {
 		return nil
 	}
@@ -646,6 +654,9 @@ func totalPages(total int64, perPage int) int {
 }
 
 func (s *Service) audit(ctx context.Context, actor ActorContext, entityType string, entityID int64, action auditlog.Action, newValue any) {
+	if s.auditSvc == nil {
+		return
+	}
 	s.auditSvc.Log(ctx, auditlog.Entry{
 		UserID:     actor.UserID,
 		Module:     auditlog.ModuleQuotations,
@@ -687,4 +698,3 @@ func normalizeIndianMobile(s string) string {
 	}
 	return s
 }
-

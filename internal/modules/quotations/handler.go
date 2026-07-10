@@ -187,6 +187,10 @@ func (h *Handler) UnassignManager(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
+	h.SendToCustomer(w, r)
+}
+
+func (h *Handler) SendToCustomer(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {
 		return
@@ -195,7 +199,7 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q, err := h.service.Approve(r.Context(), actor, id)
+	q, err := h.service.SendToCustomer(r.Context(), actor, id)
 	if err != nil {
 		writeError(w, err)
 		return
