@@ -99,7 +99,7 @@ func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int6
 func (r *PostgresRepository) IsNurseryActive(ctx context.Context, nurseryID int64) (bool, error) {
 	var ok bool
 	err := r.db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM public.nurseries WHERE nursery_id = $1 AND status = 'ACTIVE')`,
+		`SELECT EXISTS(SELECT 1 FROM public.nurseries WHERE nursery_id = $1 AND status IN ('ACTIVE', 'APPROVED'))`,
 		nurseryID,
 	).Scan(&ok)
 	return ok, err
@@ -129,7 +129,7 @@ func (r *PostgresRepository) CreateAd(ctx context.Context, nurseryID, userID int
 func (r *PostgresRepository) GetAd(ctx context.Context, id int64) (Ad, error) {
 	const q = `
 		SELECT ma.ad_id, ma.ad_code, ma.nursery_id, n.nursery_name,
-		       (n.status = 'ACTIVE') AS nursery_verified, n.mobile AS nursery_mobile,
+		       (n.status IN ('ACTIVE', 'APPROVED')) AS nursery_verified, n.mobile AS nursery_mobile,
 		       ma.created_by_user_id, ma.plant_id, ma.plant_name, ma.category_name,
 		       ma.title, ma.description, ma.quantity, ma.size_description,
 		       ma.price_per_unit, ma.price_unit, ma.photos,
@@ -207,7 +207,7 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, p
 
 	listQ := fmt.Sprintf(`
 		SELECT ma.ad_id, ma.ad_code, ma.nursery_id, n.nursery_name,
-		       (n.status = 'ACTIVE') AS nursery_verified, n.mobile AS nursery_mobile,
+		       (n.status IN ('ACTIVE', 'APPROVED')) AS nursery_verified, n.mobile AS nursery_mobile,
 		       ma.created_by_user_id, ma.plant_id, ma.plant_name, ma.category_name,
 		       ma.title, ma.description, ma.quantity, ma.size_description,
 		       ma.price_per_unit, ma.price_unit, ma.photos,

@@ -446,7 +446,7 @@ func (r *PostgresRepository) GetManagerNurseryID(ctx context.Context, userID int
 func (r *PostgresRepository) IsNurseryActive(ctx context.Context, nurseryID int64) (bool, error) {
 	var exists bool
 	err := r.db.QueryRowContext(ctx,
-		`SELECT EXISTS (SELECT 1 FROM public.nurseries WHERE nursery_id = $1 AND status = 'ACTIVE')`,
+		`SELECT EXISTS (SELECT 1 FROM public.nurseries WHERE nursery_id = $1 AND status IN ('ACTIVE', 'APPROVED'))`,
 		nurseryID,
 	).Scan(&exists)
 	return exists, err
