@@ -219,8 +219,13 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, nurseryI
 		map[string]any{"status": status})
 
 	// Auto-create 6-month TRIAL subscription when admin approves a nursery.
-	if status == "APPROVED" && s.trialSvc != nil && nursery.OwnerUserID != nil {
-		_ = s.trialSvc.CreateTrialForOwner(ctx, *nursery.OwnerUserID, time.Now())
+	if status == "APPROVED" && nursery.OwnerUserID != nil {
+		if s.trialSvc != nil {
+			_ = s.trialSvc.CreateTrialForOwner(ctx, *nursery.OwnerUserID, time.Now())
+		}
+		// Upgrade owner's system role from Buyer → Nursery Owner so their next
+		// JWT token carries NURSERY_OWNER and market/order access is unlocked.
+		_ = s.repository.GrantOwnerRole(ctx, *nursery.OwnerUserID, actor.UserID)
 	}
 
 	return *nursery, nil

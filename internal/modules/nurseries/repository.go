@@ -40,6 +40,7 @@ type Repository interface {
 	ApproveDriverConnection(ctx context.Context, nurseryID int64, driverUserID int64, approvedByUserID int64) error
 	ListConnectedDrivers(ctx context.Context, nurseryID int64) ([]NurseryDriver, error)
 	GetCustomers(ctx context.Context, nurseryID int64) ([]Customer, error)
+	GrantOwnerRole(ctx context.Context, ownerUserID int64, assignedByUserID int64) error
 }
 
 type PostgresRepository struct {
@@ -264,6 +265,18 @@ func (r *PostgresRepository) UpdateStatusOnly(ctx context.Context, actorID int64
 		return nil, ErrNotFound
 	}
 	return r.FindByID(ctx, nurseryID)
+}
+
+// GrantOwnerRole upserts the Nursery Owner system role (role_id=3) for the user.
+// Called when admin approves a nursery so the owner's JWT gains NURSERY_OWNER on next login.
+func (r *PostgresRepository) GrantOwnerRole(ctx context.Context, ownerUserID int64, assignedByUserID int64) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO public.user_roles (user_id, role_id, assigned_by, assigned_at)
+		 VALUES ($1, 3, $2, CURRENT_TIMESTAMP)
+		 ON CONFLICT (user_id, role_id) DO NOTHING`,
+		ownerUserID, assignedByUserID,
+	)
+	return err
 }
 
 func (r *PostgresRepository) Delete(ctx context.Context, actorID int64, nurseryID int64) error {
