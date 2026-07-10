@@ -60,7 +60,12 @@ func (m *mockRepo) FindUserByID(_ context.Context, id int64) (*User, error) {
 	if !ok {
 		return nil, ErrUserNotFound
 	}
-	return u, nil
+	// Mirror the real repo: scanUser calls GetUserRoles so the returned user
+	// always reflects the current state of m.roles, not the roles cached in
+	// m.users at seed time.
+	copy := *u
+	copy.Roles = m.roles[id]
+	return &copy, nil
 }
 
 func (m *mockRepo) CreateUser(_ context.Context, mobile string) (*User, error) {
@@ -290,6 +295,63 @@ func TestRefreshToken_ValidToken_ReturnsNewPair(t *testing.T) {
 	}
 	if refreshResp.AccessToken == "" || refreshResp.RefreshToken == "" {
 		t.Error("expected new tokens")
+	}
+}
+
+// TestRefreshToken_ReadsRolesFromDB verifies that RefreshToken re-reads roles from
+// the repository (not the JWT) so a backend role change (e.g. admin approving a
+// nursery and granting NURSERY_OWNER) is reflected in the new access token without
+// requiring the user to log out.
+func TestRefreshToken_ReadsRolesFromDB(t *testing.T) {
+	repo := newMock()
+	// Start as BUYER
+	repo.seedUser(1, "9100000000", "BUYER")
+	s := svc(repo)
+
+	loginResp, err := s.VerifyOTP(context.Background(), VerifyOTPRequest{
+		Mobile: "9100000000",
+		OTP:    mockOTP,
+	}, ClientContext{})
+	if err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+	for _, sid := range repo.tokens {
+		repo.linkSession(sid, 1)
+	}
+
+	// Access token from login should have only BUYER role
+	claims, err := testJWT().VerifyAccessToken(loginResp.AccessToken)
+	if err != nil {
+		t.Fatalf("verify login access token: %v", err)
+	}
+	if len(claims.Roles) != 1 || claims.Roles[0] != "BUYER" {
+		t.Errorf("expected [BUYER] roles in login token, got %v", claims.Roles)
+	}
+
+	// Simulate admin approving the nursery: update roles in the repo
+	repo.roles[1] = []string{"BUYER", "NURSERY_OWNER"}
+
+	// Refresh — must re-read roles from DB
+	refreshResp, err := s.RefreshToken(context.Background(), RefreshTokenRequest{
+		RefreshToken: loginResp.RefreshToken,
+	})
+	if err != nil {
+		t.Fatalf("refresh failed: %v", err)
+	}
+
+	newClaims, err := testJWT().VerifyAccessToken(refreshResp.AccessToken)
+	if err != nil {
+		t.Fatalf("verify refreshed access token: %v", err)
+	}
+
+	hasOwner := false
+	for _, r := range newClaims.Roles {
+		if r == "NURSERY_OWNER" {
+			hasOwner = true
+		}
+	}
+	if !hasOwner {
+		t.Errorf("expected NURSERY_OWNER in refreshed token roles, got %v", newClaims.Roles)
 	}
 }
 
