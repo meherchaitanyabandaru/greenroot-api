@@ -15,10 +15,11 @@ import (
 )
 
 var (
-	ErrForbidden      = errors.New("forbidden")
-	ErrInvalidInput   = errors.New("invalid input")
-	ErrInvalidAddress = errors.New("invalid address")
-	ErrAccountDeleted = errors.New("account has already been deleted")
+	ErrForbidden              = errors.New("forbidden")
+	ErrInvalidInput           = errors.New("invalid input")
+	ErrInvalidAddress         = errors.New("invalid address")
+	ErrAccountDeleted         = errors.New("account has already been deleted")
+	ErrAccountDeletionBlocked = errors.New("account deletion blocked by active business records")
 )
 
 const defaultUserFirstName = "GreenRoot"
@@ -209,6 +210,13 @@ func (s *Service) DeleteAccount(ctx context.Context, actor ActorContext) error {
 	}
 	if user.Status == "DELETED" {
 		return ErrAccountDeleted
+	}
+	blockers, err := s.repository.GetAccountDeletionBlockers(ctx, actor.UserID)
+	if err != nil {
+		return err
+	}
+	if blockers.HasAny() {
+		return ErrAccountDeletionBlocked
 	}
 	if err := s.repository.SoftDeleteAccount(ctx, actor.UserID); err != nil {
 		return err

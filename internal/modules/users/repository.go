@@ -19,7 +19,18 @@ type Repository interface {
 	ListRoles(ctx context.Context, userID int64) ([]Role, error)
 	ListSessions(ctx context.Context, userID int64) ([]Session, error)
 	CreateUserActivity(ctx context.Context, input CreateActivityInput) error
+	GetAccountDeletionBlockers(ctx context.Context, userID int64) (AccountDeletionBlockers, error)
 	SoftDeleteAccount(ctx context.Context, userID int64) error
+}
+
+type AccountDeletionBlockers struct {
+	OwnedNurseries   int64
+	ActiveOrders     int64
+	ActiveQuotations int64
+}
+
+func (b AccountDeletionBlockers) HasAny() bool {
+	return b.OwnedNurseries > 0 || b.ActiveOrders > 0 || b.ActiveQuotations > 0
 }
 
 type CreateActivityInput struct {
@@ -316,6 +327,39 @@ func (r *PostgresRepository) CreateUserActivity(ctx context.Context, input Creat
 	return err
 }
 
+func (r *PostgresRepository) GetAccountDeletionBlockers(ctx context.Context, userID int64) (AccountDeletionBlockers, error) {
+	const query = `
+		SELECT
+			(SELECT COUNT(*)
+			   FROM public.nurseries
+			  WHERE owner_user_id = $1
+			    AND COALESCE(status::text, '') NOT IN ('DELETED', 'REJECTED')) AS owned_nurseries,
+			(SELECT COUNT(*)
+			   FROM public.orders
+			  WHERE deleted_at IS NULL
+			    AND COALESCE(order_status::text, '') NOT IN ('COMPLETED', 'CANCELLED')
+			    AND (
+			    	created_by_user_id = $1 OR assigned_manager_user_id = $1 OR
+			    	customer_user_id = $1 OR buyer_user_id = $1
+			    )) AS active_orders,
+			(SELECT COUNT(*)
+			   FROM public.quotations
+			  WHERE deleted_at IS NULL
+			    AND COALESCE(status::text, '') IN (
+			    	'INTERNAL_DRAFT', 'CUSTOMER_DRAFT', 'CUSTOMER_SENT', 'CUSTOMER_ACCEPTED'
+			    )
+			    AND (
+			    	created_by_user_id = $1 OR assigned_manager_user_id = $1 OR customer_user_id = $1
+			    )) AS active_quotations
+	`
+	var blockers AccountDeletionBlockers
+	err := r.db.QueryRowContext(ctx, query, userID).Scan(
+		&blockers.OwnedNurseries,
+		&blockers.ActiveOrders,
+		&blockers.ActiveQuotations,
+	)
+	return blockers, err
+}
 
 func (r *PostgresRepository) SoftDeleteAccount(ctx context.Context, userID int64) error {
 	tx, err := r.db.BeginTx(ctx, nil)

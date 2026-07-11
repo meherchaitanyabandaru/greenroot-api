@@ -15,6 +15,7 @@ type mockRepo struct {
 	roles     map[int64][]Role
 	sessions  map[int64][]Session
 
+	blockers       map[int64]AccountDeletionBlockers
 	softDeletedIDs []int64
 	nextAddrID     int64
 }
@@ -25,6 +26,7 @@ func newMock() *mockRepo {
 		addresses:  make(map[int64]*Address),
 		roles:      make(map[int64][]Role),
 		sessions:   make(map[int64][]Session),
+		blockers:   make(map[int64]AccountDeletionBlockers),
 		nextAddrID: 100,
 	}
 }
@@ -100,6 +102,10 @@ func (m *mockRepo) ListSessions(_ context.Context, userID int64) ([]Session, err
 }
 
 func (m *mockRepo) CreateUserActivity(_ context.Context, _ CreateActivityInput) error { return nil }
+
+func (m *mockRepo) GetAccountDeletionBlockers(_ context.Context, userID int64) (AccountDeletionBlockers, error) {
+	return m.blockers[userID], nil
+}
 
 func (m *mockRepo) SoftDeleteAccount(_ context.Context, userID int64) error {
 	m.softDeletedIDs = append(m.softDeletedIDs, userID)
@@ -398,6 +404,48 @@ func TestDeleteAccount_ActiveUser_Success(t *testing.T) {
 	}
 	if !repo.wasSoftDeleted(10) {
 		t.Error("SoftDeleteAccount should have been called for user 10")
+	}
+}
+
+func TestDeleteAccount_BlockedWhenUserOwnsActiveNursery(t *testing.T) {
+	repo := newMock()
+	repo.seedUser(10, "Ravi", "9300000000")
+	repo.blockers[10] = AccountDeletionBlockers{OwnedNurseries: 1}
+
+	err := svc(repo).DeleteAccount(context.Background(), buyerActor(10))
+	if !errors.Is(err, ErrAccountDeletionBlocked) {
+		t.Fatalf("want ErrAccountDeletionBlocked, got %v", err)
+	}
+	if repo.wasSoftDeleted(10) {
+		t.Fatal("SoftDeleteAccount must not run while active nursery ownership blocks deletion")
+	}
+}
+
+func TestDeleteAccount_BlockedWhenUserHasActiveOrder(t *testing.T) {
+	repo := newMock()
+	repo.seedUser(10, "Ravi", "9300000000")
+	repo.blockers[10] = AccountDeletionBlockers{ActiveOrders: 1}
+
+	err := svc(repo).DeleteAccount(context.Background(), buyerActor(10))
+	if !errors.Is(err, ErrAccountDeletionBlocked) {
+		t.Fatalf("want ErrAccountDeletionBlocked, got %v", err)
+	}
+	if repo.wasSoftDeleted(10) {
+		t.Fatal("SoftDeleteAccount must not run while active orders block deletion")
+	}
+}
+
+func TestDeleteAccount_BlockedWhenUserHasActiveQuotation(t *testing.T) {
+	repo := newMock()
+	repo.seedUser(10, "Ravi", "9300000000")
+	repo.blockers[10] = AccountDeletionBlockers{ActiveQuotations: 1}
+
+	err := svc(repo).DeleteAccount(context.Background(), buyerActor(10))
+	if !errors.Is(err, ErrAccountDeletionBlocked) {
+		t.Fatalf("want ErrAccountDeletionBlocked, got %v", err)
+	}
+	if repo.wasSoftDeleted(10) {
+		t.Fatal("SoftDeleteAccount must not run while active quotations block deletion")
 	}
 }
 

@@ -292,6 +292,8 @@ func writeUsersError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusBadRequest, "invalid_address", "invalid address input")
 	case errors.Is(err, ErrAccountDeleted):
 		response.Error(w, http.StatusGone, "account_deleted", "this account has already been deleted")
+	case errors.Is(err, ErrAccountDeletionBlocked):
+		response.Error(w, http.StatusConflict, "account_deletion_blocked", "close or transfer active nursery business before deleting this account")
 	default:
 		response.Error(w, http.StatusInternalServerError, "users_error", "users request failed")
 	}

@@ -159,6 +159,13 @@ func TestDeleteAccount_TokenInvalidatedAfterDeletion(t *testing.T) {
 	assertStatus(t, meResp, http.StatusForbidden)
 }
 
+func TestDeleteAccount_OwnerWithActiveNurseryBlocked(t *testing.T) {
+	token := login(t, ownerPhone)
+
+	resp := deleteReq(t, "/api/v1/users/me", token)
+	assertStatus(t, resp, http.StatusConflict)
+}
+
 // ─── helper ───────────────────────────────────────────────────────────────────
 
 // ownerNurseryID fetches the OWNED_NURSERY workspace and returns the nursery ID.
