@@ -11,18 +11,18 @@ import (
 
 type mockRepo struct {
 	nurseries map[int64]*Nursery
-	owners    map[int64]int64   // userID → nurseryID (reverse: userID is owner of nurseryID)
-	members   map[string]bool   // "nurseryID:userID"
-	managers  map[int64]bool    // userID → isManager
-	drivers   map[int64]bool    // userID → isApprovedDriver
+	owners    map[int64]int64 // userID → nurseryID (reverse: userID is owner of nurseryID)
+	members   map[string]bool // "nurseryID:userID"
+	managers  map[int64]bool  // userID → isManager
+	drivers   map[int64]bool  // userID → isApprovedDriver
 	addresses map[int64]*Address
 	users     map[int64][]*UserLink
 	nDrivers  map[int64][]*NurseryDriver
 	customers map[int64][]Customer // nurseryID → customers
 
 	// tracking fields for lifecycle assertions
-	invalidatedSessions    []int64            // user IDs whose sessions were invalidated
-	activeManagerNurseries map[int64]int64    // userID → nurseryID for FindActiveManagerNursery
+	invalidatedSessions    []int64         // user IDs whose sessions were invalidated
+	activeManagerNurseries map[int64]int64 // userID → nurseryID for FindActiveManagerNursery
 
 	nextNurseryID  int64
 	nextAddressID  int64
@@ -315,8 +315,10 @@ func (m *mockRepo) wasSessionInvalidated(userID int64) bool {
 
 // ─── actors ──────────────────────────────────────────────────────────────────
 
-func adminActor(id int64) ActorContext   { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
-func ownerActor(id int64) ActorContext   { return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}} }
+func adminActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
+func ownerActor(id int64) ActorContext {
+	return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}}
+}
 func buyerActor(id int64) ActorContext   { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
 func managerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"MANAGER"}} }
 

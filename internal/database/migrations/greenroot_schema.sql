@@ -491,8 +491,8 @@ CREATE TABLE public.user_notification_devices (
 /*
  * nurseries
  * A nursery is the core selling entity on GreenRoot. Each nursery has one owner
- * (owner_user_id, UNIQUE), a GST number for invoicing, and a nursery_code
- * (NUR-000001) used in all communications.
+ * (owner_user_id, UNIQUE) and a nursery_code (NUR-000001) used in all
+ * communications.
  *
  * Who uses it: nursery owner creates/edits their nursery via the mobile app or
  * admin portal. Admin approves new nurseries. Buyers see nursery details on order.
@@ -505,11 +505,13 @@ CREATE TABLE public.nurseries (
                          DEFAULT public.next_public_code('nurseries', 'NUR', 6, false),
     nursery_name     VARCHAR(255) NOT NULL,
     owner_user_id    BIGINT       UNIQUE,
-    gst_number       VARCHAR(50),
     mobile           VARCHAR(20),
     email            VARCHAR(255),
     website          VARCHAR(255),
     description      TEXT,
+    logo_url         TEXT,
+    brand_icon_key   VARCHAR(64),
+    brand_color      VARCHAR(16),
     status           VARCHAR(20)  DEFAULT 'PENDING_APPROVAL',  -- PENDING_APPROVAL → ACTIVE | REJECTED | SUSPENDED
     approved_by      BIGINT,        -- super admin who approved
     approved_at      TIMESTAMP,
@@ -542,7 +544,6 @@ CREATE TABLE public.nursery_applications (
                           DEFAULT public.next_public_code('nursery_applications', 'NRA', 6, false),
     applicant_user_id BIGINT       NOT NULL,
     nursery_name      VARCHAR(255) NOT NULL,
-    gst_number        VARCHAR(50),
     mobile            VARCHAR(20),
     email             VARCHAR(255),
     address_line1     VARCHAR(255),
@@ -569,8 +570,8 @@ CREATE TABLE public.nursery_applications (
  *
  * Who uses it: nursery owner adds addresses during onboarding. Buyers see the
  * primary address on the order page. Drivers use lat/lng for navigation.
- * Why: nurseries in India often have a separate farm address and a registered
- * business address; both matter for logistics and GST compliance.
+ * Why: nurseries often have a separate farm address and a registered business
+ * address; both matter for logistics.
  */
 CREATE TABLE public.nursery_addresses (
     nursery_address_id  BIGSERIAL    PRIMARY KEY,

@@ -26,8 +26,8 @@ func (m Module) RegisterRoutes(router chi.Router) {
 	router.Route("/nurseries", func(r chi.Router) {
 		r.Get("/", m.handler.List)
 		r.Post("/", m.handler.Create)
-		r.Get("/mine", m.handler.Mine)           // nurseries where user is manager
-		r.Get("/owned", m.handler.OwnedNursery)  // nursery user owns
+		r.Get("/mine", m.handler.Mine)          // nurseries where user is manager
+		r.Get("/owned", m.handler.OwnedNursery) // nursery user owns
 		r.Get("/{id}", m.handler.Get)
 		r.Put("/{id}", m.handler.Update)
 		r.Put("/{id}/status", m.handler.UpdateStatus)

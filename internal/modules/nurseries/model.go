@@ -7,7 +7,6 @@ type Nursery struct {
 	Code            *string    `json:"code,omitempty"`
 	NurseryCode     *string    `json:"nursery_code,omitempty"`
 	Name            string     `json:"name"`
-	GSTNumber       *string    `json:"gst_number,omitempty"`
 	Mobile          *string    `json:"mobile,omitempty"`
 	Email           *string    `json:"email,omitempty"`
 	Website         *string    `json:"website,omitempty"`
@@ -17,9 +16,9 @@ type Nursery struct {
 	RejectedAt      *time.Time `json:"rejected_at,omitempty"`
 	OwnerUserID     *int64     `json:"owner_user_id,omitempty"`
 	// Branding — set after nursery approval via PUT /nurseries/:id
-	LogoURL      *string `json:"logo_url,omitempty"`
-	BrandIconKey *string `json:"brand_icon_key,omitempty"`
-	BrandColor   *string `json:"brand_color,omitempty"`
+	LogoURL      *string    `json:"logo_url,omitempty"`
+	BrandIconKey *string    `json:"brand_icon_key,omitempty"`
+	BrandColor   *string    `json:"brand_color,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
 	CreatedBy    *int64     `json:"created_by,omitempty"`

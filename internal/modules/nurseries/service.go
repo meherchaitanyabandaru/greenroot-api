@@ -482,9 +482,6 @@ func normalizeUpdateNursery(input UpdateNurseryRequest) UpdateNurseryRequest {
 }
 
 func validateUpdateNursery(input UpdateNurseryRequest) error {
-	if input.Name == "" {
-		return ErrInvalidInput
-	}
 	if input.Status != nil {
 		status := strings.ToUpper(strings.TrimSpace(*input.Status))
 		switch status {

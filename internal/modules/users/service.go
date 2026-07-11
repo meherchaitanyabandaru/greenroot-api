@@ -57,26 +57,6 @@ func (s *Service) UpdateMe(ctx context.Context, actor ActorContext, input Update
 		}
 	}
 
-	// Lock real profile fields once a user fills them. The OTP placeholder
-	// first name can still be replaced during profile completion.
-	current, err := s.repository.FindUserByID(ctx, actor.UserID)
-	if err != nil {
-		return User{}, err
-	}
-	firstNameLocked := isLockedName(current.FirstName)
-	if firstNameLocked {
-		input.FirstName = current.FirstName
-	}
-	if firstNameLocked && current.LastName != nil && *current.LastName != "" {
-		input.LastName = current.LastName
-	}
-	if current.Gender != nil && *current.Gender != "" {
-		input.Gender = current.Gender
-	}
-	if current.Email != nil && *current.Email != "" {
-		input.Email = current.Email
-	}
-
 	now := time.Now()
 	user, err := s.repository.UpdateProfile(ctx, actor.UserID, input, now)
 	if err != nil {

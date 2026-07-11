@@ -13,7 +13,6 @@ type ListNurseriesRequest struct {
 type CreateNurseryRequest struct {
 	Code        *string `json:"code"`
 	Name        string  `json:"name"`
-	GSTNumber   *string `json:"gst_number"`
 	Mobile      *string `json:"mobile"`
 	Email       *string `json:"email"`
 	Website     *string `json:"website"`
@@ -26,18 +25,17 @@ type CreateNurseryRequest struct {
 // logo_url and brand_icon_key are mutually exclusive; setting one clears the other.
 // brand_color must be one of the 10 curated palette values (validated in service).
 type UpdateNurseryRequest struct {
-	Code        *string `json:"code"`
-	Name        string  `json:"name"`
-	GSTNumber   *string `json:"gst_number"`
-	Mobile      *string `json:"mobile"`
-	Email       *string `json:"email"`
-	Website     *string `json:"website"`
-	Description *string `json:"description"`
-	Status      *string `json:"status"`
-	OwnerUserID *int64  `json:"owner_user_id"`
-	LogoURL     *string `json:"logo_url"`
+	Code         *string `json:"code"`
+	Name         string  `json:"name"`
+	Mobile       *string `json:"mobile"`
+	Email        *string `json:"email"`
+	Website      *string `json:"website"`
+	Description  *string `json:"description"`
+	Status       *string `json:"status"`
+	OwnerUserID  *int64  `json:"owner_user_id"`
+	LogoURL      *string `json:"logo_url"`
 	BrandIconKey *string `json:"brand_icon_key"`
-	BrandColor  *string `json:"brand_color"`
+	BrandColor   *string `json:"brand_color"`
 }
 
 type AddressRequest struct {

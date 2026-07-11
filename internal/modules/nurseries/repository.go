@@ -66,7 +66,7 @@ func (r *PostgresRepository) List(ctx context.Context, input ListNurseriesReques
 	offset := (input.Page - 1) * input.PerPage
 	args = append(args, input.PerPage, offset)
 	query := fmt.Sprintf(`
-		SELECT DISTINCT n.nursery_id, n.nursery_code, n.nursery_name, n.gst_number, n.mobile,
+		SELECT DISTINCT n.nursery_id, n.nursery_code, n.nursery_name, n.mobile,
 			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
 			n.created_at, n.updated_at, n.created_by, n.updated_by, n.rejection_reason, n.rejected_at,
 			n.logo_url, n.brand_icon_key, n.brand_color
@@ -181,11 +181,11 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 
 	const query = `
 		INSERT INTO public.nurseries (
-			nursery_code, nursery_name, gst_number, mobile, email, website, description,
+			nursery_code, nursery_name, mobile, email, website, description,
 			status, owner_user_id, created_at, updated_at, created_by, updated_by
 		)
-		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''),
-			NULLIF($6, ''), NULLIF($7, ''), $8, $9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $10, $10)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''),
+			NULLIF($5, ''), NULLIF($6, ''), $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $9, $9)
 		RETURNING nursery_id
 	`
 	var ownerUserID any
@@ -198,7 +198,6 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 		query,
 		nurseryCode,
 		input.Name,
-		stringOrEmpty(input.GSTNumber),
 		stringOrEmpty(input.Mobile),
 		stringOrEmpty(input.Email),
 		stringOrEmpty(input.Website),
@@ -216,18 +215,17 @@ func (r *PostgresRepository) Update(ctx context.Context, actorID int64, nurseryI
 	const query = `
 		UPDATE public.nurseries
 		SET nursery_code = COALESCE(NULLIF($2, ''), nursery_code),
-			nursery_name = $3,
-			gst_number = NULLIF($4, ''),
-			mobile = NULLIF($5, ''),
-			email = NULLIF($6, ''),
-			website = NULLIF($7, ''),
-			description = NULLIF($8, ''),
-			status = $9,
-			logo_url = $11,
-			brand_icon_key = $12,
-			brand_color = $13,
+			nursery_name = COALESCE(NULLIF($3, ''), nursery_name),
+			mobile = COALESCE(NULLIF($4, ''), mobile),
+			email = COALESCE(NULLIF($5, ''), email),
+			website = COALESCE(NULLIF($6, ''), website),
+			description = COALESCE(NULLIF($7, ''), description),
+			status = COALESCE($8, status),
+			logo_url = COALESCE($10, logo_url),
+			brand_icon_key = COALESCE($11, brand_icon_key),
+			brand_color = COALESCE($12, brand_color),
 			updated_at = CURRENT_TIMESTAMP,
-			updated_by = $10
+			updated_by = $9
 		WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'
 	`
 	result, err := r.db.ExecContext(
@@ -236,12 +234,11 @@ func (r *PostgresRepository) Update(ctx context.Context, actorID int64, nurseryI
 		nurseryID,
 		stringOrEmpty(input.Code),
 		input.Name,
-		stringOrEmpty(input.GSTNumber),
 		stringOrEmpty(input.Mobile),
 		stringOrEmpty(input.Email),
 		stringOrEmpty(input.Website),
 		stringOrEmpty(input.Description),
-		statusOrActive(input.Status),
+		nullableStatus(input.Status),
 		actorID,
 		nullOrString(input.LogoURL),
 		nullOrString(input.BrandIconKey),
@@ -734,7 +731,7 @@ func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int6
 
 func (r *PostgresRepository) ListByUserID(ctx context.Context, userID int64) ([]Nursery, error) {
 	const query = `
-		SELECT DISTINCT n.nursery_id, n.nursery_code, n.nursery_name, n.gst_number, n.mobile,
+		SELECT DISTINCT n.nursery_id, n.nursery_code, n.nursery_name, n.mobile,
 			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
 			n.created_at, n.updated_at, n.created_by, n.updated_by, n.rejection_reason, n.rejected_at,
 			n.logo_url, n.brand_icon_key, n.brand_color
@@ -834,7 +831,7 @@ func buildNurseryWhere(input ListNurseriesRequest) (string, []any) {
 
 func (r *PostgresRepository) scanNursery(ctx context.Context, where string, args ...any) (*Nursery, error) {
 	query := `
-		SELECT n.nursery_id, n.nursery_code, n.nursery_name, n.gst_number, n.mobile,
+		SELECT n.nursery_id, n.nursery_code, n.nursery_name, n.mobile,
 			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
 			n.created_at, n.updated_at, n.created_by, n.updated_by, n.rejection_reason, n.rejected_at,
 			n.logo_url, n.brand_icon_key, n.brand_color
@@ -902,12 +899,12 @@ func scanNurseryRows(rows *sql.Rows) (Nursery, error) {
 
 func scanNursery(row interface{ Scan(dest ...any) error }) (Nursery, error) {
 	var nursery Nursery
-	var code, gst, mobile, email, website, description, rejectionReason sql.NullString
+	var code, mobile, email, website, description, rejectionReason sql.NullString
 	var logoURL, brandIconKey, brandColor sql.NullString
 	var ownerUserID, createdBy, updatedBy sql.NullInt64
 	var rejectedAt sql.NullTime
 	if err := row.Scan(
-		&nursery.ID, &code, &nursery.Name, &gst, &mobile, &email, &website, &description,
+		&nursery.ID, &code, &nursery.Name, &mobile, &email, &website, &description,
 		&nursery.Status, &ownerUserID, &nursery.CreatedAt, &nursery.UpdatedAt, &createdBy, &updatedBy,
 		&rejectionReason, &rejectedAt,
 		&logoURL, &brandIconKey, &brandColor,
@@ -916,7 +913,6 @@ func scanNursery(row interface{ Scan(dest ...any) error }) (Nursery, error) {
 	}
 	nursery.Code = nullableString(code)
 	nursery.NurseryCode = nullableString(code)
-	nursery.GSTNumber = nullableString(gst)
 	nursery.Mobile = nullableString(mobile)
 	nursery.Email = nullableString(email)
 	nursery.Website = nullableString(website)
@@ -1019,6 +1015,17 @@ func statusOrActive(value *string) string {
 	status := strings.ToUpper(strings.TrimSpace(stringOrEmpty(value)))
 	if status == "" {
 		return "ACTIVE"
+	}
+	return status
+}
+
+func nullableStatus(value *string) any {
+	if value == nil {
+		return nil
+	}
+	status := strings.ToUpper(strings.TrimSpace(*value))
+	if status == "" {
+		return nil
 	}
 	return status
 }
