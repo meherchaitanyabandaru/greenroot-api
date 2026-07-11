@@ -16,12 +16,16 @@ type Nursery struct {
 	RejectionReason *string    `json:"rejection_reason,omitempty"`
 	RejectedAt      *time.Time `json:"rejected_at,omitempty"`
 	OwnerUserID     *int64     `json:"owner_user_id,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
-	CreatedBy       *int64     `json:"created_by,omitempty"`
-	UpdatedBy       *int64     `json:"updated_by,omitempty"`
-	Addresses       []Address  `json:"addresses,omitempty"`
-	Users           []UserLink `json:"users,omitempty"`
+	// Branding — set after nursery approval via PUT /nurseries/:id
+	LogoURL      *string `json:"logo_url,omitempty"`
+	BrandIconKey *string `json:"brand_icon_key,omitempty"`
+	BrandColor   *string `json:"brand_color,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	CreatedBy    *int64     `json:"created_by,omitempty"`
+	UpdatedBy    *int64     `json:"updated_by,omitempty"`
+	Addresses    []Address  `json:"addresses,omitempty"`
+	Users        []UserLink `json:"users,omitempty"`
 }
 
 // NurseryDriver represents a driver connected to a nursery.

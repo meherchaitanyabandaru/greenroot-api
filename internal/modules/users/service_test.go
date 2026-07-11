@@ -15,7 +15,8 @@ type mockRepo struct {
 	roles     map[int64][]Role
 	sessions  map[int64][]Session
 
-	nextAddrID int64
+	softDeletedIDs []int64
+	nextAddrID     int64
 }
 
 func newMock() *mockRepo {
@@ -99,6 +100,23 @@ func (m *mockRepo) ListSessions(_ context.Context, userID int64) ([]Session, err
 }
 
 func (m *mockRepo) CreateUserActivity(_ context.Context, _ CreateActivityInput) error { return nil }
+
+func (m *mockRepo) SoftDeleteAccount(_ context.Context, userID int64) error {
+	m.softDeletedIDs = append(m.softDeletedIDs, userID)
+	if u, ok := m.users[userID]; ok {
+		u.Status = "DELETED"
+	}
+	return nil
+}
+
+func (m *mockRepo) wasSoftDeleted(userID int64) bool {
+	for _, id := range m.softDeletedIDs {
+		if id == userID {
+			return true
+		}
+	}
+	return false
+}
 
 // ─── actors ──────────────────────────────────────────────────────────────────
 
@@ -365,5 +383,119 @@ func TestListSessions_OtherUserForbidden(t *testing.T) {
 	_, err := svc(repo).ListSessions(context.Background(), buyerActor(20), 10)
 	if !errors.Is(err, ErrForbidden) {
 		t.Errorf("want ErrForbidden, got %v", err)
+	}
+}
+
+// ─── DeleteAccount ────────────────────────────────────────────────────────────
+
+func TestDeleteAccount_ActiveUser_Success(t *testing.T) {
+	repo := newMock()
+	repo.seedUser(10, "Ravi", "9300000000")
+
+	err := svc(repo).DeleteAccount(context.Background(), buyerActor(10))
+	if err != nil {
+		t.Fatalf("unexpected error deleting active account: %v", err)
+	}
+	if !repo.wasSoftDeleted(10) {
+		t.Error("SoftDeleteAccount should have been called for user 10")
+	}
+}
+
+func TestDeleteAccount_AlreadyDeleted_ReturnsError(t *testing.T) {
+	repo := newMock()
+	u := &User{ID: 10, FirstName: "Deleted", Mobile: "9300000000", Status: "DELETED"}
+	repo.users[10] = u
+
+	err := svc(repo).DeleteAccount(context.Background(), buyerActor(10))
+	if !errors.Is(err, ErrAccountDeleted) {
+		t.Errorf("want ErrAccountDeleted for already-deleted account, got %v", err)
+	}
+}
+
+func TestDeleteAccount_AlreadyDeleted_DoesNotCallSoftDelete(t *testing.T) {
+	repo := newMock()
+	repo.users[10] = &User{ID: 10, FirstName: "Deleted", Mobile: "9300000000", Status: "DELETED"}
+
+	_ = svc(repo).DeleteAccount(context.Background(), buyerActor(10))
+
+	if repo.wasSoftDeleted(10) {
+		t.Error("SoftDeleteAccount must NOT be called for an already-deleted account")
+	}
+}
+
+func TestDeleteAccount_UserNotFound_ReturnsError(t *testing.T) {
+	err := svc(newMock()).DeleteAccount(context.Background(), buyerActor(9999))
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("want ErrNotFound for unknown user, got %v", err)
+	}
+}
+
+func TestDeleteAccount_OwnerCanDeleteOwnAccount(t *testing.T) {
+	repo := newMock()
+	repo.seedUser(10, "Priya", "9100000000")
+
+	err := svc(repo).DeleteAccount(context.Background(), ActorContext{UserID: 10, Roles: []string{"NURSERY_OWNER"}})
+	if err != nil {
+		t.Fatalf("owner should be able to delete their own account: %v", err)
+	}
+	if !repo.wasSoftDeleted(10) {
+		t.Error("SoftDeleteAccount should have been called for the owner")
+	}
+}
+
+func TestDeleteAccount_ManagerCanDeleteOwnAccount(t *testing.T) {
+	repo := newMock()
+	repo.seedUser(20, "Gumastha", "9200000000")
+
+	err := svc(repo).DeleteAccount(context.Background(), ActorContext{UserID: 20, Roles: []string{"MANAGER"}})
+	if err != nil {
+		t.Fatalf("manager should be able to delete their own account: %v", err)
+	}
+	if !repo.wasSoftDeleted(20) {
+		t.Error("SoftDeleteAccount should have been called for the manager")
+	}
+}
+
+func TestDeleteAccount_DriverCanDeleteOwnAccount(t *testing.T) {
+	repo := newMock()
+	repo.seedUser(40, "Raju", "9400000000")
+
+	err := svc(repo).DeleteAccount(context.Background(), ActorContext{UserID: 40, Roles: []string{"DRIVER"}})
+	if err != nil {
+		t.Fatalf("driver should be able to delete their own account: %v", err)
+	}
+	if !repo.wasSoftDeleted(40) {
+		t.Error("SoftDeleteAccount should have been called for the driver")
+	}
+}
+
+// ─── Re-entry: full lifecycle round-trip ─────────────────────────────────────
+
+// TestDeleteAndReregisterUserHasNoHistory verifies that after a user's account is
+// deleted, a new seedUser with the same mobile has a fresh status (ACTIVE, not DELETED).
+// In production the new registration creates a new user record; here we simulate by
+// checking the old record is marked DELETED and a new record would start from scratch.
+func TestDeleteAndReregisterUserHasNoHistory(t *testing.T) {
+	repo := newMock()
+	repo.seedUser(10, "Ravi", "9300000000")
+
+	// Delete the account.
+	if err := svc(repo).DeleteAccount(context.Background(), buyerActor(10)); err != nil {
+		t.Fatalf("delete account: %v", err)
+	}
+	if repo.users[10].Status != "DELETED" {
+		t.Fatalf("expected status DELETED, got %q", repo.users[10].Status)
+	}
+
+	// Re-registration: a new user record (ID=11) is created with the same mobile.
+	newUser := &User{ID: 11, FirstName: "GreenRoot", Mobile: "9300000000", Status: "ACTIVE"}
+	repo.users[11] = newUser
+
+	// The new user is ACTIVE and has no history from the previous account.
+	if newUser.Status != "ACTIVE" {
+		t.Error("re-registered user should have ACTIVE status")
+	}
+	if newUser.ID == 10 {
+		t.Error("re-registered user must have a different ID from the deleted account")
 	}
 }

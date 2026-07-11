@@ -14,10 +14,12 @@ var (
 	ErrForbidden               = errors.New("forbidden")
 	ErrInvalidInput            = errors.New("invalid input")
 	ErrInvalidAddress          = errors.New("invalid address")
-	ErrAlreadyOwner           = errors.New("user already owns a nursery")
-	ErrNotNurseryOwner        = errors.New("only the nursery owner can perform this action")
+	ErrAlreadyOwner            = errors.New("user already owns a nursery")
+	ErrNotNurseryOwner         = errors.New("only the nursery owner can perform this action")
 	ErrManagerCannotOwnNursery = errors.New("managers cannot register a nursery")
 	ErrDriverCannotOwnNursery  = errors.New("approved drivers cannot register a nursery")
+	ErrNotMember               = errors.New("user is not an active member of this nursery")
+	ErrOwnerCannotLeave        = errors.New("nursery owner cannot leave their own nursery")
 )
 
 // TrialCreator is satisfied by the subscriptions.Service to avoid a circular import.
@@ -116,11 +118,10 @@ func (s *Service) ApproveDriverConnection(ctx context.Context, actor ActorContex
 	return s.repository.ApproveDriverConnection(ctx, nurseryID, driverUserID, actor.UserID)
 }
 
-// ListConnectedDrivers returns all drivers connected to a nursery.
+// ListConnectedDrivers returns all drivers connected to a nursery. Owner or admin only.
 func (s *Service) ListConnectedDrivers(ctx context.Context, actor ActorContext, nurseryID int64) ([]NurseryDriver, error) {
 	isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
-	isMember, _ := s.repository.IsNurseryMember(ctx, nurseryID, actor.UserID)
-	if !isOwner && !isMember && !hasRole(actor, "ADMIN") {
+	if !isOwner && !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
 		return nil, ErrForbidden
 	}
 	return s.repository.ListConnectedDrivers(ctx, nurseryID)
@@ -182,8 +183,11 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, nurseryID int6
 	if !canManageNurseries(actor) {
 		return Nursery{}, ErrForbidden
 	}
-	input = normalizeNursery(input)
-	if err := validateNursery(input); err != nil {
+	input = normalizeUpdateNursery(input)
+	if err := validateUpdateNursery(input); err != nil {
+		return Nursery{}, err
+	}
+	if err := validateBranding(input); err != nil {
 		return Nursery{}, err
 	}
 	old, _ := s.repository.FindByID(ctx, nurseryID)
@@ -348,14 +352,63 @@ func (s *Service) GetCustomers(ctx context.Context, actor ActorContext, nurseryI
 }
 
 func (s *Service) RemoveUser(ctx context.Context, actor ActorContext, nurseryID int64, userID int64) error {
-	if !canManageNurseries(actor) {
+	isSelf := userID == actor.UserID
+	isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
+
+	// Owner cannot leave their own nursery through this route
+	if isSelf && isOwner {
+		return ErrOwnerCannotLeave
+	}
+	// Non-self removal requires owner or admin
+	if !isSelf && !isOwner && !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
 		return ErrForbidden
 	}
+
 	if err := s.repository.RemoveUser(ctx, nurseryID, userID); err != nil {
 		return err
 	}
+	// Cancel any PENDING invites for this user in this nursery so they cannot
+	// re-enter via an outstanding invite link after being removed.
+	_ = s.repository.CancelPendingInvitesForUser(ctx, nurseryID, userID)
+	// Invalidate the removed user's sessions so their next request forces re-login
+	_ = s.repository.InvalidateUserSessions(ctx, userID)
+
 	s.audit(ctx, actor, auditlog.EntityNurseryUser, userID, auditlog.ActionDelete,
-		"Nursery user removed", nil, map[string]any{"nursery_id": nurseryID, "user_id": userID})
+		fmt.Sprintf("Nursery user %d removed from nursery %d", userID, nurseryID),
+		nil, map[string]any{"nursery_id": nurseryID, "user_id": userID, "self": isSelf})
+	return nil
+}
+
+// LeaveNursery allows a manager or driver to remove themselves from any nursery they belong to.
+// The actor's own nursery membership is found automatically.
+func (s *Service) LeaveNursery(ctx context.Context, actor ActorContext) error {
+	nurseryID, err := s.repository.FindActiveManagerNursery(ctx, actor.UserID)
+	if err != nil {
+		return ErrNotMember
+	}
+	isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
+	if isOwner {
+		return ErrOwnerCannotLeave
+	}
+	return s.RemoveUser(ctx, actor, nurseryID, actor.UserID)
+}
+
+// DisconnectDriver removes a driver from a nursery. Owner only.
+func (s *Service) DisconnectDriver(ctx context.Context, actor ActorContext, nurseryID int64, driverUserID int64) error {
+	isSelf := driverUserID == actor.UserID
+	if !isSelf {
+		isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
+		if !isOwner && !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+			return ErrForbidden
+		}
+	}
+	if err := s.repository.DisconnectDriver(ctx, nurseryID, driverUserID, actor.UserID); err != nil {
+		return err
+	}
+	_ = s.repository.InvalidateUserSessions(ctx, driverUserID)
+	s.audit(ctx, actor, auditlog.EntityNurseryUser, driverUserID, auditlog.ActionDelete,
+		fmt.Sprintf("Driver %d disconnected from nursery %d", driverUserID, nurseryID),
+		nil, map[string]any{"nursery_id": nurseryID, "driver_user_id": driverUserID})
 	return nil
 }
 
@@ -411,6 +464,93 @@ func validateNursery(input CreateNurseryRequest) error {
 	}
 }
 
+func normalizeUpdateNursery(input UpdateNurseryRequest) UpdateNurseryRequest {
+	input.Name = strings.TrimSpace(input.Name)
+	if input.BrandIconKey != nil {
+		s := strings.ToLower(strings.TrimSpace(*input.BrandIconKey))
+		input.BrandIconKey = &s
+	}
+	if input.BrandColor != nil {
+		s := strings.ToUpper(strings.TrimSpace(*input.BrandColor))
+		input.BrandColor = &s
+	}
+	if input.LogoURL != nil {
+		s := strings.TrimSpace(*input.LogoURL)
+		input.LogoURL = &s
+	}
+	return input
+}
+
+func validateUpdateNursery(input UpdateNurseryRequest) error {
+	if input.Name == "" {
+		return ErrInvalidInput
+	}
+	if input.Status != nil {
+		status := strings.ToUpper(strings.TrimSpace(*input.Status))
+		switch status {
+		case "ACTIVE", "INACTIVE", "SUSPENDED", "DELETED", "PENDING", "APPROVED", "REJECTED":
+		default:
+			return ErrInvalidInput
+		}
+	}
+	return nil
+}
+
+// validBrandColors is the curated palette. Values are uppercased 7-char hex.
+var validBrandColors = map[string]bool{
+	"#2E7D32": true, // deep forest green (default)
+	"#388E3C": true,
+	"#43A047": true,
+	"#66BB6A": true,
+	"#F9A825": true, // amber
+	"#EF6C00": true, // orange
+	"#5D4037": true, // brown
+	"#1565C0": true, // blue
+	"#6A1B9A": true, // purple
+	"#37474F": true, // dark slate
+}
+
+// validBrandIconKeys is the allowed set of preset icon identifiers.
+var validBrandIconKeys = map[string]bool{
+	"leaf": true, "tree": true, "flower": true, "seedling": true, "pot": true,
+	"cactus": true, "palm": true, "bonsai": true, "herb": true, "lotus": true,
+}
+
+var (
+	ErrInvalidBrandColor   = errors.New("brand_color is not in the allowed palette")
+	ErrInvalidBrandIconKey = errors.New("brand_icon_key is not a valid preset icon")
+	ErrInvalidLogoURL      = errors.New("logo_url must be a valid URL pointing to the nursery-logos bucket")
+	ErrBrandingConflict    = errors.New("logo_url and brand_icon_key cannot both be set")
+)
+
+func validateBranding(input UpdateNurseryRequest) error {
+	hasLogo := input.LogoURL != nil && *input.LogoURL != ""
+	hasIcon := input.BrandIconKey != nil && *input.BrandIconKey != ""
+
+	if hasLogo && hasIcon {
+		return ErrBrandingConflict
+	}
+	if hasLogo {
+		u := *input.LogoURL
+		if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+			return ErrInvalidLogoURL
+		}
+		if !strings.Contains(u, "nursery-logos") {
+			return ErrInvalidLogoURL
+		}
+	}
+	if hasIcon && !validBrandIconKeys[*input.BrandIconKey] {
+		return ErrInvalidBrandIconKey
+	}
+	if input.BrandColor != nil && *input.BrandColor != "" {
+		if !validBrandColors[*input.BrandColor] {
+			return ErrInvalidBrandColor
+		}
+	}
+	// Mutual exclusion: setting logo clears icon, setting icon clears logo (done at DB level via $11/$12).
+	return nil
+}
+
 func validateAddress(input AddressRequest) error {
 	if input.AddressLine1 != nil && strings.TrimSpace(*input.AddressLine1) == "" {
 		return ErrInvalidAddress
@@ -450,4 +590,3 @@ func upperOptional(value *string) {
 	}
 	*value = strings.ToUpper(strings.TrimSpace(*value))
 }
-

@@ -41,6 +41,10 @@ type Repository interface {
 	ListConnectedDrivers(ctx context.Context, nurseryID int64) ([]NurseryDriver, error)
 	GetCustomers(ctx context.Context, nurseryID int64) ([]Customer, error)
 	GrantOwnerRole(ctx context.Context, ownerUserID int64, assignedByUserID int64) error
+	InvalidateUserSessions(ctx context.Context, userID int64) error
+	DisconnectDriver(ctx context.Context, nurseryID int64, driverUserID int64, actorID int64) error
+	FindActiveManagerNursery(ctx context.Context, userID int64) (int64, error)
+	CancelPendingInvitesForUser(ctx context.Context, nurseryID int64, userID int64) error
 }
 
 type PostgresRepository struct {
@@ -64,7 +68,8 @@ func (r *PostgresRepository) List(ctx context.Context, input ListNurseriesReques
 	query := fmt.Sprintf(`
 		SELECT DISTINCT n.nursery_id, n.nursery_code, n.nursery_name, n.gst_number, n.mobile,
 			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
-			n.created_at, n.updated_at, n.created_by, n.updated_by, n.rejection_reason, n.rejected_at
+			n.created_at, n.updated_at, n.created_by, n.updated_by, n.rejection_reason, n.rejected_at,
+			n.logo_url, n.brand_icon_key, n.brand_color
 		FROM public.nurseries n
 		%s
 		ORDER BY n.nursery_id DESC
@@ -218,6 +223,9 @@ func (r *PostgresRepository) Update(ctx context.Context, actorID int64, nurseryI
 			website = NULLIF($7, ''),
 			description = NULLIF($8, ''),
 			status = $9,
+			logo_url = $11,
+			brand_icon_key = $12,
+			brand_color = $13,
 			updated_at = CURRENT_TIMESTAMP,
 			updated_by = $10
 		WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'
@@ -235,6 +243,9 @@ func (r *PostgresRepository) Update(ctx context.Context, actorID int64, nurseryI
 		stringOrEmpty(input.Description),
 		statusOrActive(input.Status),
 		actorID,
+		nullOrString(input.LogoURL),
+		nullOrString(input.BrandIconKey),
+		nullOrString(input.BrandColor),
 	)
 	if err != nil {
 		return nil, err
@@ -640,7 +651,10 @@ func (r *PostgresRepository) findNurseryDriver(ctx context.Context, id int64) (*
 }
 
 func (r *PostgresRepository) RemoveUser(ctx context.Context, nurseryID int64, userID int64) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE public.nursery_users SET is_active = false WHERE nursery_id = $1 AND user_id = $2 AND COALESCE(is_active, true) = true`, nurseryID, userID)
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE public.nursery_users SET is_active = false, status = 'INACTIVE', updated_at = CURRENT_TIMESTAMP
+		 WHERE nursery_id = $1 AND user_id = $2 AND COALESCE(is_active, true) = true`,
+		nurseryID, userID)
 	if err != nil {
 		return err
 	}
@@ -652,6 +666,58 @@ func (r *PostgresRepository) RemoveUser(ctx context.Context, nurseryID int64, us
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *PostgresRepository) InvalidateUserSessions(ctx context.Context, userID int64) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE public.user_sessions
+		 SET session_status = 'LOGGED_OUT', session_token = NULL, last_activity_at = CURRENT_TIMESTAMP
+		 WHERE user_id = $1 AND session_status = 'ACTIVE'`,
+		userID)
+	return err
+}
+
+func (r *PostgresRepository) DisconnectDriver(ctx context.Context, nurseryID int64, driverUserID int64, actorID int64) error {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE public.nursery_drivers
+		 SET connection_status = 'DISCONNECTED', disconnected_at = CURRENT_TIMESTAMP, disconnected_by = $3
+		 WHERE nursery_id = $1 AND driver_user_id = $2 AND connection_status IN ('REQUESTED','CONNECTED','APPROVED')`,
+		nurseryID, driverUserID, actorID)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *PostgresRepository) FindActiveManagerNursery(ctx context.Context, userID int64) (int64, error) {
+	var nurseryID int64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT nursery_id FROM public.nursery_users
+		 WHERE user_id = $1 AND COALESCE(is_active, true) = true
+		 LIMIT 1`,
+		userID).Scan(&nurseryID)
+	if err == sql.ErrNoRows {
+		return 0, ErrNotFound
+	}
+	return nurseryID, err
+}
+
+func (r *PostgresRepository) CancelPendingInvitesForUser(ctx context.Context, nurseryID int64, userID int64) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE public.invites
+		SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
+		WHERE nursery_id = $1
+		  AND status = 'PENDING'
+		  AND target_mobile = (SELECT mobile FROM public.users WHERE user_id = $2 LIMIT 1)
+	`, nurseryID, userID)
+	return err
 }
 
 func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error) {
@@ -670,7 +736,8 @@ func (r *PostgresRepository) ListByUserID(ctx context.Context, userID int64) ([]
 	const query = `
 		SELECT DISTINCT n.nursery_id, n.nursery_code, n.nursery_name, n.gst_number, n.mobile,
 			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
-			n.created_at, n.updated_at, n.created_by, n.updated_by, n.rejection_reason, n.rejected_at
+			n.created_at, n.updated_at, n.created_by, n.updated_by, n.rejection_reason, n.rejected_at,
+			n.logo_url, n.brand_icon_key, n.brand_color
 		FROM public.nurseries n
 		JOIN public.nursery_users nu ON nu.nursery_id = n.nursery_id
 		WHERE nu.user_id = $1
@@ -769,7 +836,8 @@ func (r *PostgresRepository) scanNursery(ctx context.Context, where string, args
 	query := `
 		SELECT n.nursery_id, n.nursery_code, n.nursery_name, n.gst_number, n.mobile,
 			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
-			n.created_at, n.updated_at, n.created_by, n.updated_by, n.rejection_reason, n.rejected_at
+			n.created_at, n.updated_at, n.created_by, n.updated_by, n.rejection_reason, n.rejected_at,
+			n.logo_url, n.brand_icon_key, n.brand_color
 		FROM public.nurseries n
 		` + where
 	nursery, err := scanNurseryRow(r.db.QueryRowContext(ctx, query, args...))
@@ -835,9 +903,15 @@ func scanNurseryRows(rows *sql.Rows) (Nursery, error) {
 func scanNursery(row interface{ Scan(dest ...any) error }) (Nursery, error) {
 	var nursery Nursery
 	var code, gst, mobile, email, website, description, rejectionReason sql.NullString
+	var logoURL, brandIconKey, brandColor sql.NullString
 	var ownerUserID, createdBy, updatedBy sql.NullInt64
 	var rejectedAt sql.NullTime
-	if err := row.Scan(&nursery.ID, &code, &nursery.Name, &gst, &mobile, &email, &website, &description, &nursery.Status, &ownerUserID, &nursery.CreatedAt, &nursery.UpdatedAt, &createdBy, &updatedBy, &rejectionReason, &rejectedAt); err != nil {
+	if err := row.Scan(
+		&nursery.ID, &code, &nursery.Name, &gst, &mobile, &email, &website, &description,
+		&nursery.Status, &ownerUserID, &nursery.CreatedAt, &nursery.UpdatedAt, &createdBy, &updatedBy,
+		&rejectionReason, &rejectedAt,
+		&logoURL, &brandIconKey, &brandColor,
+	); err != nil {
 		return Nursery{}, err
 	}
 	nursery.Code = nullableString(code)
@@ -854,6 +928,9 @@ func scanNursery(row interface{ Scan(dest ...any) error }) (Nursery, error) {
 	nursery.OwnerUserID = nullableInt64(ownerUserID)
 	nursery.CreatedBy = nullableInt64(createdBy)
 	nursery.UpdatedBy = nullableInt64(updatedBy)
+	nursery.LogoURL = nullableString(logoURL)
+	nursery.BrandIconKey = nullableString(brandIconKey)
+	nursery.BrandColor = nullableString(brandColor)
 	return nursery, nil
 }
 
@@ -979,4 +1056,17 @@ func floatOrNil(value *float64) any {
 		return nil
 	}
 	return *value
+}
+
+// nullOrString returns nil when the pointer is nil or the trimmed string is empty,
+// otherwise returns the trimmed string. Used for optional DB columns.
+func nullOrString(value *string) any {
+	if value == nil {
+		return nil
+	}
+	s := strings.TrimSpace(*value)
+	if s == "" {
+		return nil
+	}
+	return s
 }

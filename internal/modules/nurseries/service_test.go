@@ -20,6 +20,10 @@ type mockRepo struct {
 	nDrivers  map[int64][]*NurseryDriver
 	customers map[int64][]Customer // nurseryID → customers
 
+	// tracking fields for lifecycle assertions
+	invalidatedSessions    []int64            // user IDs whose sessions were invalidated
+	activeManagerNurseries map[int64]int64    // userID → nurseryID for FindActiveManagerNursery
+
 	nextNurseryID  int64
 	nextAddressID  int64
 	nextUserLinkID int64
@@ -28,19 +32,20 @@ type mockRepo struct {
 
 func newMock() *mockRepo {
 	return &mockRepo{
-		nurseries: make(map[int64]*Nursery),
-		owners:    make(map[int64]int64),
-		members:   make(map[string]bool),
-		managers:  make(map[int64]bool),
-		drivers:   make(map[int64]bool),
-		addresses: make(map[int64]*Address),
-		users:     make(map[int64][]*UserLink),
-		nDrivers:  make(map[int64][]*NurseryDriver),
-		customers: make(map[int64][]Customer),
-		nextNurseryID:  100,
-		nextAddressID:  200,
-		nextUserLinkID: 300,
-		nextDriverID:   400,
+		nurseries:              make(map[int64]*Nursery),
+		owners:                 make(map[int64]int64),
+		members:                make(map[string]bool),
+		managers:               make(map[int64]bool),
+		drivers:                make(map[int64]bool),
+		addresses:              make(map[int64]*Address),
+		users:                  make(map[int64][]*UserLink),
+		nDrivers:               make(map[int64][]*NurseryDriver),
+		customers:              make(map[int64][]Customer),
+		activeManagerNurseries: make(map[int64]int64),
+		nextNurseryID:          100,
+		nextAddressID:          200,
+		nextUserLinkID:         300,
+		nextDriverID:           400,
 	}
 }
 
@@ -266,6 +271,46 @@ func (m *mockRepo) ListConnectedDrivers(_ context.Context, nurseryID int64) ([]N
 
 func (m *mockRepo) GetCustomers(_ context.Context, nurseryID int64) ([]Customer, error) {
 	return m.customers[nurseryID], nil
+}
+
+func (m *mockRepo) GrantOwnerRole(_ context.Context, _ int64, _ int64) error { return nil }
+
+func (m *mockRepo) InvalidateUserSessions(_ context.Context, userID int64) error {
+	m.invalidatedSessions = append(m.invalidatedSessions, userID)
+	return nil
+}
+
+func (m *mockRepo) DisconnectDriver(_ context.Context, nurseryID, driverUserID, _ int64) error {
+	for i, nd := range m.nDrivers[nurseryID] {
+		if nd.DriverUserID == driverUserID {
+			nd.ConnectionStatus = "DISCONNECTED"
+			m.nDrivers[nurseryID][i] = nd
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+func (m *mockRepo) FindActiveManagerNursery(_ context.Context, userID int64) (int64, error) {
+	nid, ok := m.activeManagerNurseries[userID]
+	if !ok {
+		return 0, ErrNotFound
+	}
+	return nid, nil
+}
+
+func (m *mockRepo) CancelPendingInvitesForUser(_ context.Context, _ int64, _ int64) error {
+	return nil
+}
+
+// wasSessionInvalidated reports whether InvalidateUserSessions was called for userID.
+func (m *mockRepo) wasSessionInvalidated(userID int64) bool {
+	for _, id := range m.invalidatedSessions {
+		if id == userID {
+			return true
+		}
+	}
+	return false
 }
 
 // ─── actors ──────────────────────────────────────────────────────────────────
@@ -755,5 +800,370 @@ func TestGetCustomers_EmptyListOK(t *testing.T) {
 	}
 	if len(customers) != 0 {
 		t.Errorf("want 0 customers, got %d", len(customers))
+	}
+}
+
+// ─── Branding validation ──────────────────────────────────────────────────────
+
+func TestValidateBranding_ValidColor(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+
+	_, err := svc(repo).Update(context.Background(), ownerActor(10), 1, UpdateNurseryRequest{
+		Name:       "Nursery",
+		BrandColor: ptr("#2E7D32"),
+	})
+	if err != nil {
+		t.Errorf("valid palette color should be accepted, got: %v", err)
+	}
+}
+
+func TestValidateBranding_InvalidColorHex(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+
+	_, err := svc(repo).Update(context.Background(), ownerActor(10), 1, UpdateNurseryRequest{
+		Name:       "Nursery",
+		BrandColor: ptr("#FFFFFF"),
+	})
+	if !errors.Is(err, ErrInvalidBrandColor) {
+		t.Errorf("non-palette color should return ErrInvalidBrandColor, got: %v", err)
+	}
+}
+
+func TestValidateBranding_InvalidColorNotHex(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+
+	_, err := svc(repo).Update(context.Background(), ownerActor(10), 1, UpdateNurseryRequest{
+		Name:       "Nursery",
+		BrandColor: ptr("green"),
+	})
+	if !errors.Is(err, ErrInvalidBrandColor) {
+		t.Errorf("non-hex color should return ErrInvalidBrandColor, got: %v", err)
+	}
+}
+
+func TestValidateBranding_ValidIconKey(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+
+	_, err := svc(repo).Update(context.Background(), ownerActor(10), 1, UpdateNurseryRequest{
+		Name:         "Nursery",
+		BrandIconKey: ptr("leaf"),
+		BrandColor:   ptr("#2E7D32"),
+	})
+	if err != nil {
+		t.Errorf("valid icon key should be accepted, got: %v", err)
+	}
+}
+
+func TestValidateBranding_InvalidIconKey(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+
+	_, err := svc(repo).Update(context.Background(), ownerActor(10), 1, UpdateNurseryRequest{
+		Name:         "Nursery",
+		BrandIconKey: ptr("🌿"),
+	})
+	if !errors.Is(err, ErrInvalidBrandIconKey) {
+		t.Errorf("emoji icon key should return ErrInvalidBrandIconKey, got: %v", err)
+	}
+}
+
+func TestValidateBranding_LogoAndIconConflict(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+
+	_, err := svc(repo).Update(context.Background(), ownerActor(10), 1, UpdateNurseryRequest{
+		Name:         "Nursery",
+		LogoURL:      ptr("http://localhost:9000/nursery-logos/abc.jpg"),
+		BrandIconKey: ptr("leaf"),
+	})
+	if !errors.Is(err, ErrBrandingConflict) {
+		t.Errorf("setting both logo_url and brand_icon_key should return ErrBrandingConflict, got: %v", err)
+	}
+}
+
+func TestValidateBranding_InvalidLogoURL_NotHTTP(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+
+	_, err := svc(repo).Update(context.Background(), ownerActor(10), 1, UpdateNurseryRequest{
+		Name:    "Nursery",
+		LogoURL: ptr("ftp://evil.com/logo.jpg"),
+	})
+	if !errors.Is(err, ErrInvalidLogoURL) {
+		t.Errorf("non-HTTP logo URL should return ErrInvalidLogoURL, got: %v", err)
+	}
+}
+
+func TestValidateBranding_InvalidLogoURL_WrongBucket(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+
+	_, err := svc(repo).Update(context.Background(), ownerActor(10), 1, UpdateNurseryRequest{
+		Name:    "Nursery",
+		LogoURL: ptr("http://localhost:9000/profile-images/abc.jpg"),
+	})
+	if !errors.Is(err, ErrInvalidLogoURL) {
+		t.Errorf("logo URL pointing to wrong bucket should return ErrInvalidLogoURL, got: %v", err)
+	}
+}
+
+func TestValidateBranding_ValidLogoURL(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+
+	_, err := svc(repo).Update(context.Background(), ownerActor(10), 1, UpdateNurseryRequest{
+		Name:    "Nursery",
+		LogoURL: ptr("http://localhost:9000/nursery-logos/NUR000001.jpg"),
+	})
+	if err != nil {
+		t.Errorf("valid logo URL should be accepted, got: %v", err)
+	}
+}
+
+func TestValidateBranding_ManagerCannotUpdate(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+
+	_, err := svc(repo).Update(context.Background(), managerActor(20), 1, UpdateNurseryRequest{
+		Name:         "Nursery",
+		BrandIconKey: ptr("leaf"),
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Errorf("manager should not be able to update branding, got: %v", err)
+	}
+}
+
+// ─── RemoveUser (extended lifecycle) ─────────────────────────────────────────
+
+func TestRemoveUser_OwnerRemovesManager(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+	repo.owners[10] = 1
+	repo.users[1] = []*UserLink{{ID: 1, NurseryID: 1, UserID: 20}}
+
+	err := svc(repo).RemoveUser(context.Background(), ownerActor(10), 1, 20)
+	if err != nil {
+		t.Fatalf("owner should remove a manager: %v", err)
+	}
+	if len(repo.users[1]) != 0 {
+		t.Error("manager should have been removed from users list")
+	}
+}
+
+func TestRemoveUser_SessionsInvalidatedOnRemoval(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+	repo.owners[10] = 1
+	repo.users[1] = []*UserLink{{ID: 1, NurseryID: 1, UserID: 20}}
+
+	_ = svc(repo).RemoveUser(context.Background(), ownerActor(10), 1, 20)
+
+	if !repo.wasSessionInvalidated(20) {
+		t.Error("removed manager's sessions should have been invalidated")
+	}
+}
+
+func TestRemoveUser_OwnerCannotRemoveSelf(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+	repo.owners[10] = 1
+	repo.users[1] = []*UserLink{{ID: 1, NurseryID: 1, UserID: 10}}
+
+	err := svc(repo).RemoveUser(context.Background(), ownerActor(10), 1, 10)
+	if !errors.Is(err, ErrOwnerCannotLeave) {
+		t.Errorf("want ErrOwnerCannotLeave when owner tries to remove self, got %v", err)
+	}
+}
+
+func TestRemoveUser_ManagerNotInNursery(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+	repo.owners[10] = 1
+	// no users seeded for nursery 1
+
+	err := svc(repo).RemoveUser(context.Background(), ownerActor(10), 1, 99)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("want ErrNotFound for unknown user, got %v", err)
+	}
+}
+
+func TestRemoveUser_ManagerSelfRemoval(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+	// manager 20 is in the nursery; user 10 is the owner (not user 20)
+	repo.users[1] = []*UserLink{{ID: 1, NurseryID: 1, UserID: 20}}
+
+	// manager 20 removes themselves (isSelf=true, isOwner=false)
+	err := svc(repo).RemoveUser(context.Background(), managerActor(20), 1, 20)
+	if err != nil {
+		t.Fatalf("manager should be able to self-remove: %v", err)
+	}
+	if !repo.wasSessionInvalidated(20) {
+		t.Error("self-removed manager sessions should be invalidated")
+	}
+}
+
+// ─── LeaveNursery ─────────────────────────────────────────────────────────────
+
+func TestLeaveNursery_ManagerLeaves(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+	repo.users[1] = []*UserLink{{ID: 1, NurseryID: 1, UserID: 20}}
+	repo.activeManagerNurseries[20] = 1 // manager 20 → nursery 1
+
+	err := svc(repo).LeaveNursery(context.Background(), managerActor(20))
+	if err != nil {
+		t.Fatalf("manager should be able to leave nursery: %v", err)
+	}
+	if len(repo.users[1]) != 0 {
+		t.Error("manager should have been removed from the nursery after leaving")
+	}
+}
+
+func TestLeaveNursery_SessionsInvalidatedOnLeave(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+	repo.users[1] = []*UserLink{{ID: 1, NurseryID: 1, UserID: 20}}
+	repo.activeManagerNurseries[20] = 1
+
+	_ = svc(repo).LeaveNursery(context.Background(), managerActor(20))
+
+	if !repo.wasSessionInvalidated(20) {
+		t.Error("leaving manager's sessions should be invalidated to force re-login")
+	}
+}
+
+func TestLeaveNursery_NoActiveMembership(t *testing.T) {
+	repo := newMock()
+	// no activeManagerNurseries entry for user 20
+
+	err := svc(repo).LeaveNursery(context.Background(), managerActor(20))
+	if !errors.Is(err, ErrNotMember) {
+		t.Errorf("want ErrNotMember for user with no nursery, got %v", err)
+	}
+}
+
+func TestLeaveNursery_OwnerCannotLeave(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+	repo.owners[10] = 1
+	repo.activeManagerNurseries[10] = 1 // owner's nursery returned by FindActiveManagerNursery
+
+	err := svc(repo).LeaveNursery(context.Background(), ownerActor(10))
+	if !errors.Is(err, ErrOwnerCannotLeave) {
+		t.Errorf("want ErrOwnerCannotLeave when owner tries to leave, got %v", err)
+	}
+}
+
+func TestLeaveNursery_CanRejoinAfterLeaving(t *testing.T) {
+	// Simulates: manager leaves → manager's record is gone → can accept a new invite.
+	// This test verifies leave removes the record; the invite acceptance is in the invites module.
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+	repo.users[1] = []*UserLink{{ID: 1, NurseryID: 1, UserID: 20}}
+	repo.activeManagerNurseries[20] = 1
+
+	if err := svc(repo).LeaveNursery(context.Background(), managerActor(20)); err != nil {
+		t.Fatalf("leave: %v", err)
+	}
+	if len(repo.users[1]) != 0 {
+		t.Fatal("manager should have been removed")
+	}
+
+	// After leaving, the user is no longer in the nursery — they can receive and accept a new invite.
+	if repo.members[mkKeyInt(1, 20)] {
+		t.Error("member entry should not persist after leaving")
+	}
+}
+
+// ─── DisconnectDriver ─────────────────────────────────────────────────────────
+
+func TestDisconnectDriver_OwnerDisconnects(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+	repo.owners[10] = 1
+	repo.nDrivers[1] = []*NurseryDriver{{ID: 1, NurseryID: 1, DriverUserID: 50, ConnectionStatus: "CONNECTED"}}
+
+	err := svc(repo).DisconnectDriver(context.Background(), ownerActor(10), 1, 50)
+	if err != nil {
+		t.Fatalf("owner should disconnect a driver: %v", err)
+	}
+	if repo.nDrivers[1][0].ConnectionStatus != "DISCONNECTED" {
+		t.Error("driver connection should be DISCONNECTED")
+	}
+}
+
+func TestDisconnectDriver_DriverSelfDisconnects(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+	repo.nDrivers[1] = []*NurseryDriver{{ID: 1, NurseryID: 1, DriverUserID: 50, ConnectionStatus: "CONNECTED"}}
+
+	// Driver 50 disconnects themselves (isSelf = true)
+	err := svc(repo).DisconnectDriver(context.Background(), ActorContext{UserID: 50, Roles: []string{"DRIVER"}}, 1, 50)
+	if err != nil {
+		t.Fatalf("driver should self-disconnect: %v", err)
+	}
+}
+
+func TestDisconnectDriver_BuyerForbidden(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+	repo.nDrivers[1] = []*NurseryDriver{{ID: 1, NurseryID: 1, DriverUserID: 50, ConnectionStatus: "CONNECTED"}}
+
+	err := svc(repo).DisconnectDriver(context.Background(), buyerActor(99), 1, 50)
+	if !errors.Is(err, ErrForbidden) {
+		t.Errorf("want ErrForbidden for buyer, got %v", err)
+	}
+}
+
+func TestDisconnectDriver_ManagerForbidden(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+	repo.nDrivers[1] = []*NurseryDriver{{ID: 1, NurseryID: 1, DriverUserID: 50, ConnectionStatus: "CONNECTED"}}
+
+	// manager 20 is not the owner and not the driver
+	err := svc(repo).DisconnectDriver(context.Background(), managerActor(20), 1, 50)
+	if !errors.Is(err, ErrForbidden) {
+		t.Errorf("want ErrForbidden for manager, got %v", err)
+	}
+}
+
+func TestDisconnectDriver_NotFound(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+	repo.owners[10] = 1
+	// no drivers seeded
+
+	err := svc(repo).DisconnectDriver(context.Background(), ownerActor(10), 1, 99)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("want ErrNotFound for unknown driver, got %v", err)
+	}
+}
+
+func TestDisconnectDriver_SessionsInvalidated(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+	repo.owners[10] = 1
+	repo.nDrivers[1] = []*NurseryDriver{{ID: 1, NurseryID: 1, DriverUserID: 50, ConnectionStatus: "CONNECTED"}}
+
+	_ = svc(repo).DisconnectDriver(context.Background(), ownerActor(10), 1, 50)
+
+	if !repo.wasSessionInvalidated(50) {
+		t.Error("disconnected driver's sessions should be invalidated")
+	}
+}
+
+func TestDisconnectDriver_AdminDisconnects(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
+	repo.nDrivers[1] = []*NurseryDriver{{ID: 1, NurseryID: 1, DriverUserID: 50, ConnectionStatus: "APPROVED"}}
+
+	err := svc(repo).DisconnectDriver(context.Background(), adminActor(1), 1, 50)
+	if err != nil {
+		t.Fatalf("admin should be able to disconnect any driver: %v", err)
 	}
 }

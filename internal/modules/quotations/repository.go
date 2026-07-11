@@ -688,10 +688,12 @@ func baseSelect() string {
 		       q.buyer_nursery_id,
 		       NULLIF(TRIM(COALESCE(um.first_name, '') || ' ' || COALESCE(um.last_name, '')), '') AS assigned_manager_name,
 		       o.order_code AS converted_order_code,
-		       q.converted_at
+		       q.converted_at,
+		       n.brand_color AS nursery_brand_color
 		FROM public.quotations q
 		LEFT JOIN public.users um ON um.user_id = q.assigned_manager_user_id
 		LEFT JOIN public.orders o ON o.order_id = q.converted_order_id
+		LEFT JOIN public.nurseries n ON n.nursery_id = q.nursery_id
 		WHERE q.deleted_at IS NULL
 	`
 }
@@ -840,6 +842,7 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 		assignedManagerName   sql.NullString
 		convertedOrderCode    sql.NullString
 		convertedAt           sql.NullTime
+		nurseryBrandColor     sql.NullString
 	)
 	if err := row.Scan(
 		&q.ID, &q.QuotationCode, &q.QuotationType,
@@ -852,6 +855,7 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 		&deletedAt, &q.CreatedAt, &q.UpdatedAt,
 		&buyerNurseryID, &assignedManagerName,
 		&convertedOrderCode, &convertedAt,
+		&nurseryBrandColor,
 	); err != nil {
 		return Quotation{}, err
 	}
@@ -862,6 +866,7 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 	q.NurseryID = nullableInt64(nurseryID)
 	q.NurseryName = nullableString(nurseryName)
 	q.NurseryPhone = nullableString(nurseryPhone)
+	q.NurseryBrandColor = nullableString(nurseryBrandColor)
 	q.CustomerUserID = nullableInt64(customerUserID)
 	q.BuyerNurseryID = nullableInt64(buyerNurseryID)
 	q.AssignedManagerUserID = nullableInt64(assignedManagerUserID)

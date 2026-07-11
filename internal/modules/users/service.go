@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/revocation"
 	platformstorage "github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 )
 
@@ -17,6 +18,7 @@ var (
 	ErrForbidden      = errors.New("forbidden")
 	ErrInvalidInput   = errors.New("invalid input")
 	ErrInvalidAddress = errors.New("invalid address")
+	ErrAccountDeleted = errors.New("account has already been deleted")
 )
 
 const defaultUserFirstName = "GreenRoot"
@@ -195,6 +197,35 @@ func (s *Service) ListSessions(ctx context.Context, actor ActorContext, userID i
 		return nil, ErrForbidden
 	}
 	return s.repository.ListSessions(ctx, userID)
+}
+
+// DeleteAccount soft-deletes the caller's own account.
+// PII is anonymized, all sessions are revoked, and all role memberships are deactivated.
+// Business records (orders, quotations, payments) are preserved for legal compliance.
+func (s *Service) DeleteAccount(ctx context.Context, actor ActorContext) error {
+	user, err := s.repository.FindUserByID(ctx, actor.UserID)
+	if err != nil {
+		return err
+	}
+	if user.Status == "DELETED" {
+		return ErrAccountDeleted
+	}
+	if err := s.repository.SoftDeleteAccount(ctx, actor.UserID); err != nil {
+		return err
+	}
+	revocation.Revoke(actor.UserID, 20*time.Minute)
+	s.auditSvc.Log(ctx, auditlog.Entry{
+		UserID:      actor.UserID,
+		Module:      auditlog.ModuleUsers,
+		EntityType:  auditlog.EntityUser,
+		EntityID:    actor.UserID,
+		Action:      auditlog.ActionDelete,
+		Description: "Account self-deleted and PII anonymized",
+		NewValue:    map[string]any{"status": "DELETED", "self_initiated": true},
+		IPAddress:   actor.IPAddress,
+		DeviceInfo:  actor.UserAgent,
+	})
+	return nil
 }
 
 func (s *Service) recordChange(ctx context.Context, actor ActorContext, table string, recordID int64, action string, activityType string, entity string, entityID int64, data any) {

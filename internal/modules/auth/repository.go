@@ -454,15 +454,24 @@ func (r *PostgresRepository) GetWorkspaces(ctx context.Context, userID int64) ([
 		return nil, err
 	}
 
-	// Driver workspace
+	// Driver workspace — include the connected nursery_id if one exists so the
+	// mobile app can offer self-disconnect without a separate lookup.
 	const driverQuery = `
-		SELECT 1 FROM public.drivers
-		WHERE user_id = $1 AND approval_status = 'APPROVED'
+		SELECT d.user_id, nd.nursery_id
+		FROM public.drivers d
+		LEFT JOIN public.nursery_drivers nd
+		    ON nd.driver_user_id = d.user_id AND nd.connection_status = 'CONNECTED'
+		WHERE d.user_id = $1 AND d.approval_status = 'APPROVED'
 		LIMIT 1
 	`
-	var exists int
-	if err := r.db.QueryRowContext(ctx, driverQuery, userID).Scan(&exists); err == nil {
-		workspaces = append(workspaces, Workspace{Type: "DRIVER", Role: "DRIVER"})
+	var driverUserID int64
+	var driverNurseryID sql.NullInt64
+	if err := r.db.QueryRowContext(ctx, driverQuery, userID).Scan(&driverUserID, &driverNurseryID); err == nil {
+		w := Workspace{Type: "DRIVER", Role: "DRIVER"}
+		if driverNurseryID.Valid {
+			w.NurseryID = &driverNurseryID.Int64
+		}
+		workspaces = append(workspaces, w)
 	}
 
 	return workspaces, nil

@@ -230,6 +230,18 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, SessionsResponse{Sessions: sessions})
 }
 
+func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	if err := h.service.DeleteAccount(r.Context(), actor); err != nil {
+		writeUsersError(w, err)
+		return
+	}
+	response.OK(w, map[string]string{"message": "Account deleted. Your personal data has been removed."})
+}
+
 func (h *Handler) actorAndPathUser(w http.ResponseWriter, r *http.Request) (ActorContext, int64, bool) {
 	actor, ok := h.actor(w, r)
 	if !ok {
@@ -278,6 +290,8 @@ func writeUsersError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid user profile input")
 	case errors.Is(err, ErrInvalidAddress):
 		response.Error(w, http.StatusBadRequest, "invalid_address", "invalid address input")
+	case errors.Is(err, ErrAccountDeleted):
+		response.Error(w, http.StatusGone, "account_deleted", "this account has already been deleted")
 	default:
 		response.Error(w, http.StatusInternalServerError, "users_error", "users request failed")
 	}

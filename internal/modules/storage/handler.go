@@ -50,7 +50,7 @@ func (h *Handler) Presign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !platformstorage.IsValidBucket(req.Bucket) {
-		response.Error(w, 400, "invalid_bucket", fmt.Sprintf("bucket must be one of: profile-images, plant-images, loading-photos, delivery-photos, attachments, market-ads"))
+		response.Error(w, 400, "invalid_bucket", "bucket must be one of: profile-images, plant-images, loading-photos, delivery-photos, attachments, market-ads, nursery-logos")
 		return
 	}
 

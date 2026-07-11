@@ -649,16 +649,7 @@ func createDraftQuotation(t *testing.T, token string, nurseryID int64, assignedM
 
 func getOwnerNurseryID(t *testing.T, token string) int64 {
 	t.Helper()
-	wsResp := get(t, "/api/v1/me/workspaces", token)
-	assertStatus(t, wsResp, http.StatusOK)
-	var ws struct {
-		Workspaces []struct {
-			Type      string `json:"type"`
-			NurseryID int64  `json:"nursery_id"`
-		} `json:"workspaces"`
-	}
-	decode(t, wsResp, &ws)
-	for _, w := range ws.Workspaces {
+	for _, w := range getWorkspaces(t, token) {
 		if w.Type == "OWNED_NURSERY" {
 			return w.NurseryID
 		}

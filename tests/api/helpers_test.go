@@ -20,6 +20,21 @@ const (
 	devOTP       = "123456"
 )
 
+type testWorkspace struct {
+	Type      string `json:"type"`
+	NurseryID int64  `json:"nursery_id"`
+}
+
+func getWorkspaces(t *testing.T, token string) []testWorkspace {
+	t.Helper()
+	resp := get(t, "/api/v1/me/workspaces", token)
+	assertStatus(t, resp, http.StatusOK)
+
+	var workspaces []testWorkspace
+	decode(t, resp, &workspaces)
+	return workspaces
+}
+
 func login(t *testing.T, mobile string) string {
 	t.Helper()
 

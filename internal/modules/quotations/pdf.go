@@ -2,6 +2,7 @@ package quotations
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strings"
@@ -13,13 +14,14 @@ type pdfCanvas struct {
 }
 
 func buildQuotationPDF(q Quotation) []byte {
+	brand := parseBrandColor(q.NurseryBrandColor)
 	var c pdfCanvas
-	c.rectFill(50, 805, 495, 3, pdfForest)
+	c.rectFill(50, 805, 495, 3, brand)
 	c.text(50, 760, 22, true, pdfDark, textOr(q.NurseryName, "GreenRoot Quotation"))
 	c.text(50, 741, 10, false, pdfMuted, textOr(q.NurseryPhone, ""))
 	c.text(50, 724, 10, true, pdfDark, "Owner: "+textOr(q.CreatedByName, "-"))
-	c.rectStroke(50, 704, 60, 17, pdfForest)
-	c.text(58, 709, 8, true, pdfForest, quotationTypeLabel(q))
+	c.rectStroke(50, 704, 60, 17, brand)
+	c.text(58, 709, 8, true, brand, quotationTypeLabel(q))
 
 	c.text(395, 775, 9, true, pdfMuted, "QUOTATION")
 	c.text(372, 748, 18, true, pdfDark, q.QuotationCode)
@@ -29,11 +31,11 @@ func buildQuotationPDF(q Quotation) []byte {
 
 	if strings.EqualFold(q.QuotationType, "INTERNAL") {
 		c.rectFill(50, 645, 495, 48, pdfSoftGreen)
-		c.rectStroke(50, 645, 495, 48, pdfForest)
-		c.text(64, 674, 9, true, pdfForest, "INTERNAL PLANNING DOCUMENT")
+		c.rectStroke(50, 645, 495, 48, brand)
+		c.text(64, 674, 9, true, brand, "INTERNAL PLANNING DOCUMENT")
 		c.text(64, 657, 9, false, pdfDark, "Not intended for external customer distribution.")
 	} else {
-		c.partyBox(50, 610, 220, "FROM", textOr(q.NurseryName, "-"), textOr(q.NurseryPhone, "-"), "Prepared by "+textOr(q.CreatedByName, "-"), pdfForest)
+		c.partyBox(50, 610, 220, "FROM", textOr(q.NurseryName, "-"), textOr(q.NurseryPhone, "-"), "Prepared by "+textOr(q.CreatedByName, "-"), brand)
 		c.partyBox(295, 610, 250, "TO", textOr(q.RecipientName, "Customer details protected"), textOr(q.RecipientMobile, ""), "", pdfMuted)
 	}
 
@@ -41,11 +43,11 @@ func buildQuotationPDF(q Quotation) []byte {
 	if strings.EqualFold(q.QuotationType, "INTERNAL") {
 		tableY = 585
 	}
-	tableBottom := c.itemsTable(q, tableY)
+	tableBottom := c.itemsTable(q, tableY, brand)
 	totalY := tableBottom - 52
 	c.rectFill(50, totalY, 495, 44, pdfSoftGreen)
-	c.rectStroke(50, totalY, 495, 44, pdfForest)
-	c.text(62, totalY+18, 13, true, pdfForest, "GRAND TOTAL")
+	c.rectStroke(50, totalY, 495, 44, brand)
+	c.text(62, totalY+18, 13, true, brand, "GRAND TOTAL")
 	c.text(430, totalY+22, 18, true, pdfDark, formatPDFMoney(q.TotalAmount))
 	c.text(380, totalY+8, 8, false, pdfMuted, "("+amountInWords(q.TotalAmount)+")")
 
@@ -69,11 +71,11 @@ func buildQuotationPDF(q Quotation) []byte {
 	return wrapPDF(c.String())
 }
 
-func (c *pdfCanvas) itemsTable(q Quotation, y float64) float64 {
+func (c *pdfCanvas) itemsTable(q Quotation, y float64, brand pdfColor) float64 {
 	widths := []float64{28, 245, 58, 52, 62, 50}
 	xs := []float64{50, 78, 323, 381, 433, 495}
 	headers := []string{"#", "PLANT / ITEM", "SIZE", "QTY", "UNIT", "AMOUNT"}
-	c.rectFill(50, y, 495, 25, pdfForest)
+	c.rectFill(50, y, 495, 25, brand)
 	for i, h := range headers {
 		c.text(xs[i]+6, y+9, 8, true, pdfWhite, h)
 	}
@@ -201,6 +203,23 @@ var (
 
 func rgb(r, g, b int) pdfColor {
 	return pdfColor{float64(r) / 255, float64(g) / 255, float64(b) / 255}
+}
+
+// parseBrandColor converts a CSS hex color (#RRGGBB) to a pdfColor.
+// Falls back to pdfForest if nil, empty, or malformed.
+func parseBrandColor(s *string) pdfColor {
+	if s == nil || len(*s) == 0 {
+		return pdfForest
+	}
+	clean := strings.TrimPrefix(*s, "#")
+	if len(clean) != 6 {
+		return pdfForest
+	}
+	b, err := hex.DecodeString(clean)
+	if err != nil || len(b) != 3 {
+		return pdfForest
+	}
+	return rgb(int(b[0]), int(b[1]), int(b[2]))
 }
 
 func quotationTypeLabel(q Quotation) string {

@@ -19,6 +19,7 @@ type Repository interface {
 	ListRoles(ctx context.Context, userID int64) ([]Role, error)
 	ListSessions(ctx context.Context, userID int64) ([]Session, error)
 	CreateUserActivity(ctx context.Context, input CreateActivityInput) error
+	SoftDeleteAccount(ctx context.Context, userID int64) error
 }
 
 type CreateActivityInput struct {
@@ -315,6 +316,59 @@ func (r *PostgresRepository) CreateUserActivity(ctx context.Context, input Creat
 	return err
 }
 
+
+func (r *PostgresRepository) SoftDeleteAccount(ctx context.Context, userID int64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 1. Anonymize PII and mark deleted
+	_, err = tx.ExecContext(ctx, `
+		UPDATE public.users SET
+			first_name        = 'Deleted',
+			last_name         = NULL,
+			email             = NULL,
+			profile_image_url = NULL,
+			gender            = NULL,
+			status            = 'DELETED',
+			deleted_at        = CURRENT_TIMESTAMP,
+			updated_at        = CURRENT_TIMESTAMP
+		WHERE user_id = $1 AND deleted_at IS NULL`, userID)
+	if err != nil {
+		return err
+	}
+
+	// 2. Revoke all active sessions — next refresh attempt will fail
+	_, err = tx.ExecContext(ctx, `
+		UPDATE public.user_sessions
+		SET session_status = 'LOGGED_OUT', session_token = NULL, last_activity_at = CURRENT_TIMESTAMP
+		WHERE user_id = $1 AND session_status = 'ACTIVE'`, userID)
+	if err != nil {
+		return err
+	}
+
+	// 3. Deactivate all nursery memberships (manager roles)
+	_, err = tx.ExecContext(ctx, `
+		UPDATE public.nursery_users
+		SET is_active = false, status = 'INACTIVE', updated_at = CURRENT_TIMESTAMP
+		WHERE user_id = $1 AND COALESCE(is_active, true) = true`, userID)
+	if err != nil {
+		return err
+	}
+
+	// 4. Disconnect any active driver profiles
+	_, err = tx.ExecContext(ctx, `
+		UPDATE public.nursery_drivers
+		SET connection_status = 'DISCONNECTED', disconnected_at = CURRENT_TIMESTAMP, disconnected_by = $1
+		WHERE driver_user_id = $1 AND connection_status IN ('REQUESTED','CONNECTED','APPROVED')`, userID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
 
 func (r *PostgresRepository) scanUser(ctx context.Context, where string, args ...any) (*User, error) {
 	query := `

@@ -20,6 +20,7 @@ const (
 	BucketAttachments    = "attachments"
 	BucketMarketAds      = "market-ads"
 	BucketQuotationPDFs  = "quotation-pdfs"
+	BucketNurseryLogos   = "nursery-logos"
 )
 
 var validBuckets = map[string]bool{
@@ -30,6 +31,7 @@ var validBuckets = map[string]bool{
 	BucketAttachments:    true,
 	BucketMarketAds:      true,
 	BucketQuotationPDFs:  true,
+	BucketNurseryLogos:   true,
 }
 
 // Config holds connection settings. Same fields work for MinIO (local) and AWS S3 (prod).

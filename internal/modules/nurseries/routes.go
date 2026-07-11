@@ -44,10 +44,14 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Post("/{id}/managers", m.handler.AddManager)
 		r.Delete("/{id}/managers/{userId}", m.handler.RemoveUser)
 
+		// Self-leave (manager or driver initiated)
+		r.Delete("/me/leave", m.handler.LeaveNursery)
+
 		// Driver connections
 		r.Get("/{id}/drivers", m.handler.ListDrivers)
 		r.Post("/{id}/drivers", m.handler.ConnectDriver)
 		r.Post("/{id}/drivers/{driverUserId}/approve", m.handler.ApproveDriver)
+		r.Delete("/{id}/drivers/{driverUserId}", m.handler.DisconnectDriver)
 
 		// Customers
 		r.Get("/{id}/customers", m.handler.GetCustomers)

@@ -18,6 +18,7 @@ type Quotation struct {
 	NurseryID             *int64  `json:"nursery_id,omitempty"`
 	NurseryName           *string `json:"nursery_name,omitempty"`
 	NurseryPhone          *string `json:"nursery_phone,omitempty"`
+	NurseryBrandColor     *string `json:"nursery_brand_color,omitempty"`
 	AssignedManagerUserID *int64  `json:"assigned_manager_user_id,omitempty"`
 	AssignedManagerName   *string `json:"assigned_manager_name,omitempty"`
 	// Buyer side

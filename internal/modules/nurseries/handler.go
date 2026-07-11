@@ -412,6 +412,38 @@ func (h *Handler) RemoveUser(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, MessageResponse{Message: "Nursery user removed successfully"})
 }
 
+func (h *Handler) DisconnectDriver(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	nurseryID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	driverUserID, ok := pathID(w, r, "driverUserId")
+	if !ok {
+		return
+	}
+	if err := h.service.DisconnectDriver(r.Context(), actor, nurseryID, driverUserID); err != nil {
+		writeNurseriesError(w, err)
+		return
+	}
+	response.OK(w, MessageResponse{Message: "Driver disconnected successfully"})
+}
+
+func (h *Handler) LeaveNursery(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	if err := h.service.LeaveNursery(r.Context(), actor); err != nil {
+		writeNurseriesError(w, err)
+		return
+	}
+	response.OK(w, MessageResponse{Message: "You have left the nursery"})
+}
+
 func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, bool) {
 	actor, ok := authctx.FromRequest(w, r, h.jwt)
 	if !ok {
@@ -474,6 +506,20 @@ func writeNurseriesError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusBadRequest, "invalid_address", "invalid nursery address")
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid nursery input")
+	case errors.Is(err, ErrBrandingConflict):
+		response.Error(w, http.StatusBadRequest, "branding_conflict", "logo_url and brand_icon_key cannot both be set")
+	case errors.Is(err, ErrInvalidBrandColor):
+		response.Error(w, http.StatusBadRequest, "invalid_brand_color", "brand_color is not in the allowed palette")
+	case errors.Is(err, ErrInvalidBrandIconKey):
+		response.Error(w, http.StatusBadRequest, "invalid_brand_icon_key", "brand_icon_key is not a valid preset icon")
+	case errors.Is(err, ErrInvalidLogoURL):
+		response.Error(w, http.StatusBadRequest, "invalid_logo_url", "logo_url must be a valid URL pointing to the nursery-logos bucket")
+	case errors.Is(err, ErrNotFound):
+		response.Error(w, http.StatusNotFound, "not_found", "nursery member not found")
+	case errors.Is(err, ErrNotMember):
+		response.Error(w, http.StatusNotFound, "not_member", "user is not an active member of any nursery")
+	case errors.Is(err, ErrOwnerCannotLeave):
+		response.Error(w, http.StatusConflict, "owner_cannot_leave", "nursery owner cannot leave their own nursery; transfer or close the nursery first")
 	default:
 		response.Error(w, http.StatusInternalServerError, "nurseries_error", "nurseries request failed")
 	}

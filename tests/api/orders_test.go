@@ -38,20 +38,8 @@ func TestOrdersList_Driver_Forbidden(t *testing.T) {
 func TestOrderCreate_Owner(t *testing.T) {
 	token := login(t, ownerPhone)
 
-	// Get nursery ID from workspaces
-	wsResp := get(t, "/api/v1/me/workspaces", token)
-	assertStatus(t, wsResp, http.StatusOK)
-
-	var ws struct {
-		Workspaces []struct {
-			Type      string `json:"type"`
-			NurseryID int64  `json:"nursery_id"`
-		} `json:"workspaces"`
-	}
-	decode(t, wsResp, &ws)
-
 	var nurseryID int64
-	for _, w := range ws.Workspaces {
+	for _, w := range getWorkspaces(t, token) {
 		if w.Type == "OWNED_NURSERY" {
 			nurseryID = w.NurseryID
 			break
@@ -62,10 +50,10 @@ func TestOrderCreate_Owner(t *testing.T) {
 	}
 
 	body := map[string]any{
-		"nursery_id":    nurseryID,
-		"buyer_name":    "Test Walk-in",
-		"buyer_mobile":  "9999999999",
-		"notes":         "integration test order",
+		"nursery_id":   nurseryID,
+		"buyer_name":   "Test Walk-in",
+		"buyer_mobile": "9999999999",
+		"notes":        "integration test order",
 	}
 	resp := post(t, "/api/v1/orders", body, token)
 	assertStatus(t, resp, http.StatusCreated)
