@@ -20,7 +20,8 @@ func buildQuotationPDF(q Quotation, verifyURL string) []byte {
 	var c pdfCanvas
 
 	// ── Header ───────────────────────────────────────────────────────────────
-	c.rectFill(50, 805, 495, 3, brand)
+	c.rectFill(38, 680, 6, 128, brand) // left brand accent stripe
+	c.rectFill(50, 805, 495, 3, brand) // top accent line
 	c.text(50, 760, 22, true, pdfDark, textOr(q.NurseryName, "GreenRoot Quotation"))
 	c.text(50, 741, 10, false, pdfMuted, textOr(q.NurseryPhone, ""))
 	// Right column (quotation identity)
@@ -37,7 +38,7 @@ func buildQuotationPDF(q Quotation, verifyURL string) []byte {
 		c.text(64, 674, 9, true, brand, "INTERNAL PLANNING DOCUMENT")
 		c.text(64, 657, 9, false, pdfDark, "Not intended for external customer distribution.")
 	} else {
-		c.partyBox(50, 610, 220, "FROM", textOr(q.NurseryName, "-"), textOr(q.NurseryPhone, "-"), "Prepared by "+textOr(q.CreatedByName, "-"), brand)
+		c.partyBox(50, 610, 220, "FROM", textOr(q.NurseryName, "-"), textOr(q.NurseryPhone, ""), "Prepared by "+textOr(q.CreatedByName, "-"), brand)
 		c.partyBox(295, 610, 250, "TO", textOr(q.RecipientName, "Customer details protected"), textOr(q.RecipientMobile, ""), "", pdfMuted)
 	}
 
@@ -73,15 +74,15 @@ func buildQuotationPDF(q Quotation, verifyURL string) []byte {
 	nextY -= 40
 
 	// ── Document Verification section ─────────────────────────────────────────
-	if verifyURL != "" && nextY-108 > 90 {
+	if verifyURL != "" && nextY-128 > 90 {
 		c.verificationSection(nextY-8, brand, q, verifyURL)
 	}
 
 	// ── Footer ────────────────────────────────────────────────────────────────
 	c.line(50, 76, 545, 76, pdfBorder)
-	c.text(50, 60, 7, false, pdfMuted, "Powered by GreenRoot - www.greenroot.app")
-	c.text(470, 60, 7, true, pdfMuted, "Page 1 of 1")
-	c.text(50, 48, 7, false, pdfMuted,
+	c.text(50, 62, 8, false, pdfMuted, "Powered by GreenRoot - www.greenroot.app")
+	c.text(470, 62, 8, true, pdfMuted, "Page 1 of 1")
+	c.text(50, 50, 7, false, pdfMuted,
 		"GreenRoot provides quotation management software only. All quotation information is provided by the issuing nursery.")
 
 	return wrapPDF(c.String())
@@ -90,7 +91,7 @@ func buildQuotationPDF(q Quotation, verifyURL string) []byte {
 // ── Document Verification section ────────────────────────────────────────────
 
 func (c *pdfCanvas) verificationSection(topY float64, brand pdfColor, q Quotation, verifyURL string) {
-	const boxH = 100.0
+	const boxH = 120.0
 	const x = 50.0
 	const w = 495.0
 
@@ -106,8 +107,10 @@ func (c *pdfCanvas) verificationSection(topY float64, brand pdfColor, q Quotatio
 	// QR code (left of the section)
 	const qrSize = 72.0
 	qrX := x + 14.0
-	qrY := topY - boxH + 10.0 // bottom-left of QR square in PDF coords
+	qrY := topY - boxH + 18.0 // bottom-left of QR square in PDF coords; 18pt reserves space for fallback text
 	c.qrCode(qrX, qrY, qrSize, verifyURL)
+	// Fallback URL below QR for non-scanner access
+	c.text(qrX, qrY-10, 7, false, pdfMuted, "greenroot.app/verify/"+q.QuotationCode)
 
 	// Quote metadata (right of QR)
 	mx := qrX + qrSize + 14.0
@@ -145,7 +148,7 @@ func (c *pdfCanvas) verificationSection(topY float64, brand pdfColor, q Quotatio
 	}
 }
 
-// qrCode draws a QR code as filled vector rectangles.
+// qrCode draws a QR code as filled vector rectangles using the brand forest-green color.
 // x, y is the bottom-left corner in PDF coordinates. size is the total side length in pts.
 func (c *pdfCanvas) qrCode(x, y, size float64, content string) {
 	qr, err := qrcode.New(content, qrcode.Medium)
@@ -158,31 +161,53 @@ func (c *pdfCanvas) qrCode(x, y, size float64, content string) {
 	if rows == 0 {
 		return
 	}
-	// White background
 	c.rectFill(x, y, size, size, pdfWhite)
-	// Draw black modules (flip row index because PDF y increases upward)
-	ms := size / float64(rows) // module size in pts
+	ms := size / float64(rows)
 	for r, row := range bmp {
 		for col, dark := range row {
 			if dark {
 				mx := x + float64(col)*ms
 				my := y + float64(rows-1-r)*ms
-				c.rectFill(mx, my, ms, ms, pdfDark)
+				c.rectFill(mx, my, ms, ms, pdfQRGreen)
 			}
 		}
 	}
+	// Center brand marker (eco-leaf style): white square + green dot
+	ctr := size / 2
+	const m = 5.0
+	c.rectFill(x+ctr-m, y+ctr-m, m*2, m*2, pdfWhite)
+	c.rectFill(x+ctr-3.5, y+ctr-3.5, 7, 7, pdfQRGreen)
 }
 
 // ── Items table ───────────────────────────────────────────────────────────────
 
 func (c *pdfCanvas) itemsTable(q Quotation, y float64, brand pdfColor) float64 {
-	xs := []float64{50, 78, 323, 381, 433, 495}
-	headers := []string{"#", "PLANT / ITEM", "DESC", "QTY", "UNIT PRICE", "AMOUNT"}
-	c.rectFill(50, y, 495, 25, brand)
-	for i, h := range headers {
-		c.text(xs[i]+6, y+9, 8, true, pdfWhite, h)
+	// Only show DESC column when at least one item actually has a description.
+	hasDesc := false
+	for _, item := range q.Items {
+		if item.Description != nil && strings.TrimSpace(*item.Description) != "" {
+			hasDesc = true
+			break
+		}
 	}
-	rowY := y - 28
+
+	var xs []float64
+	var headers []string
+	if hasDesc {
+		xs = []float64{50, 78, 323, 381, 433, 495}
+		headers = []string{"#", "PLANT / ITEM", "DESC", "QTY", "UNIT PRICE", "AMOUNT"}
+	} else {
+		xs = []float64{50, 78, 381, 433, 495}
+		headers = []string{"#", "PLANT / ITEM", "QTY", "UNIT PRICE", "AMOUNT"}
+	}
+
+	const hdrH = 30.0
+	c.rectFill(50, y, 495, hdrH, brand)
+	for i, h := range headers {
+		c.text(xs[i]+6, y+11, 8, true, pdfWhite, h)
+	}
+
+	rowY := y - (hdrH + 3)
 	for i, item := range q.Items {
 		rowH := 40.0
 		if rowY < 105 {
@@ -198,13 +223,20 @@ func (c *pdfCanvas) itemsTable(q Quotation, y float64, brand pdfColor) float64 {
 			c.line(x, rowY, x, rowY+rowH, pdfBorder)
 		}
 		c.text(58, rowY+22, 9, false, pdfMuted, fmt.Sprintf("%d", i+1))
-		c.text(86, rowY+23, 10, true, pdfDark, truncatePDFText(item.ScientificName, 34))
-		if item.CommonName != nil {
-			c.text(86, rowY+10, 8, false, pdfMuted, truncatePDFText(*item.CommonName, 34))
-		}
-		// DESC column: show description if set, otherwise blank (not "-")
-		if item.Description != nil && strings.TrimSpace(*item.Description) != "" {
-			c.text(331, rowY+20, 9, false, pdfMuted, truncatePDFText(toPDFASCII(strings.TrimSpace(*item.Description)), 10))
+		if hasDesc {
+			c.text(86, rowY+23, 10, true, pdfDark, truncatePDFText(item.ScientificName, 34))
+			if item.CommonName != nil {
+				c.text(86, rowY+10, 8, false, pdfMuted, truncatePDFText(*item.CommonName, 34))
+			}
+			if item.Description != nil && strings.TrimSpace(*item.Description) != "" {
+				c.text(331, rowY+20, 9, false, pdfMuted, truncatePDFText(toPDFASCII(strings.TrimSpace(*item.Description)), 10))
+			}
+		} else {
+			// DESC column hidden — give extra width to plant name
+			c.text(86, rowY+23, 10, true, pdfDark, truncatePDFText(item.ScientificName, 46))
+			if item.CommonName != nil {
+				c.text(86, rowY+10, 8, false, pdfMuted, truncatePDFText(*item.CommonName, 46))
+			}
 		}
 		c.text(397, rowY+20, 10, false, pdfDark, formatPDFQty(item.Quantity))
 		c.text(448, rowY+20, 10, false, pdfDark, formatPDFMoney(item.UnitPrice))
@@ -312,7 +344,10 @@ var (
 	pdfAmber      = rgb(0xD9, 0x77, 0x06)
 	pdfAmberLight = rgb(0xFE, 0xF3, 0xC7)
 	pdfWhite      = rgb(0xFF, 0xFF, 0xFF)
+	pdfQRGreen    = rgb(0x1A, 0x47, 0x31) // matches Flutter QR eye/module color
 )
+
+var istZone = time.FixedZone("IST", 5*60*60+30*60)
 
 func rgb(r, g, b int) pdfColor {
 	return pdfColor{float64(r) / 255, float64(g) / 255, float64(b) / 255}
@@ -338,9 +373,9 @@ func parseBrandColor(s *string) pdfColor {
 
 func validUntilText(q Quotation) string {
 	if q.ValidUntil != nil {
-		return q.ValidUntil.Local().Format("02 Jan 2006")
+		return q.ValidUntil.In(istZone).Format("02 Jan 2006")
 	}
-	return q.CreatedAt.Local().Add(15 * 24 * time.Hour).Format("02 Jan 2006")
+	return q.CreatedAt.In(istZone).Add(15 * 24 * time.Hour).Format("02 Jan 2006")
 }
 
 func escapePDFText(text string) string {
@@ -384,11 +419,11 @@ func formatPDFQty(qty float64) string {
 }
 
 func formatPDFDateTime(t time.Time) string {
-	return t.Local().Format("02 Jan 2006, 03:04 pm")
+	return t.In(istZone).Format("02 Jan 2006, 3:04 PM IST")
 }
 
 func formatPDFDate(t time.Time) string {
-	return t.Local().Format("02 Jan 2006")
+	return t.In(istZone).Format("02 Jan 2006")
 }
 
 func truncatePDFText(text string, max int) string {

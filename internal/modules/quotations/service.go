@@ -1146,10 +1146,11 @@ func isManagerOnly(actor ActorContext) bool {
 		!hasRole(actor, "SUPER_ADMIN")
 }
 
-// redactCustomerContact removes recipient contact details for actors who must not see them.
+// redactCustomerContact removes customer-identifying details for actors who must not see them.
 func redactCustomerContact(q *Quotation) {
 	q.RecipientName = nil
 	q.RecipientMobile = nil
+	q.CustomerUserID = nil
 }
 
 func (s *Service) validateCustomerSelection(ctx context.Context, q Quotation, customerUserID *int64) error {
