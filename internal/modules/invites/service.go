@@ -12,6 +12,7 @@ var (
 	ErrForbidden       = errors.New("forbidden")
 	ErrInvalidInput    = errors.New("invalid input")
 	ErrConflictingRole = errors.New("conflicting role")
+	ErrAlreadyMember   = errors.New("already member of another nursery")
 )
 
 type Service struct {
@@ -95,6 +96,14 @@ func (s *Service) Accept(ctx context.Context, actor ActorContext, uuid string) (
 		if owns {
 			return Invite{}, ErrConflictingRole
 		}
+		// Managers can only work at one nursery at a time.
+		isManager, err := s.repository.UserIsManager(ctx, actor.UserID)
+		if err != nil {
+			return Invite{}, err
+		}
+		if isManager {
+			return Invite{}, ErrAlreadyMember
+		}
 	case "NURSERY_ONBOARDING_INVITE":
 		// Managers cannot become nursery owners.
 		isManager, err := s.repository.UserIsManager(ctx, actor.UserID)
@@ -119,7 +128,11 @@ func (s *Service) Accept(ctx context.Context, actor ActorContext, uuid string) (
 			if invite.Role != nil && *invite.Role != "" {
 				role = *invite.Role
 			}
-			_ = s.repository.AddNurseryMember(ctx, *invite.NurseryID, actor.UserID, role, invite.InvitedByUserID)
+			if err := s.repository.AddNurseryMember(ctx, *invite.NurseryID, actor.UserID, role, invite.InvitedByUserID); err != nil {
+				// Roll back: mark invite pending again so it can be retried after leaving the current nursery.
+				_, _ = s.repository.Cancel(ctx, uuid, actor.UserID)
+				return Invite{}, ErrAlreadyMember
+			}
 		}
 	case "NURSERY_ONBOARDING_INVITE":
 		_ = s.repository.GrantNurseryOwnerRole(ctx, actor.UserID)
