@@ -114,6 +114,25 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 	return *dispatch, nil
 }
 
+func (s *Service) AcknowledgeDeliveryUpdate(ctx context.Context, actor ActorContext, dispatchID int64) (Dispatch, error) {
+	current, err := s.repository.FindByID(ctx, dispatchID)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if err := s.canAccess(ctx, actor, *current); err != nil {
+		return Dispatch{}, err
+	}
+	if err := s.repository.AcknowledgeDeliveryUpdate(ctx, dispatchID, actor.UserID); err != nil {
+		return Dispatch{}, err
+	}
+	updated, err := s.repository.FindByID(ctx, dispatchID)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	s.audit(ctx, actor, "dispatches", dispatchID, actionUpdate, map[string]any{"delivery_update_acknowledged": true})
+	return *updated, nil
+}
+
 func (s *Service) CreateItem(ctx context.Context, actor ActorContext, dispatchID int64, req DispatchItemRequest) (DispatchItem, error) {
 	dispatch, err := s.repository.FindByID(ctx, dispatchID)
 	if err != nil {

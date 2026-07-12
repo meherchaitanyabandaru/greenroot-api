@@ -100,6 +100,27 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, OrderResponse{Order: order})
 }
 
+func (h *Handler) UpdateDeliverySnapshot(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	orderID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req DeliverySnapshotRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	order, err := h.service.UpdateDeliverySnapshot(r.Context(), actor, orderID, req)
+	if err != nil {
+		writeOrdersError(w, err)
+		return
+	}
+	response.OK(w, OrderResponse{Order: order})
+}
+
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {

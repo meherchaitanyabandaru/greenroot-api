@@ -28,22 +28,27 @@ type User struct {
 }
 
 type Address struct {
-	ID            int64      `json:"id"`
-	UserID        int64      `json:"user_id"`
-	AddressType   *string    `json:"address_type,omitempty"`
-	ContactName   *string    `json:"contact_name,omitempty"`
-	ContactMobile *string    `json:"contact_mobile,omitempty"`
-	AddressLine1  string     `json:"address_line1"`
-	AddressLine2  *string    `json:"address_line2,omitempty"`
-	City          *string    `json:"city,omitempty"`
-	State         *string    `json:"state,omitempty"`
-	Country       *string    `json:"country,omitempty"`
-	PostalCode    *string    `json:"postal_code,omitempty"`
-	Latitude      *float64   `json:"latitude,omitempty"`
-	Longitude     *float64   `json:"longitude,omitempty"`
-	IsDefault     bool       `json:"is_default"`
-	CreatedAt     *time.Time `json:"created_at,omitempty"`
-	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+	ID                  int64      `json:"id"`
+	UserID              int64      `json:"user_id"`
+	AddressType         *string    `json:"address_type,omitempty"`
+	ContactName         *string    `json:"contact_name,omitempty"`
+	ContactMobile       *string    `json:"contact_mobile,omitempty"`
+	AddressLine1        string     `json:"address_line1"`
+	AddressLine2        *string    `json:"address_line2,omitempty"`
+	City                *string    `json:"city,omitempty"`
+	State               *string    `json:"state,omitempty"`
+	Country             *string    `json:"country,omitempty"`
+	PostalCode          *string    `json:"postal_code,omitempty"`
+	Latitude            *float64   `json:"latitude,omitempty"`
+	Longitude           *float64   `json:"longitude,omitempty"`
+	GPSAccuracyM        *float64   `json:"gps_accuracy_meters,omitempty"`
+	Landmark            *string    `json:"landmark,omitempty"`
+	LocationSource      *string    `json:"location_source,omitempty"`
+	LocationConfirmedBy *int64     `json:"location_confirmed_by,omitempty"`
+	LocationConfirmedAt *time.Time `json:"location_confirmed_at,omitempty"`
+	IsDefault           bool       `json:"is_default"`
+	CreatedAt           *time.Time `json:"created_at,omitempty"`
+	UpdatedAt           *time.Time `json:"updated_at,omitempty"`
 }
 
 type Role struct {

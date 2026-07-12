@@ -17,6 +17,10 @@ type Repository interface {
 	List(ctx context.Context, input ListOrdersRequest) ([]Order, int64, error)
 	FindByID(ctx context.Context, orderID int64) (*Order, error)
 	Create(ctx context.Context, actorID int64, input CreateOrderRequest, orderNumber string) (*Order, error)
+	GetDeliverySnapshot(ctx context.Context, orderID int64) (*DeliverySnapshot, error)
+	UpdateDeliverySnapshot(ctx context.Context, orderID int64, actorID int64, input DeliverySnapshotRequest) (*DeliverySnapshot, error)
+	OrderHasStartedDispatch(ctx context.Context, orderID int64) (bool, error)
+	StartedDispatchDriverUserID(ctx context.Context, orderID int64) (*int64, error)
 	UpdateStatus(ctx context.Context, actorID int64, orderID int64, status string) (*Order, error)
 	UpdateStatusWithLoading(ctx context.Context, actorID int64, orderID int64, status string, phase string) (*Order, error)
 	Cancel(ctx context.Context, actorID int64, orderID int64, reason string) (*Order, error)
@@ -85,6 +89,7 @@ func (r *PostgresRepository) FindByID(ctx context.Context, orderID int64) (*Orde
 		return nil, err
 	}
 	order.Items, _ = r.ListItems(ctx, order.ID)
+	order.DeliverySnapshot, _ = r.GetDeliverySnapshot(ctx, order.ID)
 	return order, nil
 }
 
@@ -134,10 +139,174 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 	if err := r.refreshTotalTx(ctx, tx, orderID); err != nil {
 		return nil, err
 	}
+	if err := r.createDeliverySnapshotTx(ctx, tx, orderID, actorID, input); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return r.FindByID(ctx, orderID)
+}
+
+func (r *PostgresRepository) createDeliverySnapshotTx(ctx context.Context, tx *sql.Tx, orderID int64, actorID int64, input CreateOrderRequest) error {
+	if input.Delivery != nil {
+		return r.upsertDeliverySnapshot(ctx, tx, orderID, actorID, *input.Delivery)
+	}
+	const query = `
+		INSERT INTO public.order_delivery_snapshots (
+			order_id, contact_name, contact_mobile, address_line1, address_line2,
+			city, state, country, postal_code, landmark, latitude, longitude,
+			location, gps_accuracy_meters, location_source, confirmed_by, confirmed_at
+		)
+		SELECT $1, ua.contact_name, ua.contact_mobile, ua.address_line1, ua.address_line2,
+			ua.city, ua.state, ua.country, ua.postal_code, ua.landmark, ua.latitude, ua.longitude,
+			CASE WHEN ua.latitude IS NOT NULL AND ua.longitude IS NOT NULL
+				THEN ST_SetSRID(ST_MakePoint(ua.longitude::double precision, ua.latitude::double precision), 4326)::geography
+				ELSE NULL
+			END,
+			ua.gps_accuracy_meters, COALESCE(ua.location_source, 'address_search'), $2, CURRENT_TIMESTAMP
+		FROM public.user_addresses ua
+		WHERE ua.user_id = $3
+		ORDER BY ua.is_default DESC, ua.address_id DESC
+		LIMIT 1
+		ON CONFLICT (order_id) DO NOTHING
+	`
+	_, err := tx.ExecContext(ctx, query, orderID, actorID, int64OrNil(input.BuyerUserID))
+	return err
+}
+
+func (r *PostgresRepository) GetDeliverySnapshot(ctx context.Context, orderID int64) (*DeliverySnapshot, error) {
+	const query = `
+		SELECT snapshot_id, order_id, contact_name, contact_mobile, alternate_mobile,
+			address_line1, address_line2, city, state, country, postal_code, landmark,
+			delivery_instructions, latitude, longitude, gps_accuracy_meters, location_source,
+			confirmed_by, confirmed_at, emergency_updated, requires_driver_ack,
+			driver_acknowledged_by, driver_acknowledged_at, created_at, updated_at
+		FROM public.order_delivery_snapshots
+		WHERE order_id = $1
+	`
+	snapshot, err := scanDeliverySnapshot(r.db.QueryRowContext(ctx, query, orderID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &snapshot, nil
+}
+
+func (r *PostgresRepository) UpdateDeliverySnapshot(ctx context.Context, orderID int64, actorID int64, input DeliverySnapshotRequest) (*DeliverySnapshot, error) {
+	input.ConfirmedBy = &actorID
+	now := time.Now()
+	input.ConfirmedAt = &now
+	if err := r.upsertDeliverySnapshot(ctx, r.db, orderID, actorID, input); err != nil {
+		return nil, err
+	}
+	return r.GetDeliverySnapshot(ctx, orderID)
+}
+
+func (r *PostgresRepository) upsertDeliverySnapshot(ctx context.Context, q interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, orderID int64, actorID int64, input DeliverySnapshotRequest) error {
+	const query = `
+		INSERT INTO public.order_delivery_snapshots (
+			order_id, contact_name, contact_mobile, alternate_mobile, address_line1, address_line2,
+			city, state, country, postal_code, landmark, delivery_instructions,
+			latitude, longitude, location, gps_accuracy_meters, location_source,
+			confirmed_by, confirmed_at, emergency_updated, requires_driver_ack,
+			created_at, updated_at
+		)
+		VALUES ($1, NULLIF($2,''), NULLIF($3,''), NULLIF($4,''), NULLIF($5,''), NULLIF($6,''),
+			NULLIF($7,''), NULLIF($8,''), NULLIF($9,''), NULLIF($10,''), NULLIF($11,''), NULLIF($12,''),
+			$13, $14,
+			CASE WHEN $13::numeric IS NOT NULL AND $14::numeric IS NOT NULL
+				THEN ST_SetSRID(ST_MakePoint($14::double precision, $13::double precision), 4326)::geography
+				ELSE NULL
+			END,
+			$15, NULLIF($16,''), $17, $18, $19, $19, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT (order_id) DO UPDATE SET
+			contact_name = EXCLUDED.contact_name,
+			contact_mobile = EXCLUDED.contact_mobile,
+			alternate_mobile = EXCLUDED.alternate_mobile,
+			address_line1 = EXCLUDED.address_line1,
+			address_line2 = EXCLUDED.address_line2,
+			city = EXCLUDED.city,
+			state = EXCLUDED.state,
+			country = EXCLUDED.country,
+			postal_code = EXCLUDED.postal_code,
+			landmark = EXCLUDED.landmark,
+			delivery_instructions = EXCLUDED.delivery_instructions,
+			latitude = EXCLUDED.latitude,
+			longitude = EXCLUDED.longitude,
+			location = EXCLUDED.location,
+			gps_accuracy_meters = EXCLUDED.gps_accuracy_meters,
+			location_source = EXCLUDED.location_source,
+			confirmed_by = EXCLUDED.confirmed_by,
+			confirmed_at = EXCLUDED.confirmed_at,
+			emergency_updated = order_delivery_snapshots.emergency_updated OR EXCLUDED.emergency_updated,
+			requires_driver_ack = order_delivery_snapshots.requires_driver_ack OR EXCLUDED.requires_driver_ack,
+			driver_acknowledged_by = CASE WHEN EXCLUDED.requires_driver_ack THEN NULL ELSE order_delivery_snapshots.driver_acknowledged_by END,
+			driver_acknowledged_at = CASE WHEN EXCLUDED.requires_driver_ack THEN NULL ELSE order_delivery_snapshots.driver_acknowledged_at END,
+			updated_at = CURRENT_TIMESTAMP
+	`
+	_, err := q.ExecContext(ctx, query,
+		orderID,
+		stringOrEmpty(input.ContactName),
+		stringOrEmpty(input.ContactMobile),
+		stringOrEmpty(input.AlternateMobile),
+		stringOrEmpty(input.AddressLine1),
+		stringOrEmpty(input.AddressLine2),
+		stringOrEmpty(input.City),
+		stringOrEmpty(input.State),
+		stringOrEmpty(input.Country),
+		stringOrEmpty(input.PostalCode),
+		stringOrEmpty(input.Landmark),
+		stringOrEmpty(input.DeliveryInstructions),
+		floatOrNil(input.Latitude),
+		floatOrNil(input.Longitude),
+		floatOrNil(input.GPSAccuracyM),
+		stringOrEmpty(input.LocationSource),
+		int64OrNil(input.ConfirmedBy),
+		timeOrNil(input.ConfirmedAt),
+		input.EmergencyUpdate,
+	)
+	return err
+}
+
+func (r *PostgresRepository) OrderHasStartedDispatch(ctx context.Context, orderID int64) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM public.dispatches
+			WHERE order_id = $1
+			  AND (
+				trip_started_at IS NOT NULL
+				OR dispatch_status IN ('IN_TRANSIT', 'DELIVERED')
+			  )
+		)
+	`, orderID).Scan(&exists)
+	return exists, err
+}
+
+func (r *PostgresRepository) StartedDispatchDriverUserID(ctx context.Context, orderID int64) (*int64, error) {
+	var userID sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COALESCE(d.driver_user_id, nd.driver_user_id)
+		FROM public.dispatches d
+		LEFT JOIN public.nursery_drivers nd ON nd.driver_id = d.driver_id
+		WHERE d.order_id = $1
+		  AND COALESCE(d.dispatch_status, '') IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
+		  AND COALESCE(d.driver_user_id, nd.driver_user_id) IS NOT NULL
+		ORDER BY d.updated_at DESC, d.dispatch_id DESC
+		LIMIT 1
+	`, orderID).Scan(&userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return nullableInt64(userID), nil
 }
 
 func (r *PostgresRepository) UpdateStatus(ctx context.Context, actorID int64, orderID int64, status string) (*Order, error) {
@@ -451,7 +620,6 @@ func (r *PostgresRepository) FindOrCreateBuyerByMobile(ctx context.Context, mobi
 	return userID, tx.Commit()
 }
 
-
 func (r *PostgresRepository) createItemTx(ctx context.Context, tx *sql.Tx, orderID int64, input OrderItemRequest) (int64, error) {
 	const query = `
 		INSERT INTO public.order_items (order_id, plant_id, size_id, quantity, unit_price, total_price, remarks, created_at)
@@ -665,6 +833,69 @@ func scanOrder(row interface{ Scan(dest ...any) error }) (Order, error) {
 	return order, nil
 }
 
+func scanDeliverySnapshot(row interface{ Scan(dest ...any) error }) (DeliverySnapshot, error) {
+	var snapshot DeliverySnapshot
+	var contactName, contactMobile, alternateMobile sql.NullString
+	var line1, line2, city, state, country, postal, landmark, instructions sql.NullString
+	var latitude, longitude, accuracy sql.NullFloat64
+	var source sql.NullString
+	var confirmedBy, ackBy sql.NullInt64
+	var confirmedAt, ackAt sql.NullTime
+	if err := row.Scan(
+		&snapshot.ID,
+		&snapshot.OrderID,
+		&contactName,
+		&contactMobile,
+		&alternateMobile,
+		&line1,
+		&line2,
+		&city,
+		&state,
+		&country,
+		&postal,
+		&landmark,
+		&instructions,
+		&latitude,
+		&longitude,
+		&accuracy,
+		&source,
+		&confirmedBy,
+		&confirmedAt,
+		&snapshot.EmergencyUpdated,
+		&snapshot.RequiresDriverAck,
+		&ackBy,
+		&ackAt,
+		&snapshot.CreatedAt,
+		&snapshot.UpdatedAt,
+	); err != nil {
+		return DeliverySnapshot{}, err
+	}
+	snapshot.ContactName = nullableString(contactName)
+	snapshot.ContactMobile = nullableString(contactMobile)
+	snapshot.AlternateMobile = nullableString(alternateMobile)
+	snapshot.AddressLine1 = nullableString(line1)
+	snapshot.AddressLine2 = nullableString(line2)
+	snapshot.City = nullableString(city)
+	snapshot.State = nullableString(state)
+	snapshot.Country = nullableString(country)
+	snapshot.PostalCode = nullableString(postal)
+	snapshot.Landmark = nullableString(landmark)
+	snapshot.DeliveryInstructions = nullableString(instructions)
+	snapshot.Latitude = nullableFloat64(latitude)
+	snapshot.Longitude = nullableFloat64(longitude)
+	snapshot.GPSAccuracyM = nullableFloat64(accuracy)
+	snapshot.LocationSource = nullableString(source)
+	snapshot.ConfirmedBy = nullableInt64(confirmedBy)
+	if confirmedAt.Valid {
+		snapshot.ConfirmedAt = &confirmedAt.Time
+	}
+	snapshot.DriverAcknowledgedBy = nullableInt64(ackBy)
+	if ackAt.Valid {
+		snapshot.DriverAcknowledgedAt = &ackAt.Time
+	}
+	return snapshot, nil
+}
+
 type rawOrderItem struct {
 	ID         int64
 	OrderID    int64
@@ -755,6 +986,13 @@ func nullableInt64(value sql.NullInt64) *int64 {
 	return &value.Int64
 }
 
+func nullableFloat64(value sql.NullFloat64) *float64 {
+	if !value.Valid {
+		return nil
+	}
+	return &value.Float64
+}
+
 func stringOrEmpty(value *string) string {
 	if value == nil {
 		return ""
@@ -770,6 +1008,20 @@ func int64OrNil(value *int64) any {
 }
 
 func int16OrNil(value *int16) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func floatOrNil(value *float64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func timeOrNil(value *time.Time) any {
 	if value == nil {
 		return nil
 	}

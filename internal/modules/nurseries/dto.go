@@ -1,5 +1,7 @@
 package nurseries
 
+import "time"
+
 type ListNurseriesRequest struct {
 	Page               int
 	PerPage            int
@@ -39,16 +41,21 @@ type UpdateNurseryRequest struct {
 }
 
 type AddressRequest struct {
-	AddressType  *string  `json:"address_type"`
-	AddressLine1 *string  `json:"address_line1"`
-	AddressLine2 *string  `json:"address_line2"`
-	City         *string  `json:"city"`
-	State        *string  `json:"state"`
-	Country      *string  `json:"country"`
-	PostalCode   *string  `json:"postal_code"`
-	Latitude     *float64 `json:"latitude"`
-	Longitude    *float64 `json:"longitude"`
-	IsPrimary    bool     `json:"is_primary"`
+	AddressType         *string    `json:"address_type"`
+	AddressLine1        *string    `json:"address_line1"`
+	AddressLine2        *string    `json:"address_line2"`
+	City                *string    `json:"city"`
+	State               *string    `json:"state"`
+	Country             *string    `json:"country"`
+	PostalCode          *string    `json:"postal_code"`
+	Latitude            *float64   `json:"latitude"`
+	Longitude           *float64   `json:"longitude"`
+	GPSAccuracyM        *float64   `json:"gps_accuracy_meters"`
+	Landmark            *string    `json:"landmark"`
+	LocationSource      *string    `json:"location_source"`
+	LocationConfirmedBy *int64     `json:"location_confirmed_by,omitempty"`
+	LocationConfirmedAt *time.Time `json:"location_confirmed_at,omitempty"`
+	IsPrimary           bool       `json:"is_primary"`
 }
 
 type AddUserRequest struct {

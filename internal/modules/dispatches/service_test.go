@@ -13,11 +13,11 @@ type mockRepo struct {
 	dispatches     map[int64]*Dispatch
 	items          map[int64]*DispatchItem
 	tripEvents     []TripEvent
-	orderAccess    map[int64]*OrderAccess   // order_id → access
-	nurseryMembers map[int64][]int64        // nursery_id → []user_id
-	ownedNurseries map[int64]int64          // user_id → nursery_id
-	userNurseries  map[int64][]int64        // user_id → []nursery_id
-	driverUserIDs  map[int64]int64          // driver_id → user_id
+	orderAccess    map[int64]*OrderAccess // order_id → access
+	nurseryMembers map[int64][]int64      // nursery_id → []user_id
+	ownedNurseries map[int64]int64        // user_id → nursery_id
+	userNurseries  map[int64][]int64      // user_id → []nursery_id
+	driverUserIDs  map[int64]int64        // driver_id → user_id
 	duplicates     map[string]bool
 	nextID         int64
 	nextItemID     int64
@@ -97,10 +97,10 @@ func (m *mockRepo) HasDuplicate(_ context.Context, num string) (bool, error) {
 func (m *mockRepo) Create(_ context.Context, actorID int64, input CreateDispatchInput) (*Dispatch, error) {
 	m.nextID++
 	d := &Dispatch{
-		ID:          m.nextID,
+		ID:           m.nextID,
 		DispatchCode: "DC-TEST-001",
-		OrderID:     input.OrderID,
-		Status:      "PENDING",
+		OrderID:      input.OrderID,
+		Status:       "PENDING",
 		DispatchedBy: &actorID,
 	}
 	if input.DispatchNumber != nil {
@@ -127,6 +127,13 @@ func (m *mockRepo) SetDriverUser(_ context.Context, dispatchID int64, userID int
 	d.DriverUserID = &userID
 	d.Status = "ACCEPTED"
 	return d, nil
+}
+
+func (m *mockRepo) AcknowledgeDeliveryUpdate(_ context.Context, dispatchID int64, _ int64) error {
+	if _, ok := m.dispatches[dispatchID]; !ok {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (m *mockRepo) CreateItem(_ context.Context, dispatchID int64, input DispatchItemRequest) (*DispatchItem, error) {
@@ -209,11 +216,13 @@ func (m *mockRepo) GetUserNurseryIDs(_ context.Context, userID int64) ([]int64, 
 
 // ── actor helpers ─────────────────────────────────────────────────────────────
 
-func adminActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
-func ownerActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}} }
+func adminActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
+func ownerActor(id int64) ActorContext {
+	return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}}
+}
 func managerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"MANAGER"}} }
-func buyerActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
-func driverActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"DRIVER"}} }
+func buyerActor(id int64) ActorContext   { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
+func driverActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"DRIVER"}} }
 
 func nid(n int64) *int64 { return &n }
 

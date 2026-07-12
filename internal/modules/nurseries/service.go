@@ -272,6 +272,7 @@ func (s *Service) CreateAddress(ctx context.Context, actor ActorContext, nursery
 	if err := validateAddress(input); err != nil {
 		return Address{}, err
 	}
+	input = markConfirmedLocation(actor, input)
 	address, err := s.repository.CreateAddress(ctx, nurseryID, input)
 	if err != nil {
 		return Address{}, err
@@ -287,6 +288,7 @@ func (s *Service) UpdateAddress(ctx context.Context, actor ActorContext, address
 	if err := validateAddress(input); err != nil {
 		return Address{}, err
 	}
+	input = markConfirmedLocation(actor, input)
 	address, err := s.repository.UpdateAddress(ctx, addressID, input)
 	if err != nil {
 		return Address{}, err
@@ -558,7 +560,31 @@ func validateAddress(input AddressRequest) error {
 	if input.Longitude != nil && (*input.Longitude < -180 || *input.Longitude > 180) {
 		return ErrInvalidAddress
 	}
+	if input.GPSAccuracyM != nil && *input.GPSAccuracyM < 0 {
+		return ErrInvalidAddress
+	}
+	if input.LocationSource != nil && !isAllowedLocationSource(*input.LocationSource) {
+		return ErrInvalidAddress
+	}
 	return nil
+}
+
+func markConfirmedLocation(actor ActorContext, input AddressRequest) AddressRequest {
+	if input.LocationSource != nil && strings.TrimSpace(*input.LocationSource) != "" {
+		input.LocationConfirmedBy = &actor.UserID
+		now := time.Now()
+		input.LocationConfirmedAt = &now
+	}
+	return input
+}
+
+func isAllowedLocationSource(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "", "gps_confirmed", "nursery_default", "map_selected", "address_search", "admin_updated":
+		return true
+	default:
+		return false
+	}
 }
 
 func canManageNurseries(actor ActorContext) bool {

@@ -21,6 +21,7 @@ type Repository interface {
 	HasDuplicate(ctx context.Context, dispatchNumber string) (bool, error)
 	Create(ctx context.Context, actorID int64, input CreateDispatchInput) (*Dispatch, error)
 	UpdateStatus(ctx context.Context, dispatchID int64, input UpdateStatusInput) (*Dispatch, error)
+	AcknowledgeDeliveryUpdate(ctx context.Context, dispatchID int64, driverUserID int64) error
 	SetDriverUser(ctx context.Context, dispatchID int64, userID int64) (*Dispatch, error)
 	CreateItem(ctx context.Context, dispatchID int64, input DispatchItemRequest) (*DispatchItem, error)
 	ListItems(ctx context.Context, dispatchID int64) ([]DispatchItem, error)
@@ -59,7 +60,6 @@ type UpdateStatusInput struct {
 	DeliveryDate *time.Time
 	Notes        *string
 }
-
 
 type PostgresRepository struct {
 	db *sql.DB
@@ -179,7 +179,21 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 			dispatch_code, order_id, dispatch_number, dispatch_status, vehicle_id, driver_id, dispatched_by,
 			dispatch_date, destination_address, notes, created_at, updated_at
 		)
-		VALUES ($1, $2, NULLIF($3, ''), 'PENDING', $4, $5, $6, $7, NULLIF($8, ''), NULLIF($9, ''), $10, $10)
+		VALUES (
+			$1, $2, NULLIF($3, ''), 'PENDING', $4, $5, $6, $7,
+			COALESCE(NULLIF($8, ''), (
+				SELECT NULLIF(TRIM(CONCAT_WS(', ',
+					ods.address_line1,
+					ods.address_line2,
+					ods.city,
+					ods.state,
+					ods.postal_code
+				)), '')
+				FROM public.order_delivery_snapshots ods
+				WHERE ods.order_id = $2
+			)),
+			NULLIF($9, ''), $10, $10
+		)
 		RETURNING dispatch_id
 	`
 	var dispatchID int64
@@ -216,6 +230,35 @@ func (r *PostgresRepository) UpdateStatus(ctx context.Context, dispatchID int64,
 		return nil, ErrNotFound
 	}
 	return r.FindByID(ctx, dispatchID)
+}
+
+func (r *PostgresRepository) AcknowledgeDeliveryUpdate(ctx context.Context, dispatchID int64, driverUserID int64) error {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE public.order_delivery_snapshots ods
+		SET requires_driver_ack = false,
+			driver_acknowledged_by = $2,
+			driver_acknowledged_at = CURRENT_TIMESTAMP,
+			updated_at = CURRENT_TIMESTAMP
+		FROM public.dispatches d
+		WHERE d.dispatch_id = $1
+		  AND d.order_id = ods.order_id
+		  AND (d.driver_user_id = $2 OR EXISTS (
+			SELECT 1
+			FROM public.drivers dr
+			WHERE dr.driver_id = d.driver_id
+			  AND dr.user_id = $2
+		  ))
+		  AND ods.requires_driver_ack = true
+	`, dispatchID, driverUserID)
+	if err != nil {
+		return err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return err
+	} else if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *PostgresRepository) CreateItem(ctx context.Context, dispatchID int64, input DispatchItemRequest) (*DispatchItem, error) {
@@ -415,7 +458,6 @@ func (r *PostgresRepository) ListTripEvents(ctx context.Context, dispatchID int6
 	}
 	return events, rows.Err()
 }
-
 
 func baseSelect() string {
 	return `

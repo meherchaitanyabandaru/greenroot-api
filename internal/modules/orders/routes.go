@@ -24,6 +24,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Post("/", m.handler.Create)
 		r.Get("/{id}", m.handler.Get)
 		r.Put("/{id}/status", m.handler.UpdateStatus)
+		r.Put("/{id}/delivery", m.handler.UpdateDeliverySnapshot)
 		r.Delete("/{id}", m.handler.Delete)
 		// V1 loading workflow
 		r.Post("/{id}/start-loading", m.handler.StartLoading)

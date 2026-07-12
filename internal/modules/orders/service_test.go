@@ -11,10 +11,14 @@ import (
 type mockRepo struct {
 	orders         map[int64]*Order
 	items          map[int64]*OrderItem
+	deliveries     map[int64]*DeliverySnapshot
 	nurseryOwners  map[int64]int64   // nursery_id → owner_user_id
 	nurseryMembers map[int64][]int64 // nursery_id → []user_id
 	userNurseries  map[int64][]int64 // user_id → []nursery_id (all memberships)
 	ownedNurseries map[int64]int64   // user_id → nursery_id (owners only)
+	driverUserIDs  map[int64]int64   // order_id → driver user_id
+	startedOrders  map[int64]bool
+	notifications  []int64
 	nextID         int64
 	nextItemID     int64
 }
@@ -23,10 +27,13 @@ func newMock() *mockRepo {
 	return &mockRepo{
 		orders:         make(map[int64]*Order),
 		items:          make(map[int64]*OrderItem),
+		deliveries:     make(map[int64]*DeliverySnapshot),
 		nurseryOwners:  make(map[int64]int64),
 		nurseryMembers: make(map[int64][]int64),
 		userNurseries:  make(map[int64][]int64),
 		ownedNurseries: make(map[int64]int64),
+		driverUserIDs:  make(map[int64]int64),
+		startedOrders:  make(map[int64]bool),
 	}
 }
 
@@ -94,6 +101,58 @@ func (m *mockRepo) Create(_ context.Context, actorID int64, input CreateOrderReq
 	}
 	m.orders[id] = o
 	return o, nil
+}
+
+func (m *mockRepo) GetDeliverySnapshot(_ context.Context, orderID int64) (*DeliverySnapshot, error) {
+	snapshot, ok := m.deliveries[orderID]
+	if !ok {
+		return nil, nil
+	}
+	clone := *snapshot
+	return &clone, nil
+}
+
+func (m *mockRepo) UpdateDeliverySnapshot(_ context.Context, orderID int64, actorID int64, input DeliverySnapshotRequest) (*DeliverySnapshot, error) {
+	if _, ok := m.orders[orderID]; !ok {
+		return nil, ErrNotFound
+	}
+	snapshot := &DeliverySnapshot{
+		ID:                   orderID,
+		OrderID:              orderID,
+		ContactName:          input.ContactName,
+		ContactMobile:        input.ContactMobile,
+		AlternateMobile:      input.AlternateMobile,
+		AddressLine1:         input.AddressLine1,
+		AddressLine2:         input.AddressLine2,
+		City:                 input.City,
+		State:                input.State,
+		Country:              input.Country,
+		PostalCode:           input.PostalCode,
+		Landmark:             input.Landmark,
+		DeliveryInstructions: input.DeliveryInstructions,
+		Latitude:             input.Latitude,
+		Longitude:            input.Longitude,
+		GPSAccuracyM:         input.GPSAccuracyM,
+		LocationSource:       input.LocationSource,
+		ConfirmedBy:          &actorID,
+		EmergencyUpdated:     input.EmergencyUpdate,
+		RequiresDriverAck:    input.EmergencyUpdate,
+	}
+	m.deliveries[orderID] = snapshot
+	m.orders[orderID].DeliverySnapshot = snapshot
+	return snapshot, nil
+}
+
+func (m *mockRepo) OrderHasStartedDispatch(_ context.Context, orderID int64) (bool, error) {
+	return m.startedOrders[orderID], nil
+}
+
+func (m *mockRepo) StartedDispatchDriverUserID(_ context.Context, orderID int64) (*int64, error) {
+	userID, ok := m.driverUserIDs[orderID]
+	if !ok {
+		return nil, nil
+	}
+	return &userID, nil
 }
 
 func (m *mockRepo) UpdateStatus(_ context.Context, _ int64, orderID int64, status string) (*Order, error) {
@@ -203,7 +262,10 @@ func (m *mockRepo) SetLoadedQuantity(_ context.Context, itemID int64, qty float6
 
 func (m *mockRepo) RecalculateTotalFromLoaded(_ context.Context, _ int64) error { return nil }
 
-func (m *mockRepo) CreateNotification(_ context.Context, _ int64, _, _, _ string) error { return nil }
+func (m *mockRepo) CreateNotification(_ context.Context, userID int64, _, _, _ string) error {
+	m.notifications = append(m.notifications, userID)
+	return nil
+}
 
 func (m *mockRepo) IsNurseryMember(_ context.Context, nurseryID int64, userID int64) (bool, error) {
 	members := m.nurseryMembers[nurseryID]
@@ -242,14 +304,16 @@ func (m *mockRepo) FindOrCreateBuyerByMobile(_ context.Context, _ string, _ stri
 
 // ── actor helpers ─────────────────────────────────────────────────────────────
 
-func adminActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
-func ownerActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}} }
+func adminActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
+func ownerActor(id int64) ActorContext {
+	return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}}
+}
 func managerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"MANAGER"}} }
-func buyerActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
+func buyerActor(id int64) ActorContext   { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
 
-func nurseryID(n int64) *int64   { return &n }
-func userID(n int64) *int64      { return &n }
-func str(s string) *string       { return &s }
+func nurseryID(n int64) *int64 { return &n }
+func userID(n int64) *int64    { return &n }
+func str(s string) *string     { return &s }
 
 func validItem() OrderItemRequest {
 	return OrderItemRequest{PlantID: 1, Quantity: 10, UnitPrice: 50, TotalPrice: 500}
@@ -376,6 +440,42 @@ func TestCreate_InvalidItemPriceMismatch(t *testing.T) {
 	})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("price mismatch: want ErrInvalidInput, got %v", err)
+	}
+}
+
+// ── Delivery snapshot ────────────────────────────────────────────────────────
+
+func TestUpdateDeliverySnapshot_EmergencyNotifiesStartedDispatchDriver(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, 100)
+	repo.seedOrder(Order{
+		ID:              10,
+		OrderCode:       "ORD-TEST-001",
+		Status:          "LOADED",
+		SellerNurseryID: nurseryID(1),
+		NurseryID:       nurseryID(1),
+	})
+	repo.startedOrders[10] = true
+	repo.driverUserIDs[10] = 700
+
+	_, err := svc(repo).UpdateDeliverySnapshot(context.Background(), ownerActor(100), 10, DeliverySnapshotRequest{
+		ContactName:     str("Customer"),
+		ContactMobile:   str("9000000000"),
+		AddressLine1:    str("Updated delivery address"),
+		City:            str("Hyderabad"),
+		State:           str("Telangana"),
+		Country:         str("India"),
+		PostalCode:      str("500032"),
+		EmergencyUpdate: true,
+	})
+	if err != nil {
+		t.Fatalf("emergency delivery update: %v", err)
+	}
+	if len(repo.notifications) != 1 || repo.notifications[0] != 700 {
+		t.Fatalf("driver notification: got %#v, want [700]", repo.notifications)
+	}
+	if got := repo.deliveries[10].LocationSource; got == nil || *got != "admin_updated" {
+		t.Fatalf("location source: got %v, want admin_updated", got)
 	}
 }
 

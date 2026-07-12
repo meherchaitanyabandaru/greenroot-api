@@ -1,5 +1,7 @@
 package users
 
+import "time"
+
 type UpdateProfileRequest struct {
 	FirstName       string  `json:"first_name"`
 	LastName        *string `json:"last_name"`
@@ -9,18 +11,23 @@ type UpdateProfileRequest struct {
 }
 
 type CreateAddressRequest struct {
-	AddressType   *string  `json:"address_type"`
-	ContactName   *string  `json:"contact_name"`
-	ContactMobile *string  `json:"contact_mobile"`
-	AddressLine1  string   `json:"address_line1"`
-	AddressLine2  *string  `json:"address_line2"`
-	City          *string  `json:"city"`
-	State         *string  `json:"state"`
-	Country       *string  `json:"country"`
-	PostalCode    *string  `json:"postal_code"`
-	Latitude      *float64 `json:"latitude"`
-	Longitude     *float64 `json:"longitude"`
-	IsDefault     bool     `json:"is_default"`
+	AddressType         *string    `json:"address_type"`
+	ContactName         *string    `json:"contact_name"`
+	ContactMobile       *string    `json:"contact_mobile"`
+	AddressLine1        string     `json:"address_line1"`
+	AddressLine2        *string    `json:"address_line2"`
+	City                *string    `json:"city"`
+	State               *string    `json:"state"`
+	Country             *string    `json:"country"`
+	PostalCode          *string    `json:"postal_code"`
+	Latitude            *float64   `json:"latitude"`
+	Longitude           *float64   `json:"longitude"`
+	GPSAccuracyM        *float64   `json:"gps_accuracy_meters"`
+	Landmark            *string    `json:"landmark"`
+	LocationSource      *string    `json:"location_source"`
+	LocationConfirmedBy *int64     `json:"location_confirmed_by,omitempty"`
+	LocationConfirmedAt *time.Time `json:"location_confirmed_at,omitempty"`
+	IsDefault           bool       `json:"is_default"`
 }
 
 type UpdateAddressRequest = CreateAddressRequest

@@ -306,6 +306,7 @@ func (r *PostgresRepository) ListAddresses(ctx context.Context, nurseryID int64)
 	const query = `
 		SELECT nursery_address_id, nursery_id, address_type::text, address_line1, address_line2,
 			city, state, country, postal_code, latitude, longitude, COALESCE(is_primary, false),
+			gps_accuracy_meters, landmark, location_source, location_confirmed_by, location_confirmed_at,
 			created_at, updated_at
 		FROM public.nursery_addresses
 		WHERE nursery_id = $1
@@ -341,12 +342,19 @@ func (r *PostgresRepository) CreateAddress(ctx context.Context, nurseryID int64,
 	const query = `
 		INSERT INTO public.nursery_addresses (
 			nursery_id, address_type, address_line1, address_line2, city, state, country,
-			postal_code, latitude, longitude, is_primary, created_at, updated_at
+			postal_code, latitude, longitude, location, gps_accuracy_meters, landmark,
+			location_source, location_confirmed_by, location_confirmed_at, is_primary, created_at, updated_at
 		)
 		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''),
-			NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), $9, $10, $11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+			NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), $9, $10,
+			CASE WHEN $9::numeric IS NOT NULL AND $10::numeric IS NOT NULL
+				THEN ST_SetSRID(ST_MakePoint($10::double precision, $9::double precision), 4326)::geography
+				ELSE NULL
+			END,
+			$11, NULLIF($12, ''), NULLIF($13, ''), $14, $15, $16, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING nursery_address_id, nursery_id, address_type::text, address_line1, address_line2,
 			city, state, country, postal_code, latitude, longitude, COALESCE(is_primary, false),
+			gps_accuracy_meters, landmark, location_source, location_confirmed_by, location_confirmed_at,
 			created_at, updated_at
 	`
 	address, err := scanAddressRow(tx.QueryRowContext(
@@ -362,6 +370,11 @@ func (r *PostgresRepository) CreateAddress(ctx context.Context, nurseryID int64,
 		stringOrEmpty(input.PostalCode),
 		floatOrNil(input.Latitude),
 		floatOrNil(input.Longitude),
+		floatOrNil(input.GPSAccuracyM),
+		stringOrEmpty(input.Landmark),
+		stringOrEmpty(input.LocationSource),
+		int64OrNil(input.LocationConfirmedBy),
+		timeOrNil(input.LocationConfirmedAt),
 		input.IsPrimary,
 	))
 	if err != nil {
@@ -401,11 +414,21 @@ func (r *PostgresRepository) UpdateAddress(ctx context.Context, addressID int64,
 			postal_code = NULLIF($8, ''),
 			latitude = $9,
 			longitude = $10,
-			is_primary = $11,
+			location = CASE WHEN $9::numeric IS NOT NULL AND $10::numeric IS NOT NULL
+				THEN ST_SetSRID(ST_MakePoint($10::double precision, $9::double precision), 4326)::geography
+				ELSE NULL
+			END,
+			gps_accuracy_meters = $11,
+			landmark = NULLIF($12, ''),
+			location_source = NULLIF($13, ''),
+			location_confirmed_by = $14,
+			location_confirmed_at = $15,
+			is_primary = $16,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE nursery_address_id = $1
 		RETURNING nursery_address_id, nursery_id, address_type::text, address_line1, address_line2,
 			city, state, country, postal_code, latitude, longitude, COALESCE(is_primary, false),
+			gps_accuracy_meters, landmark, location_source, location_confirmed_by, location_confirmed_at,
 			created_at, updated_at
 	`
 	address, err := scanAddressRow(tx.QueryRowContext(
@@ -421,6 +444,11 @@ func (r *PostgresRepository) UpdateAddress(ctx context.Context, addressID int64,
 		stringOrEmpty(input.PostalCode),
 		floatOrNil(input.Latitude),
 		floatOrNil(input.Longitude),
+		floatOrNil(input.GPSAccuracyM),
+		stringOrEmpty(input.Landmark),
+		stringOrEmpty(input.LocationSource),
+		int64OrNil(input.LocationConfirmedBy),
+		timeOrNil(input.LocationConfirmedAt),
 		input.IsPrimary,
 	))
 	if err != nil {
@@ -945,9 +973,31 @@ func scanAddressRows(rows *sql.Rows) (Address, error) {
 func scanAddress(row interface{ Scan(dest ...any) error }) (Address, error) {
 	var address Address
 	var addressType, line1, line2, city, state, country, postal sql.NullString
-	var lat, lon sql.NullFloat64
-	var createdAt, updatedAt sql.NullTime
-	if err := row.Scan(&address.ID, &address.NurseryID, &addressType, &line1, &line2, &city, &state, &country, &postal, &lat, &lon, &address.IsPrimary, &createdAt, &updatedAt); err != nil {
+	var landmark, locationSource sql.NullString
+	var lat, lon, gpsAccuracy sql.NullFloat64
+	var confirmedBy sql.NullInt64
+	var confirmedAt, createdAt, updatedAt sql.NullTime
+	if err := row.Scan(
+		&address.ID,
+		&address.NurseryID,
+		&addressType,
+		&line1,
+		&line2,
+		&city,
+		&state,
+		&country,
+		&postal,
+		&lat,
+		&lon,
+		&address.IsPrimary,
+		&gpsAccuracy,
+		&landmark,
+		&locationSource,
+		&confirmedBy,
+		&confirmedAt,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
 		return Address{}, err
 	}
 	address.AddressType = nullableString(addressType)
@@ -959,6 +1009,13 @@ func scanAddress(row interface{ Scan(dest ...any) error }) (Address, error) {
 	address.PostalCode = nullableString(postal)
 	address.Latitude = nullableFloat64(lat)
 	address.Longitude = nullableFloat64(lon)
+	address.GPSAccuracyM = nullableFloat64(gpsAccuracy)
+	address.Landmark = nullableString(landmark)
+	address.LocationSource = nullableString(locationSource)
+	address.LocationConfirmedBy = nullableInt64(confirmedBy)
+	if confirmedAt.Valid {
+		address.LocationConfirmedAt = &confirmedAt.Time
+	}
 	if createdAt.Valid {
 		address.CreatedAt = &createdAt.Time
 	}
@@ -1059,6 +1116,20 @@ func stringOrEmpty(value *string) string {
 }
 
 func floatOrNil(value *float64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func int64OrNil(value *int64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func timeOrNil(value *time.Time) any {
 	if value == nil {
 		return nil
 	}

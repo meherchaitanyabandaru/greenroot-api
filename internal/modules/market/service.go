@@ -43,6 +43,10 @@ func (s *Service) CreateAd(ctx context.Context, actor ActorContext, req CreateAd
 	if len(req.Photos) > 10 {
 		return Ad{}, fmt.Errorf("%w: maximum 10 photos allowed", ErrInvalidInput)
 	}
+	req = markConfirmedPickup(actor, req)
+	if err := validatePickup(req.PickupLatitude, req.PickupLongitude, req.PickupGPSAccuracyM, req.PickupLocationSource); err != nil {
+		return Ad{}, err
+	}
 	nurseryID, err := s.actorNurseryID(ctx, actor)
 	if err != nil {
 		return Ad{}, ErrForbidden
@@ -133,6 +137,10 @@ func (s *Service) UpdateAd(ctx context.Context, actor ActorContext, id int64, re
 	}
 	if req.Photos != nil && len(req.Photos) > 10 {
 		return Ad{}, fmt.Errorf("%w: maximum 10 photos allowed", ErrInvalidInput)
+	}
+	req = markConfirmedPickupUpdate(actor, req)
+	if err := validatePickup(req.PickupLatitude, req.PickupLongitude, req.PickupGPSAccuracyM, req.PickupLocationSource); err != nil {
+		return Ad{}, err
 	}
 	return s.repo.UpdateAd(ctx, id, actor.UserID, req)
 }
@@ -440,6 +448,52 @@ func (s *Service) canAccessEnquiry(actor ActorContext, e Enquiry, nurseryID int6
 		return true
 	}
 	return nurseryID == e.AdNurseryID || nurseryID == e.EnquiringNurseryID
+}
+
+func markConfirmedPickup(actor ActorContext, req CreateAdRequest) CreateAdRequest {
+	if req.PickupLocationSource != nil && strings.TrimSpace(*req.PickupLocationSource) != "" {
+		req.PickupConfirmedBy = &actor.UserID
+		now := time.Now()
+		req.PickupConfirmedAt = &now
+	}
+	return req
+}
+
+func markConfirmedPickupUpdate(actor ActorContext, req UpdateAdRequest) UpdateAdRequest {
+	if req.PickupLocationSource != nil && strings.TrimSpace(*req.PickupLocationSource) != "" {
+		req.PickupConfirmedBy = &actor.UserID
+		now := time.Now()
+		req.PickupConfirmedAt = &now
+	}
+	return req
+}
+
+func validatePickup(latitude *float64, longitude *float64, accuracy *float64, source *string) error {
+	if (latitude == nil) != (longitude == nil) {
+		return fmt.Errorf("%w: pickup latitude and longitude must be provided together", ErrInvalidInput)
+	}
+	if latitude != nil && (*latitude < -90 || *latitude > 90) {
+		return fmt.Errorf("%w: invalid pickup latitude", ErrInvalidInput)
+	}
+	if longitude != nil && (*longitude < -180 || *longitude > 180) {
+		return fmt.Errorf("%w: invalid pickup longitude", ErrInvalidInput)
+	}
+	if accuracy != nil && *accuracy < 0 {
+		return fmt.Errorf("%w: invalid pickup accuracy", ErrInvalidInput)
+	}
+	if source != nil && !isAllowedLocationSource(*source) {
+		return fmt.Errorf("%w: invalid pickup location source", ErrInvalidInput)
+	}
+	return nil
+}
+
+func isAllowedLocationSource(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "", "gps_confirmed", "nursery_default", "map_selected", "address_search", "admin_updated":
+		return true
+	default:
+		return false
+	}
 }
 
 func hasRole(actor ActorContext, role string) bool {

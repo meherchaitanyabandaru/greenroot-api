@@ -28,6 +28,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Get("/code/{code}", m.handler.GetByCode) // look up by dispatch_code (for driver join flow)
 		r.Get("/{id}", m.handler.Get)
 		r.Put("/{id}/status", m.handler.UpdateStatus)
+		r.Post("/{id}/ack-delivery-update", m.handler.AcknowledgeDeliveryUpdate)
 		r.Post("/{id}/accept", m.handler.Accept) // driver accepts and links to dispatch
 		r.Post("/{id}/items", m.handler.CreateItem)
 		r.Post("/{id}/trip-events", m.handler.CreateTripEvent)

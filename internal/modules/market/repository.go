@@ -113,12 +113,21 @@ func (r *PostgresRepository) CreateAd(ctx context.Context, nurseryID, userID int
 	err := r.db.QueryRowContext(ctx,
 		`INSERT INTO public.market_ads
 		   (nursery_id, created_by_user_id, plant_id, plant_name, category_name,
-		    title, description, quantity, size_description, price_per_unit, price_unit, photos)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		    title, description, quantity, size_description, price_per_unit, price_unit, photos,
+		    pickup_address, pickup_landmark, pickup_latitude, pickup_longitude, pickup_location,
+		    pickup_gps_accuracy_meters, pickup_location_source, pickup_confirmed_by, pickup_confirmed_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
+		    CASE WHEN $15::numeric IS NOT NULL AND $16::numeric IS NOT NULL
+		      THEN ST_SetSRID(ST_MakePoint($16::double precision, $15::double precision), 4326)::geography
+		      ELSE NULL
+		    END,
+		    $17,$18,$19,$20)
 		 RETURNING ad_id`,
 		nurseryID, userID, req.PlantID, req.PlantName, req.CategoryName,
 		req.Title, req.Description, req.Quantity, req.SizeDescription,
 		req.PricePerUnit, req.PriceUnit, photos,
+		req.PickupAddress, req.PickupLandmark, req.PickupLatitude, req.PickupLongitude,
+		req.PickupGPSAccuracyM, req.PickupLocationSource, req.PickupConfirmedBy, req.PickupConfirmedAt,
 	).Scan(&id)
 	if err != nil {
 		return Ad{}, err
@@ -133,6 +142,9 @@ func (r *PostgresRepository) GetAd(ctx context.Context, id int64) (Ad, error) {
 		       ma.created_by_user_id, ma.plant_id, ma.plant_name, ma.category_name,
 		       ma.title, ma.description, ma.quantity, ma.size_description,
 		       ma.price_per_unit, ma.price_unit, ma.photos,
+		       ma.pickup_address, ma.pickup_landmark, ma.pickup_latitude, ma.pickup_longitude,
+		       ma.pickup_gps_accuracy_meters, ma.pickup_location_source,
+		       ma.pickup_confirmed_by, ma.pickup_confirmed_at,
 		       ma.status, ma.view_count, ma.save_count, ma.enquiry_count,
 		       ma.expires_at, ma.published_at,
 		       ma.paused_at, ma.expired_at, ma.archived_at,
@@ -211,6 +223,9 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, p
 		       ma.created_by_user_id, ma.plant_id, ma.plant_name, ma.category_name,
 		       ma.title, ma.description, ma.quantity, ma.size_description,
 		       ma.price_per_unit, ma.price_unit, ma.photos,
+		       ma.pickup_address, ma.pickup_landmark, ma.pickup_latitude, ma.pickup_longitude,
+		       ma.pickup_gps_accuracy_meters, ma.pickup_location_source,
+		       ma.pickup_confirmed_by, ma.pickup_confirmed_at,
 		       ma.status, ma.view_count, ma.save_count, ma.enquiry_count,
 		       ma.expires_at, ma.published_at,
 		       ma.paused_at, ma.expired_at, ma.archived_at,
@@ -248,6 +263,16 @@ func (r *PostgresRepository) UpdateAd(ctx context.Context, id, userID int64, req
 		args = append(args, v)
 		setClauses = append(setClauses, fmt.Sprintf("%s = $%d", col, len(args)))
 	}
+	addExpr := func(expr string, values ...any) {
+		start := len(args) + 1
+		for _, v := range values {
+			args = append(args, v)
+		}
+		for i := range values {
+			expr = strings.ReplaceAll(expr, fmt.Sprintf("$%d", i+1), fmt.Sprintf("$%d", start+i))
+		}
+		setClauses = append(setClauses, expr)
+	}
 	if req.PlantName != nil {
 		add("plant_name", *req.PlantName)
 	}
@@ -277,6 +302,27 @@ func (r *PostgresRepository) UpdateAd(ctx context.Context, id, userID int64, req
 	}
 	if req.Photos != nil {
 		add("photos", photosJSON(req.Photos))
+	}
+	if req.PickupAddress != nil {
+		add("pickup_address", *req.PickupAddress)
+	}
+	if req.PickupLandmark != nil {
+		add("pickup_landmark", *req.PickupLandmark)
+	}
+	if req.PickupLatitude != nil && req.PickupLongitude != nil {
+		addExpr("pickup_latitude = $1, pickup_longitude = $2, pickup_location = ST_SetSRID(ST_MakePoint($2::double precision, $1::double precision), 4326)::geography", *req.PickupLatitude, *req.PickupLongitude)
+	}
+	if req.PickupGPSAccuracyM != nil {
+		add("pickup_gps_accuracy_meters", *req.PickupGPSAccuracyM)
+	}
+	if req.PickupLocationSource != nil {
+		add("pickup_location_source", *req.PickupLocationSource)
+	}
+	if req.PickupConfirmedBy != nil {
+		add("pickup_confirmed_by", *req.PickupConfirmedBy)
+	}
+	if req.PickupConfirmedAt != nil {
+		add("pickup_confirmed_at", *req.PickupConfirmedAt)
 	}
 	args = append(args, id)
 	q := fmt.Sprintf(`UPDATE public.market_ads SET %s WHERE ad_id = $%d`,
@@ -604,15 +650,19 @@ func scanAdRow(row rowScanner) (Ad, error) {
 	var photosRaw []byte
 	var plantID sql.NullInt64
 	var nurseryMobile, categoryName, description, sizeDesc, priceUnit sql.NullString
-	var pricePerUnit sql.NullFloat64
+	var pickupAddress, pickupLandmark, pickupSource sql.NullString
+	var pricePerUnit, pickupLat, pickupLon, pickupAccuracy sql.NullFloat64
 	var quantity sql.NullInt64
-	var expiresAt, publishedAt, pausedAt, expiredAt, archivedAt sql.NullTime
+	var pickupConfirmedBy sql.NullInt64
+	var pickupConfirmedAt, expiresAt, publishedAt, pausedAt, expiredAt, archivedAt sql.NullTime
 
 	if err := row.Scan(
 		&a.ID, &a.Code, &a.NurseryID, &a.NurseryName, &a.NurseryVerified, &nurseryMobile,
 		&a.CreatedByUserID, &plantID, &a.PlantName, &categoryName,
 		&a.Title, &description, &quantity, &sizeDesc,
 		&pricePerUnit, &priceUnit, &photosRaw,
+		&pickupAddress, &pickupLandmark, &pickupLat, &pickupLon,
+		&pickupAccuracy, &pickupSource, &pickupConfirmedBy, &pickupConfirmedAt,
 		&a.Status, &a.ViewCount, &a.SaveCount, &a.EnquiryCount,
 		&expiresAt, &publishedAt, &pausedAt, &expiredAt, &archivedAt,
 		&a.CreatedAt, &a.UpdatedAt,
@@ -646,6 +696,30 @@ func scanAdRow(row rowScanner) (Ad, error) {
 	}
 	if priceUnit.Valid {
 		a.PriceUnit = &priceUnit.String
+	}
+	if pickupAddress.Valid {
+		a.PickupAddress = &pickupAddress.String
+	}
+	if pickupLandmark.Valid {
+		a.PickupLandmark = &pickupLandmark.String
+	}
+	if pickupLat.Valid {
+		a.PickupLatitude = &pickupLat.Float64
+	}
+	if pickupLon.Valid {
+		a.PickupLongitude = &pickupLon.Float64
+	}
+	if pickupAccuracy.Valid {
+		a.PickupGPSAccuracyM = &pickupAccuracy.Float64
+	}
+	if pickupSource.Valid {
+		a.PickupLocationSource = &pickupSource.String
+	}
+	if pickupConfirmedBy.Valid {
+		a.PickupConfirmedBy = &pickupConfirmedBy.Int64
+	}
+	if pickupConfirmedAt.Valid {
+		a.PickupConfirmedAt = &pickupConfirmedAt.Time
 	}
 	if expiresAt.Valid {
 		a.ExpiresAt = &expiresAt.Time

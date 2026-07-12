@@ -107,6 +107,47 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID 
 	return *order, nil
 }
 
+func (s *Service) UpdateDeliverySnapshot(ctx context.Context, actor ActorContext, orderID int64, input DeliverySnapshotRequest) (Order, error) {
+	current, err := s.repository.FindByID(ctx, orderID)
+	if err != nil {
+		return Order{}, err
+	}
+	if err := s.canManage(ctx, actor, *current); err != nil {
+		return Order{}, err
+	}
+	if err := validateDeliverySnapshot(input); err != nil {
+		return Order{}, err
+	}
+	started, err := s.repository.OrderHasStartedDispatch(ctx, orderID)
+	if err != nil {
+		return Order{}, err
+	}
+	if started && !input.EmergencyUpdate {
+		return Order{}, ErrInvalidStatus
+	}
+	if input.EmergencyUpdate {
+		input.LocationSource = stringPtr("admin_updated")
+	}
+	if _, err := s.repository.UpdateDeliverySnapshot(ctx, orderID, actor.UserID, input); err != nil {
+		return Order{}, err
+	}
+	updated, err := s.repository.FindByID(ctx, orderID)
+	if err != nil {
+		return Order{}, err
+	}
+	if input.EmergencyUpdate {
+		if driverUserID, err := s.repository.StartedDispatchDriverUserID(ctx, orderID); err == nil && driverUserID != nil {
+			msg := fmt.Sprintf("Delivery address changed for order %s. Please review and acknowledge the update.", updated.OrderCode)
+			_ = s.repository.CreateNotification(ctx, *driverUserID, "DELIVERY_ADDRESS_UPDATED", "Delivery Address Updated", msg)
+		}
+	}
+	s.audit(ctx, actor, auditlog.EntityOrder, orderID, auditlog.ActionUpdate,
+		fmt.Sprintf("Order #%d delivery snapshot updated", orderID),
+		current.DeliverySnapshot,
+		updated.DeliverySnapshot)
+	return *updated, nil
+}
+
 // StartLoading marks an order as LOADING (nursery owner or assigned manager only).
 func (s *Service) StartLoading(ctx context.Context, actor ActorContext, orderID int64) (Order, error) {
 	order, err := s.repository.FindByID(ctx, orderID)
@@ -527,7 +568,47 @@ func validateOrder(input CreateOrderRequest) error {
 			return err
 		}
 	}
+	if input.Delivery != nil {
+		if err := validateDeliverySnapshot(*input.Delivery); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func validateDeliverySnapshot(input DeliverySnapshotRequest) error {
+	if input.Latitude != nil && input.Longitude == nil {
+		return ErrInvalidInput
+	}
+	if input.Longitude != nil && input.Latitude == nil {
+		return ErrInvalidInput
+	}
+	if input.Latitude != nil && (*input.Latitude < -90 || *input.Latitude > 90) {
+		return ErrInvalidInput
+	}
+	if input.Longitude != nil && (*input.Longitude < -180 || *input.Longitude > 180) {
+		return ErrInvalidInput
+	}
+	if input.GPSAccuracyM != nil && *input.GPSAccuracyM < 0 {
+		return ErrInvalidInput
+	}
+	if input.LocationSource != nil && !isAllowedLocationSource(*input.LocationSource) {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
+func isAllowedLocationSource(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "", "gps_confirmed", "nursery_default", "map_selected", "address_search", "admin_updated":
+		return true
+	default:
+		return false
+	}
+}
+
+func stringPtr(value string) *string {
+	return &value
 }
 
 func validateItem(input OrderItemRequest) error {

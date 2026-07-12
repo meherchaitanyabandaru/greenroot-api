@@ -108,6 +108,23 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, DispatchResponse{Dispatch: dispatch})
 }
 
+func (h *Handler) AcknowledgeDeliveryUpdate(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	dispatch, err := h.service.AcknowledgeDeliveryUpdate(r.Context(), actor, id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, DispatchResponse{Dispatch: dispatch})
+}
+
 func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {
