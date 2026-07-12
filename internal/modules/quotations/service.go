@@ -153,7 +153,12 @@ func (s *Service) RenderPDF(ctx context.Context, actor ActorContext, id int64) (
 	if err != nil {
 		return nil, "", err
 	}
-	pdfBytes := buildQuotationPDF(q)
+	// Include verification QR only when an active token exists — read-only, no side effects.
+	var verifyURL string
+	if v, verErr := s.repository.GetActiveVerificationToken(ctx, id); verErr == nil && v != nil {
+		verifyURL = s.verifyURL(v.Token)
+	}
+	pdfBytes := buildQuotationPDF(q, verifyURL)
 	s.audit(ctx, actor, auditlog.EntityQuotation, id, auditlog.ActionDownload, map[string]any{
 		"masked":    isManagerOnly(actor),
 		"generated": true,
