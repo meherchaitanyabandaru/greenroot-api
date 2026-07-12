@@ -13,9 +13,9 @@ type Module struct {
 	handler *Handler
 }
 
-func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, storageCli *storage.Client, webBaseURL string) Module {
+func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, storageCli *storage.Client) Module {
 	repository := NewRepository(db)
-	service := NewService(repository, audit, storageCli, webBaseURL)
+	service := NewService(repository, audit, storageCli)
 	return Module{handler: NewHandler(service, jwt)}
 }
 

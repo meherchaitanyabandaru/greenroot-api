@@ -18,10 +18,9 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Name       string
-	Env        string
-	Version    string
-	WebBaseURL string // base URL of the Flutter web app, used to build QR verification URLs
+	Name    string
+	Env     string
+	Version string
 }
 
 type HTTPConfig struct {
@@ -72,10 +71,9 @@ type StorageConfig struct {
 func Load() Config {
 	return Config{
 		App: AppConfig{
-			Name:       getString("APP_NAME", "greenroot-api"),
-			Env:        getString("APP_ENV", "local"),
-			Version:    getString("APP_VERSION", "0.1.0"),
-			WebBaseURL: getString("WEB_BASE_URL", "http://localhost:4040"),
+			Name:    getString("APP_NAME", "greenroot-api"),
+			Env:     getString("APP_ENV", "local"),
+			Version: getString("APP_VERSION", "0.1.0"),
 		},
 		HTTP: HTTPConfig{
 			Host:               getString("HTTP_HOST", "0.0.0.0"),

@@ -74,7 +74,7 @@ func NewRouter(deps Dependencies) chi.Router {
 		subModule := subscriptions.NewModule(deps.DB, deps.JWT, deps.Audit)
 		nurseries.NewModuleWithTrial(deps.DB, deps.JWT, deps.Audit, subModule.Service()).RegisterRoutes(r)
 		orders.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
-		quotations.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, deps.Config.App.WebBaseURL).RegisterRoutes(r)
+		quotations.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage).RegisterRoutes(r)
 		payments.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		plants.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		plantrequests.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)

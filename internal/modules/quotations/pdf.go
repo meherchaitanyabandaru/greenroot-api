@@ -109,8 +109,8 @@ func (c *pdfCanvas) verificationSection(topY float64, brand pdfColor, q Quotatio
 	qrX := x + 14.0
 	qrY := topY - boxH + 18.0 // bottom-left of QR square in PDF coords; 18pt reserves space for fallback text
 	c.qrCode(qrX, qrY, qrSize, verifyURL)
-	// Fallback URL below QR for non-scanner access
-	c.text(qrX, qrY-10, 7, false, pdfMuted, "greenroot.app/verify/"+q.QuotationCode)
+	// Label below QR showing the quotation code
+	c.text(qrX, qrY-10, 7, false, pdfMuted, q.QuotationCode)
 
 	// Quote metadata (right of QR)
 	mx := qrX + qrSize + 14.0

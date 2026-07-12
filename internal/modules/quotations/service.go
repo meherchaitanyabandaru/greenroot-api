@@ -105,11 +105,10 @@ type Service struct {
 	repository Repository
 	auditSvc   *auditlog.Service
 	storage    *storage.Client
-	webBaseURL string // e.g. "https://app.greenroot.in" — used to build QR verify URLs
 }
 
-func NewService(repository Repository, auditSvc *auditlog.Service, storageCli *storage.Client, webBaseURL string) *Service {
-	return &Service{repository: repository, auditSvc: auditSvc, storage: storageCli, webBaseURL: webBaseURL}
+func NewService(repository Repository, auditSvc *auditlog.Service, storageCli *storage.Client) *Service {
+	return &Service{repository: repository, auditSvc: auditSvc, storage: storageCli}
 }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListQuotationsRequest) ([]Quotation, Pagination, error) {
@@ -960,10 +959,7 @@ func (s *Service) GetByToken(ctx context.Context, actor ActorContext, token stri
 }
 
 func (s *Service) verifyURL(token string) string {
-	if s.webBaseURL == "" {
-		return token
-	}
-	return s.webBaseURL + "/verify/" + token
+	return token
 }
 
 func generateToken() (string, error) {
