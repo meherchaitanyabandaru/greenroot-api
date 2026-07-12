@@ -13,6 +13,7 @@ var (
 	ErrInvalidInput    = errors.New("invalid input")
 	ErrConflictingRole = errors.New("conflicting role")
 	ErrAlreadyMember   = errors.New("already member of another nursery")
+	ErrWrongTarget     = errors.New("invite addressed to a different person")
 )
 
 type Service struct {
@@ -84,6 +85,14 @@ func (s *Service) Accept(ctx context.Context, actor ActorContext, uuid string) (
 	pending, err := s.repository.FindByUUID(ctx, uuid)
 	if err != nil {
 		return Invite{}, err
+	}
+
+	// Enforce target: if the invite was addressed to a specific mobile number,
+	// only that person may accept it — UUID secrecy is not enough on its own.
+	if pending.TargetMobile != nil && *pending.TargetMobile != "" && actor.Mobile != "" {
+		if actor.Mobile != *pending.TargetMobile {
+			return Invite{}, ErrWrongTarget
+		}
 	}
 
 	switch pending.InviteType {

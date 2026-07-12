@@ -29,6 +29,7 @@ const (
 // All fields are populated from JWT claims — zero DB queries per request.
 type Actor struct {
 	UserID    int64
+	Mobile    string
 	Roles     []string
 	IPAddress string
 	UserAgent string
@@ -123,6 +124,7 @@ func actorFromClaims(c *jwtplatform.Claims, ip, ua string) Actor {
 	userID, _ := strconv.ParseInt(c.UserID, 10, 64)
 	return Actor{
 		UserID:        userID,
+		Mobile:        c.Mobile,
 		Roles:         c.Roles,
 		IPAddress:     ip,
 		UserAgent:     ua,

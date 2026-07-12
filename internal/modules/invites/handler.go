@@ -112,7 +112,7 @@ func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, b
 	if !ok {
 		return ActorContext{}, false
 	}
-	return ActorContext{UserID: actor.UserID, Roles: actor.Roles, IPAddress: actor.IPAddress, UserAgent: actor.UserAgent}, true
+	return ActorContext{UserID: actor.UserID, Mobile: actor.Mobile, Roles: actor.Roles, IPAddress: actor.IPAddress, UserAgent: actor.UserAgent}, true
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
@@ -136,6 +136,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusConflict, "conflicting_role", "nursery owners cannot join as managers and managers cannot become nursery owners")
 	case errors.Is(err, ErrAlreadyMember):
 		response.Error(w, http.StatusConflict, "already_member", "this member is already working at another nursery")
+	case errors.Is(err, ErrWrongTarget):
+		response.Error(w, http.StatusForbidden, "wrong_target", "this invite was sent to a different person")
 	default:
 		response.Error(w, http.StatusInternalServerError, "invites_error", "invite request failed")
 	}

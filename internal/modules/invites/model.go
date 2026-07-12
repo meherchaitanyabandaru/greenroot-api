@@ -28,6 +28,7 @@ type Invite struct {
 
 type ActorContext struct {
 	UserID    int64
+	Mobile    string
 	Roles     []string
 	IPAddress string
 	UserAgent string
