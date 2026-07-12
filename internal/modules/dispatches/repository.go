@@ -465,6 +465,7 @@ func baseSelect() string {
 			COALESCE(o.nursery_id, o.seller_nursery_id), d.dispatch_number,
 			COALESCE(d.dispatch_status::text, ''), d.vehicle_id, v.vehicle_number, d.driver_id,
 			u.first_name, u.mobile, d.dispatched_by, d.dispatch_date, d.delivery_date, d.destination_address,
+			ods.requires_driver_ack,
 			d.notes, d.created_at, d.updated_at,
 			d.nursery_id, d.assigned_manager_user_id, d.driver_user_id,
 			d.owner_user_id_snapshot, d.customer_user_id,
@@ -477,6 +478,7 @@ func baseSelect() string {
 		LEFT JOIN public.vehicles v ON v.vehicle_id = d.vehicle_id
 		LEFT JOIN public.drivers dr ON dr.driver_id = d.driver_id
 		LEFT JOIN public.users u ON u.user_id = dr.user_id
+		LEFT JOIN public.order_delivery_snapshots ods ON ods.order_id = d.order_id
 		LEFT JOIN public.trip_tracking_links tl ON tl.dispatch_id = d.dispatch_id AND tl.status = 'ACTIVE'
 	`
 }
@@ -561,6 +563,7 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 	var dispatch Dispatch
 	var orderNumber, dispatchNumber, vehicleNumber, driverName, driverMobile, destination, notes sql.NullString
 	var nurseryID, vehicleID, driverID, dispatchedBy sql.NullInt64
+	var requiresDriverAck sql.NullBool
 	var dispatchDate, deliveryDate, updatedAt sql.NullTime
 	// V1 snapshot fields
 	var v1NurseryID, assignedManagerUserID, driverUserID sql.NullInt64
@@ -574,6 +577,7 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 		&nurseryID, &dispatchNumber,
 		&dispatch.Status, &vehicleID, &vehicleNumber, &driverID,
 		&driverName, &driverMobile, &dispatchedBy, &dispatchDate, &deliveryDate, &destination,
+		&requiresDriverAck,
 		&notes, &dispatch.CreatedAt, &updatedAt,
 		&v1NurseryID, &assignedManagerUserID, &driverUserID,
 		&ownerUserIDSnapshot, &customerUserID,
@@ -599,6 +603,9 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 		dispatch.DeliveryDate = &deliveryDate.Time
 	}
 	dispatch.DestinationAddress = nullableString(destination)
+	if requiresDriverAck.Valid {
+		dispatch.RequiresDriverAck = &requiresDriverAck.Bool
+	}
 	dispatch.Notes = nullableString(notes)
 	if updatedAt.Valid {
 		dispatch.UpdatedAt = &updatedAt.Time

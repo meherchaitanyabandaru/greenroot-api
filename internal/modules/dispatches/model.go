@@ -38,6 +38,7 @@ type Dispatch struct {
 	DispatchDate       *time.Time     `json:"dispatch_date,omitempty"`
 	DeliveryDate       *time.Time     `json:"delivery_date,omitempty"`
 	DestinationAddress *string        `json:"destination_address,omitempty"`
+	RequiresDriverAck  *bool          `json:"requires_driver_ack,omitempty"`
 	Notes              *string        `json:"notes,omitempty"`
 	CreatedAt          time.Time      `json:"created_at"`
 	UpdatedAt          *time.Time     `json:"updated_at,omitempty"`
