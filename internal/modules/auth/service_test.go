@@ -6,18 +6,21 @@ import (
 	"testing"
 	"time"
 
-	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/config"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
+	"github.com/redis/go-redis/v9"
 )
 
 // ─── mock repository ────────────────────────────────────────────────────────
 
 type mockRepo struct {
-	users    map[int64]*User
-	sessions map[int64]*Session     // sessionID → Session
-	tokens   map[string]int64       // hashed-token → sessionID (we store raw for simplicity)
-	roles    map[int64][]string
-	tc       map[int64]TokenContext
+	users      map[int64]*User
+	sessions   map[int64]*Session // sessionID → Session
+	tokens     map[string]int64   // hashed-token → sessionID (we store raw for simplicity)
+	roles      map[int64][]string
+	tc         map[int64]TokenContext
 	workspaces map[int64][]Workspace
 	dashboard  *OwnerDashboard
 
@@ -27,12 +30,12 @@ type mockRepo struct {
 
 func newMock() *mockRepo {
 	return &mockRepo{
-		users:    make(map[int64]*User),
-		sessions: make(map[int64]*Session),
-		tokens:   make(map[string]int64),
-		roles:    make(map[int64][]string),
-		tc:       make(map[int64]TokenContext),
-		workspaces: make(map[int64][]Workspace),
+		users:         make(map[int64]*User),
+		sessions:      make(map[int64]*Session),
+		tokens:        make(map[string]int64),
+		roles:         make(map[int64][]string),
+		tc:            make(map[int64]TokenContext),
+		workspaces:    make(map[int64][]Workspace),
 		nextUserID:    100,
 		nextSessionID: 500,
 	}
@@ -263,6 +266,49 @@ func TestVerifyOTP_DeviceTypeUppercased(t *testing.T) {
 	}
 	if resp.User.Mobile != "9100000000" {
 		t.Errorf("got wrong user mobile %s", resp.User.Mobile)
+	}
+}
+
+func TestOTPLifecycle_Redis(t *testing.T) {
+	ctx := context.Background()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	defer client.Close()
+
+	repo := newMock()
+	repo.seedUser(1, "9000000000", "BUYER")
+	s := NewService(repo, testJWT(), nil, client)
+
+	if _, err := s.SendOTP(ctx, SendOTPRequest{Mobile: "9000000000"}); err != nil {
+		t.Fatalf("send otp failed: %v", err)
+	}
+	key := redisutil.KeyOTP + "9000000000"
+	if !server.Exists(key) {
+		t.Fatal("expected otp key in redis")
+	}
+	if ttl := server.TTL(key); ttl <= 0 {
+		t.Fatalf("expected otp ttl, got %s", ttl)
+	}
+
+	resp, err := s.VerifyOTP(ctx, VerifyOTPRequest{
+		Mobile:     "9000000000",
+		OTP:        mockOTP,
+		DeviceType: "ANDROID",
+		OSName:     "ANDROID",
+	}, ClientContext{})
+	if err != nil {
+		t.Fatalf("verify otp failed: %v", err)
+	}
+	if resp.AccessToken == "" || resp.RefreshToken == "" {
+		t.Fatal("expected token pair after otp verification")
+	}
+	if server.Exists(key) {
+		t.Fatal("expected otp key to be consumed")
+	}
+
+	_, err = s.VerifyOTP(ctx, VerifyOTPRequest{Mobile: "9000000000", OTP: mockOTP}, ClientContext{})
+	if !errors.Is(err, ErrInvalidOTP) {
+		t.Fatalf("expected consumed otp to fail with ErrInvalidOTP, got %v", err)
 	}
 }
 

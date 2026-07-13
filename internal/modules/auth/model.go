@@ -4,6 +4,7 @@ import "time"
 
 const (
 	mockOTP              = "123456"
+	otpTTL               = 5 * time.Minute
 	defaultUserFirstName = "GreenRoot"
 	defaultUserRole      = "BUYER"
 	activityLogin        = "LOGIN"
@@ -48,13 +49,13 @@ type Workspace struct {
 
 // OwnerDashboard aggregates all key metrics for a nursery owner.
 type OwnerDashboard struct {
-	NurseryID   *int64          `json:"nursery_id,omitempty"`
-	NurseryName *string         `json:"nursery_name,omitempty"`
-	SellOrders  OrderMetrics    `json:"sell_orders"`
-	BuyOrders   OrderMetrics    `json:"buy_orders"`
-	SellQuotes  QuoteMetrics    `json:"sell_quotations"`
-	BuyQuotes   QuoteMetrics    `json:"buy_quotations"`
-	Inventory   InventoryMetrics `json:"inventory"`
+	NurseryID   *int64            `json:"nursery_id,omitempty"`
+	NurseryName *string           `json:"nursery_name,omitempty"`
+	SellOrders  OrderMetrics      `json:"sell_orders"`
+	BuyOrders   OrderMetrics      `json:"buy_orders"`
+	SellQuotes  QuoteMetrics      `json:"sell_quotations"`
+	BuyQuotes   QuoteMetrics      `json:"buy_quotations"`
+	Inventory   InventoryMetrics  `json:"inventory"`
 	Connections ConnectionMetrics `json:"connections"`
 }
 

@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
+	"github.com/redis/go-redis/v9"
 )
 
 // issueTokenPair fetches fresh token context from DB and signs both tokens.
@@ -49,6 +52,7 @@ type Service struct {
 	repository Repository
 	jwt        *jwtplatform.Service
 	audit      *auditlog.Service
+	redis      redis.Cmdable
 }
 
 type ClientContext struct {
@@ -56,11 +60,16 @@ type ClientContext struct {
 	UserAgent string
 }
 
-func NewService(repository Repository, jwt *jwtplatform.Service, audit *auditlog.Service) *Service {
-	return &Service{repository: repository, jwt: jwt, audit: audit}
+func NewService(repository Repository, jwt *jwtplatform.Service, audit *auditlog.Service, redisClients ...redis.Cmdable) *Service {
+	var rdb redis.Cmdable
+	if len(redisClients) > 0 {
+		rdb = redisClients[0]
+	}
+	return &Service{repository: repository, jwt: jwt, audit: audit, redis: rdb}
 }
 
 func (s *Service) SendOTP(ctx context.Context, req SendOTPRequest) (SendOTPResponse, error) {
+	s.storeOTP(ctx, strings.TrimSpace(req.Mobile), mockOTP)
 	return SendOTPResponse{
 		Message: "OTP sent successfully",
 		MockOTP: mockOTP,
@@ -68,7 +77,7 @@ func (s *Service) SendOTP(ctx context.Context, req SendOTPRequest) (SendOTPRespo
 }
 
 func (s *Service) VerifyOTP(ctx context.Context, req VerifyOTPRequest, client ClientContext) (AuthResponse, error) {
-	if req.OTP != mockOTP {
+	if !s.consumeOTP(ctx, strings.TrimSpace(req.Mobile), strings.TrimSpace(req.OTP)) {
 		return AuthResponse{}, ErrInvalidOTP
 	}
 
@@ -154,6 +163,37 @@ func (s *Service) VerifyOTP(ctx context.Context, req VerifyOTPRequest, client Cl
 		User:         *user,
 		IsNewUser:    isNewUser,
 	}, nil
+}
+
+func (s *Service) storeOTP(ctx context.Context, mobile string, code string) {
+	if s.redis == nil || mobile == "" {
+		return
+	}
+	if err := s.redis.Set(ctx, redisutil.KeyOTP+mobile, code, otpTTL).Err(); err != nil {
+		slog.Warn("redis otp set failed; falling back to dev otp verification", "mobile", mobile, "error", err)
+	}
+}
+
+func (s *Service) consumeOTP(ctx context.Context, mobile string, code string) bool {
+	if s.redis == nil {
+		return code == mockOTP
+	}
+	key := redisutil.KeyOTP + mobile
+	stored, err := s.redis.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return false
+	}
+	if err != nil {
+		slog.Warn("redis otp get failed; falling back to dev otp verification", "mobile", mobile, "error", err)
+		return code == mockOTP
+	}
+	if stored != code {
+		return false
+	}
+	if err := s.redis.Del(ctx, key).Err(); err != nil {
+		slog.Warn("redis otp delete failed", "mobile", mobile, "error", err)
+	}
+	return true
 }
 
 func (s *Service) RefreshToken(ctx context.Context, req RefreshTokenRequest) (AuthResponse, error) {
