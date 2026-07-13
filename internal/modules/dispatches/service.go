@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/redis/go-redis/v9"
 )
@@ -122,6 +124,12 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 	dispatch, err := s.repository.UpdateStatus(ctx, dispatchID, UpdateStatusInput{Status: status, DeliveryDate: deliveryDate, Notes: req.Notes})
 	if err != nil {
 		return Dispatch{}, err
+	}
+	if status == "DISPATCHED" && dispatch.CustomerUserID != nil {
+		s.enqueueNotification(ctx, *dispatch.CustomerUserID,
+			notifyqueue.EventOrderDispatched,
+			"Order Dispatched",
+			fmt.Sprintf("Your order dispatch %s is on the way.", dispatch.DispatchCode))
 	}
 	s.audit(ctx, actor, "dispatches", dispatch.ID, actionUpdate, req)
 	return *dispatch, nil
@@ -240,7 +248,24 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 	if err != nil {
 		return Dispatch{}, err
 	}
+	if updated.OwnerUserIDSnapshot != nil {
+		s.enqueueNotification(ctx, *updated.OwnerUserIDSnapshot,
+			notifyqueue.EventDispatchAccepted,
+			"Dispatch Accepted",
+			fmt.Sprintf("Dispatch %s was accepted by the driver.", updated.DispatchCode))
+	}
 	return *updated, nil
+}
+
+func (s *Service) enqueueNotification(ctx context.Context, userID int64, notifType, title, message string) {
+	if err := notifyqueue.Enqueue(ctx, s.redis, notifyqueue.Event{
+		UserID:  userID,
+		Type:    notifType,
+		Title:   title,
+		Message: message,
+	}); err != nil {
+		slog.Warn("notification queue enqueue failed", "type", notifType, "user_id", userID, "error", err)
+	}
 }
 
 func (s *Service) GetPublicTracking(ctx context.Context, uuid string) (Dispatch, error) {

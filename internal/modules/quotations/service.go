@@ -7,12 +7,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
@@ -393,8 +395,8 @@ func (s *Service) SendToCustomer(ctx context.Context, actor ActorContext, quotat
 		if approved.NurseryName != nil {
 			nurseryName = *approved.NurseryName
 		}
-		_ = s.repository.CreateNotification(ctx, *approved.CustomerUserID,
-			"QUOTATION_SENT",
+		s.enqueueNotification(ctx, *approved.CustomerUserID,
+			notifyqueue.EventQuotationSent,
 			"Quotation Ready for Review",
 			fmt.Sprintf("Quotation %s from %s is ready for your review.", approved.QuotationCode, nurseryName))
 	}
@@ -552,8 +554,8 @@ func (s *Service) BuyerAccept(ctx context.Context, actor ActorContext, quotation
 	}
 	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_ACCEPTED"})
 	if ownerID, err := s.repository.FindNurseryOwnerID(ctx, quotationID); err == nil {
-		_ = s.repository.CreateNotification(ctx, ownerID,
-			"QUOTATION_ACCEPTED",
+		s.enqueueNotification(ctx, ownerID,
+			notifyqueue.EventQuotationAccepted,
 			"Quotation Accepted",
 			fmt.Sprintf("Buyer accepted quotation %s.", updated.QuotationCode))
 	}
@@ -598,6 +600,20 @@ func (s *Service) BuyerReject(ctx context.Context, actor ActorContext, quotation
 			msg)
 	}
 	return *updated, nil
+}
+
+func (s *Service) enqueueNotification(ctx context.Context, userID int64, notifType, title, message string) {
+	err := notifyqueue.Enqueue(ctx, s.redis, notifyqueue.Event{
+		UserID:  userID,
+		Type:    notifType,
+		Title:   title,
+		Message: message,
+	})
+	if err == nil {
+		return
+	}
+	slog.Warn("notification queue enqueue failed; falling back to direct notification", "type", notifType, "user_id", userID, "error", err)
+	_ = s.repository.CreateNotification(ctx, userID, notifType, title, message)
 }
 
 // RecordDownload records a quotation PDF generation/download event in the audit log.

@@ -13,6 +13,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/revocation"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/database"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/market"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/notifications"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
@@ -82,6 +83,7 @@ func (a *App) Run(ctx context.Context) error {
 	// Background: expire subscriptions at midnight + clean revocation map every 15 min.
 	go runCronJobs(ctx, a.deps)
 	go market.StartCounterFlusher(ctx, a.deps.DB, a.deps.Redis, a.deps.Logger, time.Minute)
+	go notifications.StartQueueWorker(ctx, a.deps.DB, a.deps.Redis, notifications.MockSender{}, a.deps.Logger)
 
 	serverErrors := make(chan error, 1)
 	go func() {
