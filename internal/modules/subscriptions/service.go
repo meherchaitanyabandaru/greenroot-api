@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"time"
@@ -35,7 +36,58 @@ func NewService(repository Repository, auditSvc *auditlog.Service, redisClients 
 }
 
 func (s *Service) ListPlans(ctx context.Context) ([]SubscriptionPlan, error) {
-	return s.repository.ListPlans(ctx, true)
+	if plans, ok := s.getCachedPlans(ctx); ok {
+		return plans, nil
+	}
+	plans, err := s.repository.ListPlans(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	s.cachePlans(ctx, plans)
+	return plans, nil
+}
+
+func (s *Service) getCachedPlans(ctx context.Context) ([]SubscriptionPlan, bool) {
+	if s.redis == nil {
+		return nil, false
+	}
+	data, err := s.redis.Get(ctx, redisutil.KeySubscriptionPlans).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, false
+	}
+	if err != nil {
+		slog.Warn("redis subscription plan cache read failed", "error", err)
+		return nil, false
+	}
+	var plans []SubscriptionPlan
+	if err := json.Unmarshal(data, &plans); err != nil {
+		slog.Warn("redis subscription plan cache decode failed", "error", err)
+		return nil, false
+	}
+	return plans, true
+}
+
+func (s *Service) cachePlans(ctx context.Context, plans []SubscriptionPlan) {
+	if s.redis == nil {
+		return
+	}
+	data, err := json.Marshal(plans)
+	if err != nil {
+		slog.Warn("redis subscription plan cache encode failed", "error", err)
+		return
+	}
+	if err := s.redis.Set(ctx, redisutil.KeySubscriptionPlans, data, time.Hour).Err(); err != nil {
+		slog.Warn("redis subscription plan cache write failed", "error", err)
+	}
+}
+
+func (s *Service) invalidatePlanCache(ctx context.Context) {
+	if s.redis == nil {
+		return
+	}
+	if err := s.redis.Del(ctx, redisutil.KeySubscriptionPlans).Err(); err != nil {
+		slog.Warn("redis subscription plan cache invalidation failed", "error", err)
+	}
 }
 
 func (s *Service) GetPlan(ctx context.Context, planID int64) (SubscriptionPlan, error) {
@@ -605,6 +657,7 @@ func (s *Service) UpdatePlan(ctx context.Context, actor ActorContext, planID int
 	if err != nil {
 		return SubscriptionPlan{}, err
 	}
+	s.invalidatePlanCache(ctx)
 	return *plan, nil
 }
 

@@ -5,19 +5,24 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/redis/go-redis/v9"
 )
 
 // ─── mock repository ─────────────────────────────────────────────────────────
 
 type mockRepo struct {
-	plans         map[int64]*SubscriptionPlan
-	plansByCode   map[string]*SubscriptionPlan
-	subs          map[int64]*UserSubscription
-	activeByUser  map[int64]*UserSubscription
-	promos        map[int64]*SubscriptionPromo
-	promosByCode  map[string]*SubscriptionPromo
-	payments      map[int64][]Payment // subscriptionID → payments
-	notifications int
+	plans          map[int64]*SubscriptionPlan
+	plansByCode    map[string]*SubscriptionPlan
+	subs           map[int64]*UserSubscription
+	activeByUser   map[int64]*UserSubscription
+	promos         map[int64]*SubscriptionPromo
+	promosByCode   map[string]*SubscriptionPromo
+	payments       map[int64][]Payment // subscriptionID → payments
+	notifications  int
+	listPlansCalls int
 
 	nextPlanID  int64
 	nextSubID   int64
@@ -85,6 +90,7 @@ func (m *mockRepo) seedPromo(code, discountType string, value float64, validFrom
 // Repository interface implementation
 
 func (m *mockRepo) ListPlans(_ context.Context, _ bool) ([]SubscriptionPlan, error) {
+	m.listPlansCalls++
 	result := make([]SubscriptionPlan, 0, len(m.plans))
 	for _, p := range m.plans {
 		result = append(result, *p)
@@ -213,14 +219,14 @@ func (m *mockRepo) FindPromoByCode(_ context.Context, code string) (*Subscriptio
 func (m *mockRepo) CreatePromo(_ context.Context, input CreatePromoInput) (*SubscriptionPromo, error) {
 	m.nextPromoID++
 	p := &SubscriptionPromo{
-		ID:           m.nextPromoID,
-		PromoCode:    input.PromoCode,
-		Name:         input.Name,
-		DiscountType: input.DiscountType,
+		ID:            m.nextPromoID,
+		PromoCode:     input.PromoCode,
+		Name:          input.Name,
+		DiscountType:  input.DiscountType,
 		DiscountValue: input.DiscountValue,
-		IsActive:     true,
-		ValidFrom:    input.ValidFrom,
-		ValidUntil:   input.ValidUntil,
+		IsActive:      true,
+		ValidFrom:     input.ValidFrom,
+		ValidUntil:    input.ValidUntil,
 	}
 	m.promos[m.nextPromoID] = p
 	m.promosByCode[input.PromoCode] = p
@@ -256,7 +262,9 @@ func (m *mockRepo) BulkCreateNotifications(_ context.Context, inputs []BulkNotif
 // ─── actors ──────────────────────────────────────────────────────────────────
 
 func adminActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
-func ownerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}} }
+func ownerActor(id int64) ActorContext {
+	return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}}
+}
 func buyerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
 
 func svc(repo *mockRepo) *Service { return NewService(repo, nil) }
@@ -274,6 +282,58 @@ func TestListPlans_ReturnAll(t *testing.T) {
 	}
 	if len(plans) != 2 {
 		t.Errorf("want 2 plans, got %d", len(plans))
+	}
+}
+
+func TestListPlans_UsesRedisCache(t *testing.T) {
+	ctx := context.Background()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	defer client.Close()
+
+	repo := newMock()
+	repo.seedPlan("TRIAL", 0, 0)
+	repo.seedPlan("STANDARD", 1000, 10000)
+	service := NewService(repo, nil, client)
+
+	if _, err := service.ListPlans(ctx); err != nil {
+		t.Fatalf("first list plans failed: %v", err)
+	}
+	if _, err := service.ListPlans(ctx); err != nil {
+		t.Fatalf("second list plans failed: %v", err)
+	}
+	if repo.listPlansCalls != 1 {
+		t.Fatalf("expected one repository call due to cache hit, got %d", repo.listPlansCalls)
+	}
+	if !server.Exists(redisutil.KeySubscriptionPlans) {
+		t.Fatal("expected subscription plans cache key")
+	}
+}
+
+func TestUpdatePlan_InvalidatesRedisCache(t *testing.T) {
+	ctx := context.Background()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	defer client.Close()
+
+	repo := newMock()
+	plan := repo.seedPlan("STANDARD", 1000, 10000)
+	service := NewService(repo, nil, client)
+	if err := client.Set(ctx, redisutil.KeySubscriptionPlans, "[]", time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := service.UpdatePlan(ctx, adminActor(1), plan.ID, UpdatePlanRequest{
+		Name:          "Updated",
+		SixMonthPrice: 1200,
+		YearlyPrice:   12000,
+		IsActive:      true,
+	})
+	if err != nil {
+		t.Fatalf("update plan failed: %v", err)
+	}
+	if server.Exists(redisutil.KeySubscriptionPlans) {
+		t.Fatal("expected plan cache to be invalidated")
 	}
 }
 
