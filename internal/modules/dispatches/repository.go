@@ -384,12 +384,23 @@ func (r *PostgresRepository) GetUserNurseryIDs(ctx context.Context, userID int64
 
 func (r *PostgresRepository) FindByTrackingUUID(ctx context.Context, uuid string) (*Dispatch, error) {
 	const q = `
-		SELECT d.dispatch_id
-		FROM public.trip_tracking_links t
-		JOIN public.dispatches d ON d.dispatch_id = t.dispatch_id
-		WHERE t.tracking_uuid = $1::uuid
-		  AND t.status = 'ACTIVE'
-		  AND (t.expires_at IS NULL OR t.expires_at > CURRENT_TIMESTAMP)
+		SELECT dispatch_id
+		FROM (
+			SELECT d.dispatch_id, 1 AS priority
+			FROM public.trip_tracking_links t
+			JOIN public.dispatches d ON d.dispatch_id = t.dispatch_id
+			WHERE t.tracking_uuid = $1::uuid
+			  AND t.status = 'ACTIVE'
+			  AND (t.expires_at IS NULL OR t.expires_at > CURRENT_TIMESTAMP)
+
+			UNION ALL
+
+			SELECT d.dispatch_id, 2 AS priority
+			FROM public.dispatches d
+			WHERE d.trip_uuid = $1::uuid
+		) matches
+		ORDER BY priority
+		LIMIT 1
 	`
 	var dispatchID int64
 	if err := r.db.QueryRowContext(ctx, q, uuid).Scan(&dispatchID); errors.Is(err, sql.ErrNoRows) {

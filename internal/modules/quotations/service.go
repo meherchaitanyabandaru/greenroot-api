@@ -248,7 +248,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQu
 		return Quotation{}, err
 	}
 	s.scheduleQuotationExpiry(ctx, q)
-	s.audit(ctx, actor, "quotations", q.ID, actionInsert, input)
+	s.audit(ctx, actor, auditlog.EntityQuotation, q.ID, actionInsert, input)
 	return *q, nil
 }
 
@@ -306,6 +306,13 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, inpu
 			return Quotation{}, ErrForbidden
 		}
 	}
+	// Managers may edit quote content, but customer identity/contact remains
+	// owner-controlled and is often redacted from manager clients.
+	if !s.isNurseryOwner(ctx, actor, *q) && !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+		input.CustomerUserID = q.CustomerUserID
+		input.RecipientName = q.RecipientName
+		input.RecipientMobile = q.RecipientMobile
+	}
 	if err := s.validateCustomerSelection(ctx, *q, input.CustomerUserID); err != nil {
 		return Quotation{}, err
 	}
@@ -314,7 +321,7 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, inpu
 		return Quotation{}, err
 	}
 	s.scheduleQuotationExpiry(ctx, updated)
-	s.audit(ctx, actor, "quotations", id, actionUpdate, input)
+	s.audit(ctx, actor, auditlog.EntityQuotation, id, actionUpdate, input)
 	return *updated, nil
 }
 
@@ -349,7 +356,7 @@ func (s *Service) UpdateCustomer(ctx context.Context, actor ActorContext, id int
 	if err != nil {
 		return Quotation{}, err
 	}
-	s.audit(ctx, actor, "quotations", id, actionUpdate, map[string]any{"customer": input})
+	s.audit(ctx, actor, auditlog.EntityQuotation, id, actionUpdate, map[string]any{"customer": input})
 	return *updated, nil
 }
 
@@ -366,7 +373,7 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, id int64) erro
 		if err := s.repository.SoftDelete(ctx, id); err != nil {
 			return err
 		}
-		s.audit(ctx, actor, "quotations", id, actionDelete, map[string]any{"deleted": true})
+		s.audit(ctx, actor, auditlog.EntityQuotation, id, actionDelete, map[string]any{"deleted": true})
 		return nil
 	}
 	// Business rule: only the nursery owner may delete a quotation; managers cannot.
@@ -376,7 +383,7 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, id int64) erro
 	if err := s.repository.SoftDelete(ctx, id); err != nil {
 		return err
 	}
-	s.audit(ctx, actor, "quotations", id, actionDelete, map[string]any{"deleted": true})
+	s.audit(ctx, actor, auditlog.EntityQuotation, id, actionDelete, map[string]any{"deleted": true})
 	return nil
 }
 
@@ -403,7 +410,7 @@ func (s *Service) SendToCustomer(ctx context.Context, actor ActorContext, quotat
 	if err != nil {
 		return Quotation{}, err
 	}
-	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_SENT"})
+	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_SENT"})
 	s.scheduleQuotationExpiry(ctx, approved)
 	// Notify the buyer if their account is linked.
 	if approved.CustomerUserID != nil {
@@ -446,7 +453,7 @@ func (s *Service) Recall(ctx context.Context, actor ActorContext, quotationID in
 	if err != nil {
 		return Quotation{}, err
 	}
-	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_DRAFT", "recalled": true})
+	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_DRAFT", "recalled": true})
 	return *recalled, nil
 }
 
@@ -479,7 +486,7 @@ func (s *Service) ConvertToOrder(ctx context.Context, actor ActorContext, quotat
 	if err != nil {
 		return Quotation{}, err
 	}
-	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"status": "CONVERTED", "order_id": orderID})
+	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, actionUpdate, map[string]any{"status": "CONVERTED", "order_id": orderID})
 	return *converted, nil
 }
 
@@ -515,7 +522,7 @@ func (s *Service) AssignManager(ctx context.Context, actor ActorContext, quotati
 	if err != nil {
 		return Quotation{}, err
 	}
-	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, req)
+	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, actionUpdate, req)
 	_ = s.repository.CreateNotification(ctx, req.ManagerUserID,
 		"QUOTATION_ASSIGNED",
 		"Quotation Assigned to You",
@@ -542,7 +549,7 @@ func (s *Service) UnassignManager(ctx context.Context, actor ActorContext, quota
 	if err != nil {
 		return Quotation{}, err
 	}
-	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"assigned_manager_user_id": nil})
+	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, actionUpdate, map[string]any{"assigned_manager_user_id": nil})
 	return *updated, nil
 }
 
@@ -568,7 +575,7 @@ func (s *Service) BuyerAccept(ctx context.Context, actor ActorContext, quotation
 	if err != nil {
 		return Quotation{}, err
 	}
-	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_ACCEPTED"})
+	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_ACCEPTED"})
 	if ownerID, err := s.repository.FindNurseryOwnerID(ctx, quotationID); err == nil {
 		s.enqueueNotification(ctx, ownerID,
 			notifyqueue.EventQuotationAccepted,
@@ -604,7 +611,7 @@ func (s *Service) BuyerReject(ctx context.Context, actor ActorContext, quotation
 	if err != nil {
 		return Quotation{}, err
 	}
-	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_REJECTED", "reason": reason})
+	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_REJECTED", "reason": reason})
 	if ownerID, err := s.repository.FindNurseryOwnerID(ctx, quotationID); err == nil {
 		msg := fmt.Sprintf("Buyer rejected quotation %s.", updated.QuotationCode)
 		if reason != "" {

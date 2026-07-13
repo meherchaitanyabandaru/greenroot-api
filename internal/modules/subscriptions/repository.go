@@ -68,21 +68,21 @@ type UpdatePromoInput struct {
 }
 
 type BulkNotificationInput struct {
-	UserID  int64
-	Type    string
-	Title   string
-	Message string
+	UserID   int64
+	Type     string
+	Title    string
+	Message  string
 	DataJSON string
 }
 
 type UpdatePlanInput struct {
-	Name         string
-	Description  *string
+	Name          string
+	Description   *string
 	SixMonthPrice float64
-	YearlyPrice  float64
-	MaxManagers  *int
-	IsActive     bool
-	Features     map[string]any
+	YearlyPrice   float64
+	MaxManagers   *int
+	IsActive      bool
+	Features      map[string]any
 }
 
 type CreateSubscriptionInput struct {
@@ -109,7 +109,6 @@ type CreatePaymentInput struct {
 	ProviderOrderID *string
 	Notes           string
 }
-
 
 type PostgresRepository struct {
 	db *sql.DB
@@ -349,7 +348,6 @@ func (r *PostgresRepository) ListPaymentsBySubscription(ctx context.Context, sub
 	return payments, rows.Err()
 }
 
-
 func planSelect() string {
 	return `
 		SELECT plan_id, plan_code, plan_name, description, monthly_price, yearly_price,
@@ -419,6 +417,8 @@ func scanPlan(row interface{ Scan(dest ...any) error }) (*SubscriptionPlan, erro
 	); err != nil {
 		return nil, err
 	}
+	plan.PlanID = plan.ID
+	plan.PlanType = plan.Code
 	plan.Description = nullableString(description)
 	plan.MonthlyPrice = nullableFloat64(monthlyPrice)  // kept for cycleEndAndAmount
 	plan.SixMonthPrice = nullableFloat64(monthlyPrice) // API-facing field

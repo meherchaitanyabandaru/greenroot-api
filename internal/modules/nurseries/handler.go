@@ -3,6 +3,7 @@ package nurseries
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -521,6 +522,7 @@ func writeNurseriesError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrOwnerCannotLeave):
 		response.Error(w, http.StatusConflict, "owner_cannot_leave", "nursery owner cannot leave their own nursery; transfer or close the nursery first")
 	default:
+		slog.Error("nurseries request failed", "error", err)
 		response.Error(w, http.StatusInternalServerError, "nurseries_error", "nurseries request failed")
 	}
 }

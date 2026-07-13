@@ -17,7 +17,12 @@ type Module struct {
 
 func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, rdb *redis.Client) Module {
 	repository := NewRepository(db)
-	service := NewService(repository, jwt, audit, rdb)
+	var service *Service
+	if rdb != nil {
+		service = NewService(repository, jwt, audit, rdb)
+	} else {
+		service = NewService(repository, jwt, audit)
+	}
 	return Module{handler: NewHandler(service), rdb: rdb}
 }
 

@@ -12,7 +12,12 @@ type Module struct{ handler *Handler }
 
 func NewModule(db *sql.DB, jwt *jwtplatform.Service, rdb *redis.Client) Module {
 	repo := NewRepository(db)
-	svc := NewService(repo, rdb)
+	var svc *Service
+	if rdb != nil {
+		svc = NewService(repo, rdb)
+	} else {
+		svc = NewService(repo)
+	}
 	return Module{handler: NewHandler(svc, jwt)}
 }
 

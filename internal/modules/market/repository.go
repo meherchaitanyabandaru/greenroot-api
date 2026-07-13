@@ -61,8 +61,20 @@ func NewRepository(db *sql.DB) Repository { return &PostgresRepository{db: db} }
 func (r *PostgresRepository) NurseryIDForUser(ctx context.Context, userID int64) (int64, error) {
 	var id int64
 	err := r.db.QueryRowContext(ctx,
-		`SELECT nursery_id FROM public.nursery_users
-		 WHERE user_id = $1 AND status = 'ACTIVE' LIMIT 1`, userID,
+		`SELECT nursery_id
+		 FROM (
+			SELECT nursery_id, 1 AS priority
+			FROM public.nurseries
+			WHERE owner_user_id = $1 AND COALESCE(status::text, '') <> 'DELETED'
+
+			UNION ALL
+
+			SELECT nursery_id, 2 AS priority
+			FROM public.nursery_users
+			WHERE user_id = $1 AND status = 'ACTIVE'
+		 ) scoped
+		 ORDER BY priority
+		 LIMIT 1`, userID,
 	).Scan(&id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -93,6 +105,11 @@ func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int6
 		`SELECT EXISTS(
 			SELECT 1 FROM public.nursery_users
 			WHERE nursery_id = $1 AND user_id = $2 AND status = 'ACTIVE'
+
+			UNION ALL
+
+			SELECT 1 FROM public.nurseries
+			WHERE nursery_id = $1 AND owner_user_id = $2 AND COALESCE(status::text, '') <> 'DELETED'
 		)`, nurseryID, userID,
 	).Scan(&ok)
 	return ok, err

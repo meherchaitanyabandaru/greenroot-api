@@ -16,7 +16,12 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service, redisClients ...*redis.Clie
 		rdb = redisClients[0]
 	}
 	r := NewRepository(db)
-	s := NewService(r, rdb)
+	var s *Service
+	if rdb != nil {
+		s = NewService(r, rdb)
+	} else {
+		s = NewService(r)
+	}
 	return Module{handler: NewHandler(s, jwt)}
 }
 func (m Module) RegisterRoutes(r chi.Router) {

@@ -405,6 +405,7 @@ func (r *PostgresRepository) SoftDeleteAccount(ctx context.Context, userID int64
 		UPDATE public.users SET
 			first_name        = 'Deleted',
 			last_name         = NULL,
+			mobile            = CONCAT('DEL', user_id::text),
 			email             = NULL,
 			profile_image_url = NULL,
 			gender            = NULL,

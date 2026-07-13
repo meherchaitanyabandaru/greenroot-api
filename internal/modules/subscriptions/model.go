@@ -13,20 +13,22 @@ const (
 )
 
 type SubscriptionPlan struct {
-	ID           int64          `json:"id"`
-	Code         string         `json:"plan_code"`
-	Name         string         `json:"plan_name"`
-	Description  *string        `json:"description,omitempty"`
-	SixMonthPrice *float64      `json:"six_month_price,omitempty"`
-	YearlyPrice  *float64       `json:"yearly_price,omitempty"`
-	MaxManagers  *int           `json:"max_managers,omitempty"`
-	MaxNurseries *int           `json:"max_nurseries,omitempty"`
-	IsActive     bool           `json:"is_active"`
-	Features     map[string]any `json:"features,omitempty"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    *time.Time     `json:"updated_at,omitempty"`
+	ID            int64          `json:"id"`
+	PlanID        int64          `json:"plan_id"`
+	Code          string         `json:"plan_code"`
+	PlanType      string         `json:"plan_type"`
+	Name          string         `json:"plan_name"`
+	Description   *string        `json:"description,omitempty"`
+	SixMonthPrice *float64       `json:"six_month_price,omitempty"`
+	YearlyPrice   *float64       `json:"yearly_price,omitempty"`
+	MaxManagers   *int           `json:"max_managers,omitempty"`
+	MaxNurseries  *int           `json:"max_nurseries,omitempty"`
+	IsActive      bool           `json:"is_active"`
+	Features      map[string]any `json:"features,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     *time.Time     `json:"updated_at,omitempty"`
 	// keep for backward compat with existing subscription create/renew logic
-	MonthlyPrice *float64       `json:"-"`
+	MonthlyPrice *float64 `json:"-"`
 }
 
 type UserSubscription struct {
@@ -68,23 +70,23 @@ type ActorContext struct {
 }
 
 type SubscriptionPromo struct {
-	ID               int64          `json:"id"`
-	PromoCode        string         `json:"promo_code"`
-	Name             string         `json:"name"`
-	Description      *string        `json:"description,omitempty"`
-	DiscountType     string         `json:"discount_type"`
-	DiscountValue    float64        `json:"discount_value"`
-	MaxDiscountCap   *float64       `json:"max_discount_cap,omitempty"`
-	ApplicablePlans  []string       `json:"applicable_plans"`
-	ApplicableCycles []string       `json:"applicable_cycles"`
-	ValidFrom        string         `json:"valid_from"`
-	ValidUntil       string         `json:"valid_until"`
-	IsActive         bool           `json:"is_active"`
-	MaxUses          *int           `json:"max_uses,omitempty"`
-	UsedCount        int            `json:"used_count"`
-	CreatedBy        *int64         `json:"created_by,omitempty"`
-	CreatedAt        time.Time      `json:"created_at"`
-	UpdatedAt        *time.Time     `json:"updated_at,omitempty"`
+	ID               int64      `json:"id"`
+	PromoCode        string     `json:"promo_code"`
+	Name             string     `json:"name"`
+	Description      *string    `json:"description,omitempty"`
+	DiscountType     string     `json:"discount_type"`
+	DiscountValue    float64    `json:"discount_value"`
+	MaxDiscountCap   *float64   `json:"max_discount_cap,omitempty"`
+	ApplicablePlans  []string   `json:"applicable_plans"`
+	ApplicableCycles []string   `json:"applicable_cycles"`
+	ValidFrom        string     `json:"valid_from"`
+	ValidUntil       string     `json:"valid_until"`
+	IsActive         bool       `json:"is_active"`
+	MaxUses          *int       `json:"max_uses,omitempty"`
+	UsedCount        int        `json:"used_count"`
+	CreatedBy        *int64     `json:"created_by,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
 }
 
 type PromoValidation struct {

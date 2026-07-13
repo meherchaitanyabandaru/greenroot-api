@@ -11,9 +11,8 @@
 #
 # Requirements: curl, jq
 # Prerequisites:
-#   1. DB reset + seed:
-#        psql 'postgres:///greenroot?host=/tmp' \
-#          -f ../greenroot-infra/db/postgresql/greenroot-seed.sql
+#   1. DB reset:
+#        ../greenroot-infra/scripts/reset-dbs.sh
 #   2. API running:
 #        DATABASE_URL='postgres:///greenroot?host=/tmp' \
 #          JWT_SECRET='local-dev-change-me' LOG_DIR='/tmp/gr-logs' \
@@ -31,7 +30,7 @@ BASE_URL="${BASE_URL:-http://localhost:8080/api/v1}"
 ROOT_URL="${ROOT_URL:-http://localhost:8080}"
 OTP="123456"
 
-# ── Seed mobile numbers (from greenroot-seed.sql) ────────────────────────────
+# ── Test mobile numbers ──────────────────────────────────────────────────────
 ADMIN_MOBILE="9000000000"
 BUYER_MOBILE="9300000000"
 OWNER_MOBILE="9100000000"

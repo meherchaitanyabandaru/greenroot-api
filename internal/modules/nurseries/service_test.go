@@ -413,6 +413,20 @@ func TestCreate_BuyerSuccess(t *testing.T) {
 	if n.OwnerUserID == nil || *n.OwnerUserID != 10 {
 		t.Error("want OwnerUserID=10")
 	}
+	if n.Status != "PENDING" {
+		t.Errorf("newly registered nursery should be PENDING until admin approval, got %s", n.Status)
+	}
+}
+
+func TestCreate_BuyerCannotSelfApprove(t *testing.T) {
+	status := "ACTIVE"
+	n, err := svc(newMock()).Create(context.Background(), buyerActor(10), CreateNurseryRequest{Name: "Green Nursery", Status: &status})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n.Status != "PENDING" {
+		t.Errorf("buyer-supplied status should be ignored until admin approval, got %s", n.Status)
+	}
 }
 
 func TestCreate_AlreadyOwnerRejected(t *testing.T) {

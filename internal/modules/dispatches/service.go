@@ -67,8 +67,10 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, dispatchID int64)
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateDispatchRequest) (Dispatch, error) {
-	// Business rule: admin and managers cannot create dispatches — only owners/drivers.
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") || hasRole(actor, "MANAGER") {
+	// Business rule: only nursery owners and drivers can create dispatches.
+	// Owner accounts may still carry the legacy BUYER role after approval, so
+	// authorize by positive capability instead of deny-listing role labels.
+	if !hasRole(actor, "NURSERY_OWNER") && !hasRole(actor, "DRIVER") {
 		return Dispatch{}, ErrForbidden
 	}
 	input, err := normalizeCreate(req)

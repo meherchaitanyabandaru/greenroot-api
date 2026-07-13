@@ -23,7 +23,12 @@ func NewModuleWithTrial(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Se
 		rdb = redisClients[0]
 	}
 	repository := NewRepository(db)
-	service := NewServiceWithTrial(repository, trialSvc, audit, rdb)
+	var service *Service
+	if rdb != nil {
+		service = NewServiceWithTrial(repository, trialSvc, audit, rdb)
+	} else {
+		service = NewServiceWithTrial(repository, trialSvc, audit)
+	}
 	return Module{handler: NewHandler(service, jwt)}
 }
 
@@ -45,6 +50,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Delete("/addresses/{addressId}", m.handler.DeleteAddress)
 
 		// Managers (V1: owner-managed, text role)
+		r.Get("/{id}/users", m.handler.ListUsers)
 		r.Get("/{id}/managers", m.handler.ListManagers)
 		r.Post("/{id}/managers", m.handler.AddManager)
 		r.Delete("/{id}/managers/{userId}", m.handler.RemoveUser)

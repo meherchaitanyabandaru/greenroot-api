@@ -471,6 +471,38 @@ func TestUpdate_ManagerCanEdit(t *testing.T) {
 	}
 }
 
+func TestUpdate_ManagerCannotChangeCustomerFields(t *testing.T) {
+	repo := newMockRepo()
+	repo.addNursery(10, 1, 2)
+	repo.addCustomer(10, 20)
+	q := baseQuotation(1, "CUSTOMER_DRAFT")
+	q.AssignedManagerUserID = ptr(int64(2))
+	q.CustomerUserID = ptr(int64(20))
+	q.RecipientName = ptr("Existing Buyer")
+	q.RecipientMobile = ptr("9300000000")
+	repo.addQuotation(q)
+	svc := NewService(repo, nil, nil)
+
+	got, err := svc.Update(context.Background(), managerActor(2), 1, UpdateQuotationRequest{
+		CustomerUserID:  ptr(int64(99)),
+		RecipientName:   ptr("Changed Buyer"),
+		RecipientMobile: ptr("9400000000"),
+		Items:           []QuotationItemRequest{validItem()},
+	})
+	if err != nil {
+		t.Fatalf("manager content edit should still be allowed: %v", err)
+	}
+	if got.CustomerUserID == nil || *got.CustomerUserID != 20 {
+		t.Fatalf("manager changed customer_user_id: %+v", got.CustomerUserID)
+	}
+	if got.RecipientName == nil || *got.RecipientName != "Existing Buyer" {
+		t.Fatalf("manager changed recipient_name: %+v", got.RecipientName)
+	}
+	if got.RecipientMobile == nil || *got.RecipientMobile != "9300000000" {
+		t.Fatalf("manager changed recipient_mobile: %+v", got.RecipientMobile)
+	}
+}
+
 func TestUpdate_NonMemberForbidden(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1) // user 99 is not a member

@@ -1,6 +1,5 @@
 .PHONY: run test tidy fmt vet build smoke integration migrate-up migrate-down migrate-status clean \
         test-unit test-api test-api-orders test-api-dispatches test-api-subscriptions \
-        test-db test-db-orders test-db-dispatches test-db-subscriptions test-db-quotations test-db-plant-requests \
         test-all
 
 DB_URL ?= postgres:///greenroot?host=/tmp
@@ -31,13 +30,13 @@ integration:
 	./scripts/integration-test.sh
 
 migrate-up:
-	./scripts/migrate.sh up
+	@echo "SQL migrations are squashed for development. Use ../greenroot-infra/scripts/reset-dbs.sh"
 
 migrate-down:
-	./scripts/migrate.sh down
+	@echo "SQL migrations are squashed for development. Use ../greenroot-infra/scripts/reset-dbs.sh"
 
 migrate-status:
-	./scripts/migrate.sh status
+	@echo "SQL migrations are squashed for development. Canonical schema: ../greenroot-infra/db/postgresql/schema.sql"
 
 clean:
 	rm -rf bin coverage.out
@@ -59,28 +58,5 @@ test-api-dispatches:
 test-api-subscriptions:
 	go test ./tests/api/... -run TestSubscription -v -timeout 60s
 
-# DB integrity checks — requires local greenroot DB
-test-db:
-	@for f in tests/db/*.sql; do \
-		echo ""; \
-		echo ">>> $$f"; \
-		psql '$(DB_URL)' -f "$$f"; \
-	done
-
-test-db-orders:
-	psql '$(DB_URL)' -f tests/db/orders.sql
-
-test-db-dispatches:
-	psql '$(DB_URL)' -f tests/db/dispatches.sql
-
-test-db-subscriptions:
-	psql '$(DB_URL)' -f tests/db/subscriptions.sql
-
-test-db-quotations:
-	psql '$(DB_URL)' -f tests/db/quotations.sql
-
-test-db-plant-requests:
-	psql '$(DB_URL)' -f tests/db/plant_requests.sql
-
-# Run everything: unit + DB checks + API integration
-test-all: test-unit test-db test-api
+# Run everything: unit + API integration
+test-all: test-unit test-api

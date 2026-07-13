@@ -20,7 +20,12 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, st
 	if len(redisClients) > 0 {
 		rdb = redisClients[0]
 	}
-	service := NewService(repository, audit, storageCli, rdb)
+	var service *Service
+	if rdb != nil {
+		service = NewService(repository, audit, storageCli, rdb)
+	} else {
+		service = NewService(repository, audit, storageCli)
+	}
 	return Module{handler: NewHandler(service, jwt)}
 }
 

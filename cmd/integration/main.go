@@ -138,8 +138,8 @@ func main() {
 	}
 
 	requestID := int64(0)
-	requestBody := map[string]any{"requesting_nursery_id": 1, "plant_id": 1, "size_id": 1, "quantity_required": 2, "radius_km": 25, "status": "OPEN"}
-	if data, err := c.expectJSON(ctx, http.MethodPost, "/api/v1/plant-requests", requestBody, nursery.AccessToken, http.StatusCreated); err == nil {
+	requestBody := map[string]any{"requesting_nursery_id": nurseryID, "plant_id": 1, "size_id": 1, "quantity_required": 2, "radius_km": 25, "status": "OPEN"}
+	if data, err := c.expectJSON(ctx, http.MethodPost, "/api/v1/plant-requests", requestBody, admin.AccessToken, http.StatusCreated); err == nil {
 		requestID = nestedInt(data, "request", "id")
 		record("requests/create-nursery", nil)
 	} else {
@@ -147,7 +147,7 @@ func main() {
 	}
 	record("requests/list-admin", c.expect(ctx, http.MethodGet, "/api/v1/plant-requests?page=1&per_page=5", nil, admin.AccessToken, http.StatusOK))
 	if requestID > 0 {
-		record("requests/respond-nursery", c.expect(ctx, http.MethodPost, fmt.Sprintf("/api/v1/plant-requests/%d/responses", requestID), map[string]any{"supplier_nursery_id": 1, "available_quantity": 2, "status": "RESPONDED"}, nursery.AccessToken, http.StatusCreated))
+		record("requests/respond-nursery", c.expect(ctx, http.MethodPost, fmt.Sprintf("/api/v1/plant-requests/%d/responses", requestID), map[string]any{"supplier_nursery_id": 1, "available_quantity": 2, "status": "AVAILABLE"}, nursery.AccessToken, http.StatusCreated))
 	}
 
 	orderID := int64(0)
@@ -221,7 +221,7 @@ func main() {
 	}
 
 	attachmentID := int64(0)
-	if data, err := c.expectJSON(ctx, http.MethodPost, "/api/v1/attachments", map[string]any{"entity_type": "ORDER", "entity_id": max(orderID, 1), "file_name": "integration.txt", "file_url": "https://example.com/integration.txt", "file_type": "text/plain", "file_size": 128}, buyer.AccessToken, http.StatusCreated); err == nil {
+	if data, err := c.expectJSON(ctx, http.MethodPost, "/api/v1/attachments", map[string]any{"entity_type": "ORDER", "entity_id": max(orderID, 1), "file_name": "integration.txt", "file_url": "https://example.com/integration.txt", "file_type": "text/plain", "file_size": 128}, nursery.AccessToken, http.StatusCreated); err == nil {
 		attachmentID = nestedInt(data, "attachment", "id")
 		record("attachments/create", nil)
 	} else {

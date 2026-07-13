@@ -228,6 +228,9 @@ func adminActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: 
 func ownerActor(id int64) ActorContext {
 	return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}}
 }
+func ownerBuyerActor(id int64) ActorContext {
+	return ActorContext{UserID: id, Roles: []string{"BUYER", "NURSERY_OWNER"}}
+}
 func managerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"MANAGER"}} }
 func buyerActor(id int64) ActorContext   { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
 func driverActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"DRIVER"}} }
@@ -256,6 +259,17 @@ func TestCreate_OwnerSuccess(t *testing.T) {
 	_, err := svc(repo).Create(context.Background(), ownerActor(100), CreateDispatchRequest{OrderID: 10})
 	if err != nil {
 		t.Errorf("owner create dispatch: %v", err)
+	}
+}
+
+func TestCreate_OwnerWithLegacyBuyerRoleSuccess(t *testing.T) {
+	repo := newMock()
+	nurseryID := int64(1)
+	repo.seedNursery(1, 100)
+	repo.seedOrderAccess(10, &nurseryID)
+	_, err := svc(repo).Create(context.Background(), ownerBuyerActor(100), CreateDispatchRequest{OrderID: 10})
+	if err != nil {
+		t.Errorf("owner with legacy buyer role should create dispatch: %v", err)
 	}
 }
 

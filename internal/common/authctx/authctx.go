@@ -174,7 +174,7 @@ func EnrichActorMiddleware(jwt *jwtplatform.Service, redisClients ...redis.Cmdab
 			}
 
 			if redisutil.IsBlocklisted(r.Context(), rdb, slog.Default(), claims.ID) {
-				response.Error(w, http.StatusUnauthorized, "token_revoked", "token has been revoked")
+				response.Error(w, http.StatusForbidden, "token_revoked", "token has been revoked")
 				return
 			}
 

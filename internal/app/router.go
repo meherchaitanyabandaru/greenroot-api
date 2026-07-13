@@ -34,6 +34,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/tracking"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/users"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/vehicles"
+	"github.com/redis/go-redis/v9"
 )
 
 func NewRouter(deps Dependencies) chi.Router {
@@ -59,23 +60,28 @@ func NewRouter(deps Dependencies) chi.Router {
 	registerDocsRoutes(router)
 
 	router.Route("/api/v1", func(r chi.Router) {
-		r.Use(authctx.EnrichActorMiddleware(deps.JWT, deps.Redis))
+		redisClients := optionalRedis(deps.Redis)
+		if deps.Redis != nil {
+			r.Use(authctx.EnrichActorMiddleware(deps.JWT, deps.Redis))
+		} else {
+			r.Use(authctx.EnrichActorMiddleware(deps.JWT))
+		}
 		r.Use(appmiddleware.AuditContext) // must come after EnrichActorMiddleware
 
 		auth.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis).RegisterRoutes(r)
-		admin.NewModule(deps.DB, deps.JWT, deps.Redis).RegisterRoutes(r)
+		admin.NewModule(deps.DB, deps.JWT, redisClients...).RegisterRoutes(r)
 		attachments.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		audit.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		dispatches.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis).RegisterRoutes(r)
-		drivers.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis).RegisterRoutes(r)
+		dispatches.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...).RegisterRoutes(r)
+		drivers.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...).RegisterRoutes(r)
 		inventory.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		market.NewModule(deps.DB, deps.JWT, deps.Redis).RegisterRoutes(r)
-		invites.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis).RegisterRoutes(r)
+		invites.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...).RegisterRoutes(r)
 		notifications.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
-		subModule := subscriptions.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis)
-		nurseries.NewModuleWithTrial(deps.DB, deps.JWT, deps.Audit, subModule.Service(), deps.Redis).RegisterRoutes(r)
-		orders.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis).RegisterRoutes(r)
-		quotations.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, deps.Redis).RegisterRoutes(r)
+		subModule := subscriptions.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...)
+		nurseries.NewModuleWithTrial(deps.DB, deps.JWT, deps.Audit, subModule.Service(), redisClients...).RegisterRoutes(r)
+		orders.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...).RegisterRoutes(r)
+		quotations.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, redisClients...).RegisterRoutes(r)
 		payments.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		plants.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		plantrequests.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
@@ -83,12 +89,19 @@ func NewRouter(deps Dependencies) chi.Router {
 		sourcing.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		storage.NewModule(deps.DB, deps.JWT, deps.Storage).RegisterRoutes(r)
 		subModule.RegisterRoutes(r)
-		tracking.NewModule(deps.DB, deps.JWT, deps.Redis).RegisterRoutes(r)
+		tracking.NewModule(deps.DB, deps.JWT, redisClients...).RegisterRoutes(r)
 		vehicles.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		users.NewModule(deps.DB, deps.JWT, deps.Storage, deps.Audit, deps.Redis).RegisterRoutes(r)
 	})
 
 	return router
+}
+
+func optionalRedis(client *redis.Client) []*redis.Client {
+	if client == nil {
+		return nil
+	}
+	return []*redis.Client{client}
 }
 
 func registerDocsRoutes(router chi.Router) {

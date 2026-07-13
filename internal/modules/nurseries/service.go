@@ -176,13 +176,15 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateNu
 			return Nursery{}, ErrDriverCannotOwnNursery
 		}
 	}
-	input = normalizeNursery(input)
-	if err := validateNursery(input); err != nil {
-		return Nursery{}, err
-	}
 	// Non-admin actors own the nursery they create; admins leave owner_user_id nil unless specified.
 	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
 		input.OwnerUserID = &actor.UserID
+		status := "PENDING"
+		input.Status = &status
+	}
+	input = normalizeNursery(input)
+	if err := validateNursery(input); err != nil {
+		return Nursery{}, err
 	}
 	nursery, err := s.repository.Create(ctx, actor.UserID, input)
 	if err != nil {
