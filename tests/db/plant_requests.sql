@@ -3,10 +3,10 @@
 
 \echo '=== Plant Requests integrity ==='
 
-\echo '-- Requests with no buyer (should be 0)'
-SELECT COUNT(*) AS no_buyer
+\echo '-- Requests with no requesting user (should be 0)'
+SELECT COUNT(*) AS no_requester
 FROM plant_requests
-WHERE buyer_user_id IS NULL;
+WHERE requested_by_user_id IS NULL;
 
 \echo '-- Responses with no parent request (should be 0)'
 SELECT COUNT(*) AS orphaned_responses
@@ -23,4 +23,4 @@ SELECT COUNT(DISTINCT request_id) AS requests_with_responses FROM plant_request_
 \echo '-- OPEN requests past expiry (should be closed by system or at read time)'
 SELECT COUNT(*) AS open_past_expiry
 FROM plant_requests
-WHERE status = 'OPEN' AND expiry_date < NOW();
+WHERE status = 'OPEN' AND expires_at < NOW();

@@ -173,10 +173,14 @@ type LinkQuotationRequest struct {
 
 type AdsQuery struct {
 	Search   string  // full-text across title, plant_name, nursery_name, description
-	Sort     string  // newest|oldest|price_asc|price_desc|popular
+	Sort     string  // newest|oldest|price_asc|price_desc|popular|nearest
 	Category string  // exact match on category_name (case-insensitive)
 	MinPrice float64 // 0 = no lower bound
 	MaxPrice float64 // 0 = no upper bound
+	// Nearby search: all three must be set together to activate.
+	NearLat  *float64 // buyer's latitude
+	NearLon  *float64 // buyer's longitude
+	RadiusKM *float64 // search radius in km; defaults to 50 when NearLat/NearLon are set
 	Page     int
 	PerPage  int
 }

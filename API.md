@@ -1,17 +1,20 @@
 # GreenRoot — API Reference
 
-> Last updated: 2026-06-28
+> Last updated: 2026-07-13
 
 ---
 
 ## Stack
 
-Go · chi router · PostgreSQL · JWT/OTP auth (mobile + `123456` mock OTP in dev)
+Go · chi router · PostgreSQL + PostGIS · Redis (optional) · JWT/OTP auth (mobile + `123456` mock OTP in dev)
 
 Run locally (port 8080):
 ```bash
 cd greenroot-api
 DATABASE_URL='postgres:///greenroot?host=/tmp' JWT_SECRET='local-dev-change-me' LOG_DIR='/tmp/gr-logs' go run ./cmd/api
+
+# With Redis rate-limiting (optional):
+REDIS_ADDR='localhost:6379' DATABASE_URL='postgres:///greenroot?host=/tmp' JWT_SECRET='local-dev-change-me' LOG_DIR='/tmp/gr-logs' go run ./cmd/api
 ```
 
 Swagger: `http://localhost:8080/swagger/`  
@@ -234,14 +237,68 @@ Results: `test-log/smoke/results.log` and `test-log/integration/`.
 
 ---
 
+## Infrastructure — PostGIS & Redis
+
+### PostGIS (migrations 013–014)
+
+Spatial queries and location storage for all modules.
+
+| Table | Column | Notes |
+|---|---|---|
+| `nursery_addresses` | `location geography(Point,4326)` | Synced from lat/lon by trigger |
+| `user_addresses` | `location geography(Point,4326)` | Synced from lat/lon by trigger |
+| `driver_locations` | `location geography(Point,4326)` | Synced from lat/lon by trigger |
+| `order_delivery_snapshots` | `location geography(Point,4326)` | Written inline by orders repo |
+| `market_ads` | `pickup_location geography(Point,4326)` | Synced from pickup_lat/lon by trigger |
+
+GIST indexes on all geography columns. Shared trigger function: `sync_latlong_to_geography()`.
+
+Shared Go helpers: `internal/common/location/geo.go` — `MakePoint`, `DWithin`, `DistanceKM`.
+
+Modules using PostGIS queries:
+- **sourcing** — `ListNearby` uses `ST_Distance` on `nursery_addresses.location`
+- **market** — `ListPublished` accepts `near_lat`, `near_lon`, `radius_km` query params; filters with `ST_DWithin` on `pickup_location`
+- **orders** — `order_delivery_snapshots` written with inline PostGIS expression
+
+### Redis (optional)
+
+Set `REDIS_ADDR` to enable. API degrades gracefully (no-op) when not configured.
+
+| Env var | Default | Notes |
+|---|---|---|
+| `REDIS_ADDR` | _(empty — Redis disabled)_ | `host:port` e.g. `localhost:6379` |
+| `REDIS_PASSWORD` | _(empty)_ | |
+| `REDIS_DB` | `0` | |
+
+Current usage:
+- **OTP rate limiting** — 5 `POST /auth/send-otp` requests per mobile per 10 min
+- **Verify rate limiting** — 10 `POST /auth/verify-otp` requests per IP per 15 min
+
+Middleware: `internal/middleware/ratelimit.go` — `OTPRateLimit`, `VerifyRateLimit`, `RateLimit`.
+
+### New fields on dispatch responses
+
+`delivery_latitude` and `delivery_longitude` are now included in all `Dispatch` responses when the order has a confirmed delivery snapshot. Drivers can use these coordinates to open external navigation apps.
+
+### Market nearby search
+
+`GET /market/ads` now accepts:
+- `near_lat` — buyer latitude
+- `near_lon` — buyer longitude  
+- `radius_km` — search radius (default 50 km when near_lat/near_lon provided)
+
+Only returns ads with a confirmed `pickup_location`. Combines with all existing filters.
+
+---
+
 ## Pre-Production Hardening Backlog
 
-- [ ] Rate limiting on all routes
+- [x] Rate limiting on OTP endpoints (Redis)
+- [ ] Rate limiting on remaining high-risk routes
 - [ ] Request size limits
 - [ ] Security headers (HSTS, X-Frame-Options)
 - [ ] CORS policy review per environment
 - [ ] Login brute-force protection
-- [ ] RBAC enforcement audit — all routes
 - [ ] Real FCM, S3, Razorpay/PayU integrations
 - [ ] Expand integration tests — edge cases + negative paths
 - [ ] CI/CD: `gofmt`, `go vet ./...`, `go test ./...`, `go build`, OpenAPI validation

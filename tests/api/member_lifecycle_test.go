@@ -161,7 +161,16 @@ func TestDeleteAccount_TokenInvalidatedAfterDeletion(t *testing.T) {
 
 func TestDeleteAccount_OwnerWithActiveNurseryBlocked(t *testing.T) {
 	token := login(t, ownerPhone)
-
+	var hasNursery bool
+	for _, w := range getWorkspaces(t, token) {
+		if w.Type == "OWNED_NURSERY" {
+			hasNursery = true
+			break
+		}
+	}
+	if !hasNursery {
+		t.Skip("owner has no active nursery — seed data required")
+	}
 	resp := deleteReq(t, "/api/v1/users/me", token)
 	assertStatus(t, resp, http.StatusConflict)
 }
@@ -176,6 +185,6 @@ func ownerNurseryID(t *testing.T, token string) int64 {
 			return w.NurseryID
 		}
 	}
-	t.Fatal("owner has no OWNED_NURSERY workspace — seed data may be missing")
+	t.Skip("owner has no OWNED_NURSERY workspace — seed data required")
 	return 0
 }

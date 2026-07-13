@@ -14,6 +14,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/database"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
+	"github.com/redis/go-redis/v9"
 )
 
 type App struct {
@@ -61,6 +62,7 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		JWT:        jwtplatform.NewService(cfg.JWT),
 		Storage:    storageClient,
 		Audit:      auditlog.NewService(db, logManager.Logger()),
+		Redis:      connectRedis(ctx, cfg.Redis, logManager.Logger()),
 	}
 
 	server := &http.Server{
@@ -101,7 +103,30 @@ func (a *App) Run(ctx context.Context) error {
 func (a *App) Close() error {
 	// Drain pending audit writes before closing the DB connection.
 	a.deps.Audit.Close()
+	if a.deps.Redis != nil {
+		_ = a.deps.Redis.Close()
+	}
 	return errors.Join(a.deps.DB.Close(), a.deps.LogManager.Close())
+}
+
+// connectRedis creates a Redis client when REDIS_ADDR is set.
+// Returns nil (graceful no-op) when the address is empty.
+func connectRedis(ctx context.Context, cfg config.RedisConfig, log *slog.Logger) *redis.Client {
+	if cfg.Addr == "" {
+		return nil
+	}
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     cfg.Addr,
+		Password: cfg.Password,
+		DB:       cfg.DB,
+	})
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		log.Warn("redis not reachable — rate limiting disabled", "addr", cfg.Addr, "error", err)
+		_ = rdb.Close()
+		return nil
+	}
+	log.Info("redis connected", "addr", cfg.Addr)
+	return rdb
 }
 
 // runCronJobs runs periodic maintenance tasks:

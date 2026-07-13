@@ -50,22 +50,24 @@ func TestOrderCreate_Owner(t *testing.T) {
 	}
 
 	body := map[string]any{
-		"nursery_id":   nurseryID,
-		"buyer_name":   "Test Walk-in",
-		"buyer_mobile": "9999999999",
-		"notes":        "integration test order",
+		"seller_nursery_id": nurseryID,
+		"buyer_name":        "Test Walk-in",
+		"buyer_mobile":      "9999999999",
+		"notes":             "integration test order",
 	}
 	resp := post(t, "/api/v1/orders", body, token)
 	assertStatus(t, resp, http.StatusCreated)
 
-	var order struct {
-		OrderID int64  `json:"order_id"`
-		Status  string `json:"status"`
+	var result struct {
+		Order struct {
+			OrderID int64  `json:"order_id"`
+			Status  string `json:"order_status"`
+		} `json:"order"`
 	}
-	decode(t, resp, &order)
+	decode(t, resp, &result)
 
-	if order.Status != "PENDING" {
-		t.Errorf("new order status: got %q, want %q", order.Status, "PENDING")
+	if result.Order.Status != "PENDING" {
+		t.Errorf("new order status: got %q, want %q", result.Order.Status, "PENDING")
 	}
 }
 

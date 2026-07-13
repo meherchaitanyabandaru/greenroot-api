@@ -690,6 +690,9 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
 		return nil
 	}
+	if hasRole(actor, "DRIVER") {
+		return ErrForbidden
+	}
 	if input.Buying {
 		// Buyer perspective: filter by buyer user or buyer nursery.
 		input.UserID = actor.UserID

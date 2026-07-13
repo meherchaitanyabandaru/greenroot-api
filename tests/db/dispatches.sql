@@ -15,17 +15,20 @@ FROM dispatches d
 LEFT JOIN drivers dr ON d.driver_id = dr.driver_id
 WHERE d.driver_id IS NOT NULL AND dr.driver_id IS NULL;
 
-\echo '-- Dispatches with DELIVERED status but order not COMPLETED (informational)'
-SELECT COUNT(*) AS delivered_not_complete
+\echo '-- Dispatches with TRIP_STARTED status but order not in progress (informational)'
+SELECT COUNT(*) AS active_trips_no_complete
 FROM dispatches d
 JOIN orders o ON d.order_id = o.order_id
-WHERE d.status = 'DELIVERED' AND o.status != 'COMPLETED';
+WHERE d.dispatch_status = 'TRIP_STARTED' AND o.order_status = 'COMPLETED';
 
 \echo '-- Status distribution'
-SELECT status, COUNT(*) AS cnt FROM dispatches GROUP BY status ORDER BY cnt DESC;
+SELECT dispatch_status, COUNT(*) AS cnt FROM dispatches GROUP BY dispatch_status ORDER BY cnt DESC;
 
-\echo '-- Dispatches with tracking events (informational)'
-SELECT COUNT(DISTINCT dispatch_id) AS dispatches_with_tracking FROM tracking;
+\echo '-- Dispatches with tracking links (informational)'
+SELECT COUNT(DISTINCT dispatch_id) AS dispatches_with_tracking FROM trip_tracking_links;
 
-\echo '-- Dispatches without tracking_uuid (should be 0 — all dispatches get one)'
-SELECT COUNT(*) AS missing_uuid FROM dispatches WHERE tracking_uuid IS NULL;
+\echo '-- Dispatches without a tracking link (informational)'
+SELECT COUNT(*) AS missing_tracking_link
+FROM dispatches d
+LEFT JOIN trip_tracking_links ttl ON ttl.dispatch_id = d.dispatch_id
+WHERE ttl.id IS NULL;

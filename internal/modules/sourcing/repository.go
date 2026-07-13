@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/location"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
 )
 
@@ -126,14 +127,9 @@ func (r *PostgresRepository) ListNearby(ctx context.Context, q NearbyQuery) ([]N
 
 	var distanceExpr string
 	if q.Latitude != nil && q.Longitude != nil {
-		args = append(args, *q.Latitude, *q.Longitude)
-		li, loi := len(args)-1, len(args)
-		distanceExpr = fmt.Sprintf(`
-			6371 * 2 * ASIN(SQRT(
-				POWER(SIN(RADIANS(COALESCE(na.latitude,0) - $%d) / 2), 2) +
-				COS(RADIANS($%d)) * COS(RADIANS(COALESCE(na.latitude,0))) *
-				POWER(SIN(RADIANS(COALESCE(na.longitude,0) - $%d) / 2), 2)
-			))`, li, li, loi)
+		args = append(args, *q.Longitude, *q.Latitude) // lon first for ST_MakePoint
+		lonIdx, latIdx := len(args)-1, len(args)
+		distanceExpr = location.DistanceKM("na.location", lonIdx, latIdx)
 	} else {
 		distanceExpr = "NULL::float8"
 	}

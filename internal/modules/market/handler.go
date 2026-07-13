@@ -37,6 +37,9 @@ func (h *Handler) BrowseAds(w http.ResponseWriter, r *http.Request) {
 		Category: r.URL.Query().Get("category"),
 		MinPrice: minPrice,
 		MaxPrice: maxPrice,
+		NearLat:  floatQueryParam(r, "near_lat"),
+		NearLon:  floatQueryParam(r, "near_lon"),
+		RadiusKM: floatQueryParam(r, "radius_km"),
 		Page:     intParam(r, "page", 1),
 		PerPage:  intParam(r, "per_page", 20),
 	}
@@ -381,6 +384,18 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 		return false
 	}
 	return true
+}
+
+func floatQueryParam(r *http.Request, key string) *float64 {
+	v := r.URL.Query().Get(key)
+	if v == "" {
+		return nil
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return nil
+	}
+	return &f
 }
 
 func intParam(r *http.Request, key string, def int) int {

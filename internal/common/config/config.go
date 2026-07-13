@@ -15,6 +15,7 @@ type Config struct {
 	Database DatabaseConfig
 	JWT      JWTConfig
 	Storage  StorageConfig
+	Redis    RedisConfig
 }
 
 type AppConfig struct {
@@ -68,6 +69,12 @@ type StorageConfig struct {
 	PublicURL       string // base URL for constructing permanent file URLs
 }
 
+type RedisConfig struct {
+	Addr     string
+	Password string
+	DB       int
+}
+
 func Load() Config {
 	return Config{
 		App: AppConfig{
@@ -115,6 +122,11 @@ func Load() Config {
 			UseSSL:          getBool("STORAGE_USE_SSL", false),
 			Region:          getString("STORAGE_REGION", "us-east-1"),
 			PublicURL:       getString("STORAGE_PUBLIC_URL", "http://localhost:9000"),
+		},
+		Redis: RedisConfig{
+			Addr:     getString("REDIS_ADDR", ""),
+			Password: getString("REDIS_PASSWORD", ""),
+			DB:       getInt("REDIS_DB", 0),
 		},
 	}
 }

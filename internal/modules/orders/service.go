@@ -51,7 +51,7 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, orderID int64) (O
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateOrderRequest) (Order, error) {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") || hasRole(actor, "DRIVER") {
 		return Order{}, ErrForbidden
 	}
 	if input.BuyerMobile != nil && *input.BuyerMobile != "" {
@@ -433,6 +433,9 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 		}
 		input.NurseryID = nurseryIDs[0]
 		return nil
+	}
+	if hasRole(actor, "DRIVER") {
+		return ErrForbidden
 	}
 	input.BuyerID = actor.UserID
 	return nil

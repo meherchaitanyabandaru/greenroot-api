@@ -12,7 +12,7 @@ WHERE n.nursery_id IS NULL;
 \echo '-- CONVERTED quotations without a linked order (should be 0)'
 SELECT COUNT(*) AS converted_no_order
 FROM quotations
-WHERE status = 'CONVERTED' AND order_id IS NULL;
+WHERE status = 'CONVERTED' AND converted_order_id IS NULL;
 
 \echo '-- Quotation items with no parent quotation (should be 0)'
 SELECT COUNT(*) AS orphaned_items
@@ -26,7 +26,7 @@ SELECT status, COUNT(*) AS cnt FROM quotations GROUP BY status ORDER BY cnt DESC
 \echo '-- Type distribution'
 SELECT quotation_type, COUNT(*) AS cnt FROM quotations GROUP BY quotation_type ORDER BY cnt DESC;
 
-\echo '-- Expired APPROVED quotations (may need status refresh at read time)'
-SELECT COUNT(*) AS expired_approved
+\echo '-- Expired ACCEPTED quotations (may need status refresh at read time)'
+SELECT COUNT(*) AS expired_accepted
 FROM quotations
-WHERE status = 'APPROVED' AND expiry_date < NOW();
+WHERE status = 'CUSTOMER_ACCEPTED' AND valid_until < NOW();

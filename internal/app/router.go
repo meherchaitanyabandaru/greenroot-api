@@ -62,7 +62,7 @@ func NewRouter(deps Dependencies) chi.Router {
 		r.Use(authctx.EnrichActorMiddleware(deps.JWT))
 		r.Use(appmiddleware.AuditContext) // must come after EnrichActorMiddleware
 
-		auth.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
+		auth.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis).RegisterRoutes(r)
 		admin.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		attachments.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		audit.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)

@@ -119,6 +119,10 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateSu
 }
 
 func (s *Service) Me(ctx context.Context, actor ActorContext) ([]UserSubscription, Pagination, error) {
+	// Managers are nursery employees and do not hold subscriptions.
+	if hasRole(actor, "MANAGER") {
+		return nil, Pagination{}, ErrForbidden
+	}
 	return s.List(ctx, actor, ListSubscriptionsRequest{UserID: actor.UserID, Page: 1, PerPage: 50})
 }
 

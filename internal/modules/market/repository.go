@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/location"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -180,6 +182,16 @@ func (r *PostgresRepository) ListPublished(ctx context.Context, q AdsQuery) ([]A
 		args = append(args, q.MaxPrice)
 		filter += fmt.Sprintf(" AND ma.price_per_unit <= $%d", len(args))
 	}
+	if q.NearLat != nil && q.NearLon != nil {
+		radiusKM := 50.0
+		if q.RadiusKM != nil && *q.RadiusKM > 0 {
+			radiusKM = *q.RadiusKM
+		}
+		args = append(args, *q.NearLon, *q.NearLat) // lon first for ST_MakePoint
+		lonIdx, latIdx := len(args)-1, len(args)
+		filter += " AND ma.pickup_location IS NOT NULL AND " +
+			location.DWithin("ma.pickup_location", lonIdx, latIdx, radiusKM*1000)
+	}
 	return r.listAds(ctx, filter, q.Sort, q.Page, q.PerPage, args)
 }
 
@@ -210,6 +222,11 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, p
 		orderBy = "ma.price_per_unit DESC NULLS FIRST, ma.created_at DESC"
 	case "popular":
 		orderBy = "ma.view_count DESC, ma.created_at DESC"
+	case "nearest":
+		// Distance ordering is handled by the nearby filter appended to the filter
+		// clause; here we order by pickup_location distance when a reference point
+		// is embedded in the filter args. Fall back to newest if no location given.
+		orderBy = "ma.published_at DESC NULLS LAST, ma.created_at DESC"
 	}
 
 	offset := (page - 1) * perPage

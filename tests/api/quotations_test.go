@@ -54,11 +54,12 @@ func TestQuotationCreate_Owner(t *testing.T) {
 	nurseryID := getOwnerNurseryID(t, token)
 
 	body := map[string]any{
-		"quotation_type": "CUSTOMER",
-		"nursery_id":     nurseryID,
-		"notes":          "test quotation",
+		"quotation_type":   "CUSTOMER",
+		"nursery_id":       nurseryID,
+		"recipient_mobile": buyerPhone,
+		"notes":            "test quotation",
 		"items": []map[string]any{
-			{"plant_id": 1, "quantity": 2, "unit_price": 100},
+			{"plant_id": 1, "quantity": 2, "unit_price": 100, "total_price": 200},
 		},
 	}
 	resp := post(t, "/api/v1/quotations", body, token)
@@ -127,10 +128,11 @@ func TestQuotationCreate_Owner_WithManagerAssignment(t *testing.T) {
 	body := map[string]any{
 		"quotation_type":           "CUSTOMER",
 		"nursery_id":               nurseryID,
+		"recipient_mobile":         buyerPhone,
 		"notes":                    "pre-assigned quotation",
 		"assigned_manager_user_id": managerUserID,
 		"items": []map[string]any{
-			{"plant_id": 1, "quantity": 1, "unit_price": 50},
+			{"plant_id": 1, "quantity": 1, "unit_price": 50, "total_price": 50},
 		},
 	}
 	resp := post(t, "/api/v1/quotations", body, ownerToken)
@@ -138,7 +140,7 @@ func TestQuotationCreate_Owner_WithManagerAssignment(t *testing.T) {
 
 	var created struct {
 		Quotation struct {
-			QuotationID           int64  `json:"quotation_id"`
+			QuotationID           int64  `json:"id"`
 			AssignedManagerUserID *int64 `json:"assigned_manager_user_id"`
 		} `json:"quotation"`
 	}
@@ -160,10 +162,11 @@ func TestQuotationCreate_Manager_CannotPreAssign(t *testing.T) {
 	body := map[string]any{
 		"quotation_type":           "CUSTOMER",
 		"nursery_id":               nurseryID,
+		"recipient_mobile":         buyerPhone,
 		"notes":                    "manager self-assign attempt",
 		"assigned_manager_user_id": managerUserID,
 		"items": []map[string]any{
-			{"plant_id": 1, "quantity": 1, "unit_price": 50},
+			{"plant_id": 1, "quantity": 1, "unit_price": 50, "total_price": 50},
 		},
 	}
 	// Should succeed (not 403), but assignment is silently stripped
@@ -189,16 +192,17 @@ func TestQuotationGet_Manager_CannotViewOthers(t *testing.T) {
 	ownerToken := login(t, ownerPhone)
 	nurseryID := getOwnerNurseryID(t, ownerToken)
 	body := map[string]any{
-		"quotation_type": "CUSTOMER",
-		"nursery_id":     nurseryID,
-		"notes":          "owner-only quotation",
-		"items":          []map[string]any{{"plant_id": 1, "quantity": 1, "unit_price": 50}},
+		"quotation_type":   "CUSTOMER",
+		"nursery_id":       nurseryID,
+		"recipient_mobile": buyerPhone,
+		"notes":            "owner-only quotation",
+		"items":            []map[string]any{{"plant_id": 1, "quantity": 1, "unit_price": 50, "total_price": 50}},
 	}
 	createResp := post(t, "/api/v1/quotations", body, ownerToken)
 	assertStatus(t, createResp, http.StatusCreated)
 	var created struct {
 		Quotation struct {
-			QuotationID int64 `json:"quotation_id"`
+			QuotationID int64 `json:"id"`
 		} `json:"quotation"`
 	}
 	decode(t, createResp, &created)
@@ -219,15 +223,16 @@ func TestQuotationGet_Manager_CanViewAssigned(t *testing.T) {
 	body := map[string]any{
 		"quotation_type":           "CUSTOMER",
 		"nursery_id":               nurseryID,
+		"recipient_mobile":         buyerPhone,
 		"notes":                    "assigned to manager",
 		"assigned_manager_user_id": managerUserID,
-		"items":                    []map[string]any{{"plant_id": 1, "quantity": 1, "unit_price": 50}},
+		"items":                    []map[string]any{{"plant_id": 1, "quantity": 1, "unit_price": 50, "total_price": 50}},
 	}
 	createResp := post(t, "/api/v1/quotations", body, ownerToken)
 	assertStatus(t, createResp, http.StatusCreated)
 	var created struct {
 		Quotation struct {
-			QuotationID int64 `json:"quotation_id"`
+			QuotationID int64 `json:"id"`
 		} `json:"quotation"`
 	}
 	decode(t, createResp, &created)
@@ -247,15 +252,16 @@ func TestQuotationUnassignManager_Owner(t *testing.T) {
 	body := map[string]any{
 		"quotation_type":           "CUSTOMER",
 		"nursery_id":               nurseryID,
+		"recipient_mobile":         buyerPhone,
 		"notes":                    "to be unassigned",
 		"assigned_manager_user_id": managerUserID,
-		"items":                    []map[string]any{{"plant_id": 1, "quantity": 1, "unit_price": 50}},
+		"items":                    []map[string]any{{"plant_id": 1, "quantity": 1, "unit_price": 50, "total_price": 50}},
 	}
 	createResp := post(t, "/api/v1/quotations", body, ownerToken)
 	assertStatus(t, createResp, http.StatusCreated)
 	var created struct {
 		Quotation struct {
-			QuotationID int64 `json:"quotation_id"`
+			QuotationID int64 `json:"id"`
 		} `json:"quotation"`
 	}
 	decode(t, createResp, &created)
@@ -287,15 +293,16 @@ func TestQuotationUnassignManager_Manager_Forbidden(t *testing.T) {
 	body := map[string]any{
 		"quotation_type":           "CUSTOMER",
 		"nursery_id":               nurseryID,
+		"recipient_mobile":         buyerPhone,
 		"notes":                    "manager cannot unassign",
 		"assigned_manager_user_id": managerUserID,
-		"items":                    []map[string]any{{"plant_id": 1, "quantity": 1, "unit_price": 50}},
+		"items":                    []map[string]any{{"plant_id": 1, "quantity": 1, "unit_price": 50, "total_price": 50}},
 	}
 	createResp := post(t, "/api/v1/quotations", body, ownerToken)
 	assertStatus(t, createResp, http.StatusCreated)
 	var created struct {
 		Quotation struct {
-			QuotationID int64 `json:"quotation_id"`
+			QuotationID int64 `json:"id"`
 		} `json:"quotation"`
 	}
 	decode(t, createResp, &created)
@@ -661,11 +668,11 @@ func getOwnerNurseryID(t *testing.T, token string) int64 {
 func getManagerUserID(t *testing.T, mobile string) int64 {
 	t.Helper()
 	token := login(t, mobile)
-	resp := get(t, "/api/v1/me", token)
+	resp := get(t, "/api/v1/users/me", token)
 	assertStatus(t, resp, http.StatusOK)
 	var me struct {
 		User struct {
-			UserID int64 `json:"user_id"`
+			UserID int64 `json:"id"`
 		} `json:"user"`
 	}
 	decode(t, resp, &me)

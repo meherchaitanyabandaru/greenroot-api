@@ -465,6 +465,7 @@ func baseSelect() string {
 			COALESCE(o.nursery_id, o.seller_nursery_id), d.dispatch_number,
 			COALESCE(d.dispatch_status::text, ''), d.vehicle_id, v.vehicle_number, d.driver_id,
 			u.first_name, u.mobile, d.dispatched_by, d.dispatch_date, d.delivery_date, d.destination_address,
+			ods.latitude AS delivery_latitude, ods.longitude AS delivery_longitude,
 			ods.requires_driver_ack,
 			d.notes, d.created_at, d.updated_at,
 			d.nursery_id, d.assigned_manager_user_id, d.driver_user_id,
@@ -563,6 +564,7 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 	var dispatch Dispatch
 	var orderNumber, dispatchNumber, vehicleNumber, driverName, driverMobile, destination, notes sql.NullString
 	var nurseryID, vehicleID, driverID, dispatchedBy sql.NullInt64
+	var deliveryLat, deliveryLon sql.NullFloat64
 	var requiresDriverAck sql.NullBool
 	var dispatchDate, deliveryDate, updatedAt sql.NullTime
 	// V1 snapshot fields
@@ -577,6 +579,7 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 		&nurseryID, &dispatchNumber,
 		&dispatch.Status, &vehicleID, &vehicleNumber, &driverID,
 		&driverName, &driverMobile, &dispatchedBy, &dispatchDate, &deliveryDate, &destination,
+		&deliveryLat, &deliveryLon,
 		&requiresDriverAck,
 		&notes, &dispatch.CreatedAt, &updatedAt,
 		&v1NurseryID, &assignedManagerUserID, &driverUserID,
@@ -603,6 +606,12 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 		dispatch.DeliveryDate = &deliveryDate.Time
 	}
 	dispatch.DestinationAddress = nullableString(destination)
+	if deliveryLat.Valid {
+		dispatch.DeliveryLatitude = &deliveryLat.Float64
+	}
+	if deliveryLon.Valid {
+		dispatch.DeliveryLongitude = &deliveryLon.Float64
+	}
 	if requiresDriverAck.Valid {
 		dispatch.RequiresDriverAck = &requiresDriverAck.Bool
 	}

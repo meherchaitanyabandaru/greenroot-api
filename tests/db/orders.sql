@@ -20,14 +20,14 @@ WHERE loaded_quantity IS NOT NULL AND loaded_quantity > quantity;
 \echo '-- Orders in LOADED/PARTIALLY_FULFILLED/COMPLETED with null total (should be 0)'
 SELECT COUNT(*) AS bad_totals
 FROM orders
-WHERE status IN ('LOADED', 'PARTIALLY_FULFILLED', 'COMPLETED')
+WHERE order_status IN ('LOADED', 'PARTIALLY_FULFILLED', 'COMPLETED')
   AND total_amount IS NULL;
 
 \echo '-- Status distribution'
-SELECT status, COUNT(*) AS cnt FROM orders GROUP BY status ORDER BY cnt DESC;
+SELECT order_status, COUNT(*) AS cnt FROM orders GROUP BY order_status ORDER BY cnt DESC;
 
 \echo '-- COMPLETED orders without a dispatch (informational)'
 SELECT COUNT(*) AS completed_no_dispatch
 FROM orders o
 LEFT JOIN dispatches d ON d.order_id = o.order_id
-WHERE o.status = 'COMPLETED' AND d.dispatch_id IS NULL;
+WHERE o.order_status = 'COMPLETED' AND d.dispatch_id IS NULL;

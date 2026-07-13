@@ -13,7 +13,7 @@ func TestSubscriptionPlans_Public(t *testing.T) {
 	var result struct {
 		Plans []struct {
 			PlanID   int64  `json:"plan_id"`
-			PlanType string `json:"plan_type"`
+			PlanCode string `json:"plan_code"`
 		} `json:"plans"`
 	}
 	decode(t, resp, &result)
@@ -22,16 +22,16 @@ func TestSubscriptionPlans_Public(t *testing.T) {
 		t.Error("subscription plans list is empty — seed data required")
 	}
 
-	// Verify TRIAL and STANDARD plans exist
-	types := map[string]bool{}
+	// Verify FREE and TRIAL plans exist (core plans seeded by default)
+	codes := map[string]bool{}
 	for _, p := range result.Plans {
-		types[p.PlanType] = true
+		codes[p.PlanCode] = true
 	}
-	if !types["TRIAL"] {
+	if !codes["FREE"] {
+		t.Error("FREE plan not found in subscription plans")
+	}
+	if !codes["TRIAL"] {
 		t.Error("TRIAL plan not found in subscription plans")
-	}
-	if !types["STANDARD"] {
-		t.Error("STANDARD plan not found in subscription plans")
 	}
 }
 
