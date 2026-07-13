@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -246,8 +247,21 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQu
 	if err != nil {
 		return Quotation{}, err
 	}
+	s.scheduleQuotationExpiry(ctx, q)
 	s.audit(ctx, actor, "quotations", q.ID, actionInsert, input)
 	return *q, nil
+}
+
+func (s *Service) scheduleQuotationExpiry(ctx context.Context, q *Quotation) {
+	if s.redis == nil || q == nil || q.ValidUntil == nil {
+		return
+	}
+	if err := s.redis.ZAdd(ctx, redisutil.KeyQuotationExpiry, redis.Z{
+		Score:  float64(q.ValidUntil.Unix()),
+		Member: strconv.FormatInt(q.ID, 10),
+	}).Err(); err != nil {
+		slog.Warn("redis quotation expiry schedule failed", "quotation_id", q.ID, "error", err)
+	}
 }
 
 func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, input UpdateQuotationRequest) (Quotation, error) {
@@ -299,6 +313,7 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, inpu
 	if err != nil {
 		return Quotation{}, err
 	}
+	s.scheduleQuotationExpiry(ctx, updated)
 	s.audit(ctx, actor, "quotations", id, actionUpdate, input)
 	return *updated, nil
 }
@@ -389,6 +404,7 @@ func (s *Service) SendToCustomer(ctx context.Context, actor ActorContext, quotat
 		return Quotation{}, err
 	}
 	s.audit(ctx, actor, "quotations", quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_SENT"})
+	s.scheduleQuotationExpiry(ctx, approved)
 	// Notify the buyer if their account is linked.
 	if approved.CustomerUserID != nil {
 		nurseryName := ""

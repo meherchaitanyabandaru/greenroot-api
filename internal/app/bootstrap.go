@@ -84,6 +84,7 @@ func (a *App) Run(ctx context.Context) error {
 	go runCronJobs(ctx, a.deps)
 	go market.StartCounterFlusher(ctx, a.deps.DB, a.deps.Redis, a.deps.Logger, time.Minute)
 	go notifications.StartQueueWorker(ctx, a.deps.DB, a.deps.Redis, notifications.MockSender{}, a.deps.Logger)
+	go runRedisExpiryJobs(ctx, a.deps)
 
 	serverErrors := make(chan error, 1)
 	go func() {

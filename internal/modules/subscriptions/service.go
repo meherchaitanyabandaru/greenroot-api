@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -173,6 +174,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateSu
 	if promoID > 0 {
 		_ = s.repository.IncrementPromoUsed(ctx, promoID)
 	}
+	s.scheduleSubscriptionExpiry(ctx, subscription)
 	s.audit(ctx, actor, subscription.ID, actionInsert, map[string]any{"plan_id": input.PlanID, "user_id": userID, "billing_cycle": input.BillingCycle, "promo_code": input.PromoCode})
 	return *subscription, nil
 }
@@ -252,8 +254,21 @@ func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID 
 	if promoID > 0 {
 		_ = s.repository.IncrementPromoUsed(ctx, promoID)
 	}
+	s.scheduleSubscriptionExpiry(ctx, subscription)
 	s.audit(ctx, actor, subscription.ID, actionUpdate, map[string]any{"renewed_until": endDate.Format(time.DateOnly), "billing_cycle": input.BillingCycle, "promo_code": input.PromoCode})
 	return *subscription, nil
+}
+
+func (s *Service) scheduleSubscriptionExpiry(ctx context.Context, subscription *UserSubscription) {
+	if s.redis == nil || subscription == nil || subscription.EndDate == nil {
+		return
+	}
+	if err := s.redis.ZAdd(ctx, redisutil.KeySubscriptionExpiry, redis.Z{
+		Score:  float64(subscription.EndDate.Unix()),
+		Member: strconv.FormatInt(subscription.ID, 10),
+	}).Err(); err != nil {
+		slog.Warn("redis subscription expiry schedule failed", "subscription_id", subscription.ID, "error", err)
+	}
 }
 
 func (s *Service) Cancel(ctx context.Context, actor ActorContext, subscriptionID int64, input CancelSubscriptionRequest) (UserSubscription, error) {
