@@ -27,6 +27,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/payments"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/plants"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/plantrequests"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/ratings"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sourcing"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/storage"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/subscriptions"
@@ -78,6 +79,7 @@ func NewRouter(deps Dependencies) chi.Router {
 		payments.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		plants.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		plantrequests.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
+		ratings.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		sourcing.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		storage.NewModule(deps.DB, deps.JWT, deps.Storage).RegisterRoutes(r)
 		subModule.RegisterRoutes(r)
