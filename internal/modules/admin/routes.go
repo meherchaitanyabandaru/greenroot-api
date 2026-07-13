@@ -2,15 +2,21 @@ package admin
 
 import (
 	"database/sql"
+
 	"github.com/go-chi/chi/v5"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
+	"github.com/redis/go-redis/v9"
 )
 
 type Module struct{ handler *Handler }
 
-func NewModule(db *sql.DB, jwt *jwtplatform.Service) Module {
+func NewModule(db *sql.DB, jwt *jwtplatform.Service, redisClients ...*redis.Client) Module {
+	var rdb *redis.Client
+	if len(redisClients) > 0 {
+		rdb = redisClients[0]
+	}
 	r := NewRepository(db)
-	s := NewService(r)
+	s := NewService(r, rdb)
 	return Module{handler: NewHandler(s, jwt)}
 }
 func (m Module) RegisterRoutes(r chi.Router) {

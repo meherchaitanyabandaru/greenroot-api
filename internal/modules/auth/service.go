@@ -295,7 +295,49 @@ func (s *Service) Workspaces(ctx context.Context, accessToken string) ([]Workspa
 	if err != nil {
 		return nil, err
 	}
-	return s.repository.GetWorkspaces(ctx, userID)
+	if workspaces, ok := s.getCachedWorkspaces(ctx, userID); ok {
+		return workspaces, nil
+	}
+	workspaces, err := s.repository.GetWorkspaces(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	s.cacheWorkspaces(ctx, userID, workspaces)
+	return workspaces, nil
+}
+
+func (s *Service) getCachedWorkspaces(ctx context.Context, userID int64) ([]Workspace, bool) {
+	if s.redis == nil {
+		return nil, false
+	}
+	data, err := s.redis.Get(ctx, redisutil.WorkspaceKey(userID)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, false
+	}
+	if err != nil {
+		slog.Warn("redis workspace cache read failed", "user_id", userID, "error", err)
+		return nil, false
+	}
+	var workspaces []Workspace
+	if err := json.Unmarshal(data, &workspaces); err != nil {
+		slog.Warn("redis workspace cache decode failed", "user_id", userID, "error", err)
+		return nil, false
+	}
+	return workspaces, true
+}
+
+func (s *Service) cacheWorkspaces(ctx context.Context, userID int64, workspaces []Workspace) {
+	if s.redis == nil {
+		return
+	}
+	data, err := json.Marshal(workspaces)
+	if err != nil {
+		slog.Warn("redis workspace cache encode failed", "user_id", userID, "error", err)
+		return
+	}
+	if err := s.redis.Set(ctx, redisutil.WorkspaceKey(userID), data, time.Duration(redisutil.WorkspaceTTLSeconds)*time.Second).Err(); err != nil {
+		slog.Warn("redis workspace cache write failed", "user_id", userID, "error", err)
+	}
 }
 
 func (s *Service) OwnerDashboard(ctx context.Context, accessToken string) (*OwnerDashboard, error) {

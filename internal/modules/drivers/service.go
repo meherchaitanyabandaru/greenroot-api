@@ -3,11 +3,14 @@ package drivers
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"math"
 	"strings"
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -20,10 +23,15 @@ var (
 type Service struct {
 	repository Repository
 	auditSvc   *auditlog.Service
+	redis      redis.Cmdable
 }
 
-func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
-	return &Service{repository: repository, auditSvc: auditSvc}
+func NewService(repository Repository, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
+	var rdb redis.Cmdable
+	if len(redisClients) > 0 {
+		rdb = redisClients[0]
+	}
+	return &Service{repository: repository, auditSvc: auditSvc, redis: rdb}
 }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListDriversRequest) ([]Driver, Pagination, error) {
@@ -144,6 +152,7 @@ func (s *Service) Approve(ctx context.Context, actor ActorContext, driverUserID 
 	if err != nil {
 		return Driver{}, err
 	}
+	redisutil.InvalidateWorkspaces(ctx, s.redis, slog.Default(), driverUserID)
 	s.audit(ctx, actor, driver.ID, actionUpdate, map[string]any{"approval_status": "APPROVED"})
 	return *driver, nil
 }

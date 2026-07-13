@@ -16,13 +16,14 @@ import (
 // ─── mock repository ────────────────────────────────────────────────────────
 
 type mockRepo struct {
-	users      map[int64]*User
-	sessions   map[int64]*Session // sessionID → Session
-	tokens     map[string]int64   // hashed-token → sessionID (we store raw for simplicity)
-	roles      map[int64][]string
-	tc         map[int64]TokenContext
-	workspaces map[int64][]Workspace
-	dashboard  *OwnerDashboard
+	users          map[int64]*User
+	sessions       map[int64]*Session // sessionID → Session
+	tokens         map[string]int64   // hashed-token → sessionID (we store raw for simplicity)
+	roles          map[int64][]string
+	tc             map[int64]TokenContext
+	workspaces     map[int64][]Workspace
+	dashboard      *OwnerDashboard
+	workspaceCalls int
 
 	nextUserID    int64
 	nextSessionID int64
@@ -135,6 +136,7 @@ func (m *mockRepo) LogoutSession(_ context.Context, sessionID int64) error {
 func (m *mockRepo) CreateUserActivity(_ context.Context, _ CreateActivityInput) error { return nil }
 
 func (m *mockRepo) GetWorkspaces(_ context.Context, id int64) ([]Workspace, error) {
+	m.workspaceCalls++
 	w, ok := m.workspaces[id]
 	if !ok {
 		return []Workspace{{Type: "PERSONAL", Role: "CUSTOMER"}}, nil
@@ -551,6 +553,32 @@ func TestWorkspaces_InvalidToken(t *testing.T) {
 	_, err := svc(newMock()).Workspaces(context.Background(), "bad-token")
 	if !errors.Is(err, ErrInvalidToken) {
 		t.Errorf("want ErrInvalidToken, got %v", err)
+	}
+}
+
+func TestWorkspaces_UsesRedisCache(t *testing.T) {
+	ctx := context.Background()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	defer client.Close()
+
+	repo := newMock()
+	repo.seedUser(1, "9000000000", "BUYER")
+	repo.workspaces[1] = []Workspace{{Type: "PERSONAL", Role: "CUSTOMER"}}
+	s := NewService(repo, testJWT(), nil, client)
+
+	token, _ := testJWT().IssueAccessToken("1", "500", "9000000000", []string{"BUYER"}, jwtplatform.TokenContext{UserStatus: "ACTIVE"})
+	if _, err := s.Workspaces(ctx, token); err != nil {
+		t.Fatalf("first workspaces call failed: %v", err)
+	}
+	if _, err := s.Workspaces(ctx, token); err != nil {
+		t.Fatalf("second workspaces call failed: %v", err)
+	}
+	if repo.workspaceCalls != 1 {
+		t.Fatalf("expected one repository call due to cache hit, got %d", repo.workspaceCalls)
+	}
+	if !server.Exists(redisutil.WorkspaceKey(1)) {
+		t.Fatal("expected workspace cache key")
 	}
 }
 

@@ -3,9 +3,12 @@ package invites
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -19,18 +22,23 @@ var (
 type Service struct {
 	repository Repository
 	auditSvc   *auditlog.Service
+	redis      redis.Cmdable
 }
 
-func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
-	return &Service{repository: repository, auditSvc: auditSvc}
+func NewService(repository Repository, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
+	var rdb redis.Cmdable
+	if len(redisClients) > 0 {
+		rdb = redisClients[0]
+	}
+	return &Service{repository: repository, auditSvc: auditSvc, redis: rdb}
 }
 
 var allowedInviteTypes = map[string]bool{
-	"MANAGER_INVITE":          true,
-	"DRIVER_INVITE":           true,
-	"CUSTOMER_INVITE":         true,
+	"MANAGER_INVITE":            true,
+	"DRIVER_INVITE":             true,
+	"CUSTOMER_INVITE":           true,
 	"NURSERY_ONBOARDING_INVITE": true,
-	"TRIP_SHARE_INVITE":       true,
+	"TRIP_SHARE_INVITE":         true,
 }
 
 // inviteTypeAllowedRoles maps each invite type to the roles that may create it.
@@ -147,6 +155,7 @@ func (s *Service) Accept(ctx context.Context, actor ActorContext, uuid string) (
 		_ = s.repository.GrantNurseryOwnerRole(ctx, actor.UserID)
 	}
 
+	s.invalidateWorkspaces(ctx, actor.UserID, invite.InvitedByUserID)
 	s.audit(ctx, actor, invite.ID, actionUpdate, map[string]any{"status": "ACCEPTED"})
 	return *invite, nil
 }
@@ -184,6 +193,10 @@ func (s *Service) ListByNursery(ctx context.Context, actor ActorContext, nursery
 
 func (s *Service) ListMyConnections(ctx context.Context, actor ActorContext) ([]Invite, error) {
 	return s.repository.ListAcceptedByUser(ctx, actor.UserID)
+}
+
+func (s *Service) invalidateWorkspaces(ctx context.Context, userIDs ...int64) {
+	redisutil.InvalidateWorkspaces(ctx, s.redis, slog.Default(), userIDs...)
 }
 
 func hasRole(actor ActorContext, role string) bool {

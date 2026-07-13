@@ -45,6 +45,7 @@ type Repository interface {
 	DisconnectDriver(ctx context.Context, nurseryID int64, driverUserID int64, actorID int64) error
 	FindActiveManagerNursery(ctx context.Context, userID int64) (int64, error)
 	CancelPendingInvitesForUser(ctx context.Context, nurseryID int64, userID int64) error
+	WorkspaceUserIDs(ctx context.Context, nurseryID int64) ([]int64, error)
 }
 
 type PostgresRepository struct {
@@ -800,6 +801,41 @@ func (r *PostgresRepository) ListByUserID(ctx context.Context, userID int64) ([]
 		nurseries = append(nurseries, nursery)
 	}
 	return nurseries, rows.Err()
+}
+
+func (r *PostgresRepository) WorkspaceUserIDs(ctx context.Context, nurseryID int64) ([]int64, error) {
+	const query = `
+		SELECT DISTINCT user_id
+		FROM (
+			SELECT owner_user_id AS user_id
+			FROM public.nurseries
+			WHERE nursery_id = $1 AND owner_user_id IS NOT NULL
+			UNION ALL
+			SELECT user_id
+			FROM public.nursery_users
+			WHERE nursery_id = $1 AND COALESCE(is_active, true) = true
+			UNION ALL
+			SELECT driver_user_id AS user_id
+			FROM public.nursery_drivers
+			WHERE nursery_id = $1 AND connection_status IN ('APPROVED', 'CONNECTED', 'ACTIVE')
+		) users
+		WHERE user_id IS NOT NULL
+	`
+	rows, err := r.db.QueryContext(ctx, query, nurseryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	userIDs := make([]int64, 0)
+	for rows.Next() {
+		var userID int64
+		if err := rows.Scan(&userID); err != nil {
+			return nil, err
+		}
+		userIDs = append(userIDs, userID)
+	}
+	return userIDs, rows.Err()
 }
 
 // GetCustomers returns all buyers who have accepted a CUSTOMER_INVITE for this nursery.

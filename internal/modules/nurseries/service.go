@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -31,14 +34,19 @@ type Service struct {
 	repository Repository
 	trialSvc   TrialCreator // may be nil
 	auditSvc   *auditlog.Service
+	redis      redis.Cmdable
 }
 
-func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
-	return &Service{repository: repository, auditSvc: auditSvc}
+func NewService(repository Repository, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
+	return NewServiceWithTrial(repository, nil, auditSvc, redisClients...)
 }
 
-func NewServiceWithTrial(repository Repository, trialSvc TrialCreator, auditSvc *auditlog.Service) *Service {
-	return &Service{repository: repository, trialSvc: trialSvc, auditSvc: auditSvc}
+func NewServiceWithTrial(repository Repository, trialSvc TrialCreator, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
+	var rdb redis.Cmdable
+	if len(redisClients) > 0 {
+		rdb = redisClients[0]
+	}
+	return &Service{repository: repository, trialSvc: trialSvc, auditSvc: auditSvc, redis: rdb}
 }
 
 func (s *Service) List(ctx context.Context, input ListNurseriesRequest) ([]Nursery, Pagination, error) {
@@ -92,6 +100,7 @@ func (s *Service) AddManager(ctx context.Context, actor ActorContext, nurseryID 
 		return UserLink{}, err
 	}
 	s.audit(ctx, actor, auditlog.EntityNurseryUser, manager.ID, auditlog.ActionCreate, "Manager added", nil, input)
+	s.invalidateWorkspaceUsers(ctx, actor.UserID, input.UserID)
 	return *manager, nil
 }
 
@@ -106,6 +115,7 @@ func (s *Service) ConnectDriver(ctx context.Context, actor ActorContext, nursery
 	if err != nil {
 		return NurseryDriver{}, err
 	}
+	s.invalidateWorkspaceUsers(ctx, actor.UserID, driverUserID)
 	return *nd, nil
 }
 
@@ -115,7 +125,11 @@ func (s *Service) ApproveDriverConnection(ctx context.Context, actor ActorContex
 	if !isOwner && !hasRole(actor, "ADMIN") {
 		return ErrNotNurseryOwner
 	}
-	return s.repository.ApproveDriverConnection(ctx, nurseryID, driverUserID, actor.UserID)
+	if err := s.repository.ApproveDriverConnection(ctx, nurseryID, driverUserID, actor.UserID); err != nil {
+		return err
+	}
+	s.invalidateWorkspaceUsers(ctx, actor.UserID, driverUserID)
+	return nil
 }
 
 // ListConnectedDrivers returns all drivers connected to a nursery. Owner or admin only.
@@ -176,6 +190,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateNu
 	}
 	s.audit(ctx, actor, auditlog.EntityNursery, nursery.ID, auditlog.ActionCreate,
 		fmt.Sprintf("Nursery %q registered", nursery.Name), nil, input)
+	s.invalidateWorkspaceUsers(ctx, actor.UserID)
 	return *nursery, nil
 }
 
@@ -197,6 +212,7 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, nurseryID int6
 	}
 	s.audit(ctx, actor, auditlog.EntityNursery, nursery.ID, auditlog.ActionUpdate,
 		fmt.Sprintf("Nursery %q updated", nursery.Name), old, input)
+	s.invalidateNurseryWorkspaceUsers(ctx, nurseryID, actor.UserID)
 	return *nursery, nil
 }
 
@@ -232,6 +248,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, nurseryI
 		_ = s.repository.GrantOwnerRole(ctx, *nursery.OwnerUserID, actor.UserID)
 	}
 
+	s.invalidateNurseryWorkspaceUsers(ctx, nurseryID, actor.UserID)
 	return *nursery, nil
 }
 
@@ -249,6 +266,7 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, nurseryID int6
 	}
 	s.audit(ctx, actor, auditlog.EntityNursery, nurseryID, auditlog.ActionDelete,
 		fmt.Sprintf("Nursery %q deleted", name), old, map[string]any{"status": "DELETED"})
+	s.invalidateNurseryWorkspaceUsers(ctx, nurseryID, actor.UserID)
 	return nil
 }
 
@@ -278,6 +296,7 @@ func (s *Service) CreateAddress(ctx context.Context, actor ActorContext, nursery
 		return Address{}, err
 	}
 	s.audit(ctx, actor, auditlog.EntityNurseryAddr, address.ID, auditlog.ActionCreate, "Nursery address added", nil, input)
+	s.invalidateNurseryWorkspaceUsers(ctx, nurseryID, actor.UserID)
 	return *address, nil
 }
 
@@ -294,6 +313,7 @@ func (s *Service) UpdateAddress(ctx context.Context, actor ActorContext, address
 		return Address{}, err
 	}
 	s.audit(ctx, actor, auditlog.EntityNurseryAddr, address.ID, auditlog.ActionUpdate, "Nursery address updated", nil, input)
+	s.invalidateWorkspaceUsers(ctx, actor.UserID)
 	return *address, nil
 }
 
@@ -305,6 +325,7 @@ func (s *Service) DeleteAddress(ctx context.Context, actor ActorContext, address
 		return err
 	}
 	s.audit(ctx, actor, auditlog.EntityNurseryAddr, addressID, auditlog.ActionDelete, "Nursery address removed", nil, map[string]any{"deleted": true})
+	s.invalidateWorkspaceUsers(ctx, actor.UserID)
 	return nil
 }
 
@@ -333,6 +354,7 @@ func (s *Service) AddUser(ctx context.Context, actor ActorContext, nurseryID int
 		return UserLink{}, err
 	}
 	s.audit(ctx, actor, auditlog.EntityNurseryUser, user.ID, auditlog.ActionCreate, "Nursery user added", nil, input)
+	s.invalidateWorkspaceUsers(ctx, actor.UserID, input.UserID)
 	return *user, nil
 }
 
@@ -378,6 +400,7 @@ func (s *Service) RemoveUser(ctx context.Context, actor ActorContext, nurseryID 
 	s.audit(ctx, actor, auditlog.EntityNurseryUser, userID, auditlog.ActionDelete,
 		fmt.Sprintf("Nursery user %d removed from nursery %d", userID, nurseryID),
 		nil, map[string]any{"nursery_id": nurseryID, "user_id": userID, "self": isSelf})
+	s.invalidateWorkspaceUsers(ctx, actor.UserID, userID)
 	return nil
 }
 
@@ -411,7 +434,23 @@ func (s *Service) DisconnectDriver(ctx context.Context, actor ActorContext, nurs
 	s.audit(ctx, actor, auditlog.EntityNurseryUser, driverUserID, auditlog.ActionDelete,
 		fmt.Sprintf("Driver %d disconnected from nursery %d", driverUserID, nurseryID),
 		nil, map[string]any{"nursery_id": nurseryID, "driver_user_id": driverUserID})
+	s.invalidateWorkspaceUsers(ctx, actor.UserID, driverUserID)
 	return nil
+}
+
+func (s *Service) invalidateNurseryWorkspaceUsers(ctx context.Context, nurseryID int64, fallbackUserIDs ...int64) {
+	userIDs, err := s.repository.WorkspaceUserIDs(ctx, nurseryID)
+	if err != nil {
+		slog.Warn("workspace invalidation user lookup failed", "nursery_id", nurseryID, "error", err)
+		userIDs = fallbackUserIDs
+	} else {
+		userIDs = append(userIDs, fallbackUserIDs...)
+	}
+	s.invalidateWorkspaceUsers(ctx, userIDs...)
+}
+
+func (s *Service) invalidateWorkspaceUsers(ctx context.Context, userIDs ...int64) {
+	redisutil.InvalidateWorkspaces(ctx, s.redis, slog.Default(), userIDs...)
 }
 
 func (s *Service) audit(ctx context.Context, actor ActorContext, entityType string, entityID int64, action auditlog.Action, description string, oldValue, newValue any) {

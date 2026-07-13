@@ -3,17 +3,29 @@ package admin
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/revocation"
+	"github.com/redis/go-redis/v9"
 )
 
 var ErrForbidden = errors.New("forbidden")
 
-type Service struct{ repository Repository }
+type Service struct {
+	repository Repository
+	redis      redis.Cmdable
+}
 
-func NewService(r Repository) *Service { return &Service{repository: r} }
+func NewService(r Repository, redisClients ...redis.Cmdable) *Service {
+	var rdb redis.Cmdable
+	if len(redisClients) > 0 {
+		rdb = redisClients[0]
+	}
+	return &Service{repository: r, redis: rdb}
+}
 func (s *Service) Dashboard(ctx context.Context, a ActorContext) (Summary, error) {
 	if !hasRole(a, "ADMIN") && !hasRole(a, "SUPER_ADMIN") {
 		return Summary{}, ErrForbidden
@@ -58,6 +70,7 @@ func (s *Service) UpdateUserStatus(ctx context.Context, a ActorContext, userID i
 	case "ACTIVE":
 		revocation.Remove(userID) // lift revocation immediately on reinstatement
 	}
+	redisutil.InvalidateWorkspaces(ctx, s.redis, slog.Default(), userID)
 	return nil
 }
 
@@ -69,7 +82,16 @@ func (s *Service) UpdateNurseryStatus(ctx context.Context, a ActorContext, nurse
 	if status != "ACTIVE" && status != "SUSPENDED" {
 		return errors.New("invalid status: use ACTIVE or SUSPENDED")
 	}
-	return s.repository.UpdateNurseryStatus(ctx, nurseryID, status)
+	if err := s.repository.UpdateNurseryStatus(ctx, nurseryID, status); err != nil {
+		return err
+	}
+	userIDs, err := s.repository.WorkspaceUserIDs(ctx, nurseryID)
+	if err != nil {
+		slog.Warn("workspace invalidation user lookup failed", "nursery_id", nurseryID, "error", err)
+		return nil
+	}
+	redisutil.InvalidateWorkspaces(ctx, s.redis, slog.Default(), userIDs...)
+	return nil
 }
 
 func hasRole(a ActorContext, role string) bool {

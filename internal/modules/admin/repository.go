@@ -12,6 +12,7 @@ type Repository interface {
 	ListUsers(context.Context, ListUsersRequest) ([]User, int64, error)
 	UpdateUserStatus(ctx context.Context, userID int64, status string) error
 	UpdateNurseryStatus(ctx context.Context, nurseryID int64, status string) error
+	WorkspaceUserIDs(ctx context.Context, nurseryID int64) ([]int64, error)
 }
 type PostgresRepository struct{ db *sql.DB }
 
@@ -191,6 +192,39 @@ func (r *PostgresRepository) UpdateNurseryStatus(ctx context.Context, nurseryID 
 		nurseryID, status,
 	)
 	return err
+}
+
+func (r *PostgresRepository) WorkspaceUserIDs(ctx context.Context, nurseryID int64) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT DISTINCT user_id
+		FROM (
+			SELECT owner_user_id AS user_id
+			FROM public.nurseries
+			WHERE nursery_id = $1 AND owner_user_id IS NOT NULL
+			UNION ALL
+			SELECT user_id
+			FROM public.nursery_users
+			WHERE nursery_id = $1 AND COALESCE(is_active, true) = true
+			UNION ALL
+			SELECT driver_user_id AS user_id
+			FROM public.nursery_drivers
+			WHERE nursery_id = $1 AND connection_status IN ('APPROVED', 'CONNECTED', 'ACTIVE')
+		) users
+		WHERE user_id IS NOT NULL
+	`, nurseryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	userIDs := make([]int64, 0)
+	for rows.Next() {
+		var userID int64
+		if err := rows.Scan(&userID); err != nil {
+			return nil, err
+		}
+		userIDs = append(userIDs, userID)
+	}
+	return userIDs, rows.Err()
 }
 
 func splitCSV(value sql.NullString) []string {

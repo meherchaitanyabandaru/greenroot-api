@@ -303,6 +303,22 @@ func (m *mockRepo) CancelPendingInvitesForUser(_ context.Context, _ int64, _ int
 	return nil
 }
 
+func (m *mockRepo) WorkspaceUserIDs(_ context.Context, nurseryID int64) ([]int64, error) {
+	userIDs := make([]int64, 0)
+	for ownerUserID, ownerNurseryID := range m.owners {
+		if ownerNurseryID == nurseryID {
+			userIDs = append(userIDs, ownerUserID)
+		}
+	}
+	for _, user := range m.users[nurseryID] {
+		userIDs = append(userIDs, user.UserID)
+	}
+	for _, driver := range m.nDrivers[nurseryID] {
+		userIDs = append(userIDs, driver.DriverUserID)
+	}
+	return userIDs, nil
+}
+
 // wasSessionInvalidated reports whether InvalidateUserSessions was called for userID.
 func (m *mockRepo) wasSessionInvalidated(userID int64) bool {
 	for _, id := range m.invalidatedSessions {

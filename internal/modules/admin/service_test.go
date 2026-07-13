@@ -9,10 +9,10 @@ import (
 // ─── mock repository ─────────────────────────────────────────────────────────
 
 type mockRepo struct {
-	summary       Summary
-	users         []User
-	userStatuses  map[int64]string
-	nursStatuses  map[int64]string
+	summary      Summary
+	users        []User
+	userStatuses map[int64]string
+	nursStatuses map[int64]string
 }
 
 func newMock() *mockRepo {
@@ -40,12 +40,20 @@ func (m *mockRepo) UpdateNurseryStatus(_ context.Context, nurseryID int64, statu
 	return nil
 }
 
+func (m *mockRepo) WorkspaceUserIDs(_ context.Context, nurseryID int64) ([]int64, error) {
+	return []int64{nurseryID + 100}, nil
+}
+
 // ─── actors ──────────────────────────────────────────────────────────────────
 
-func adminActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
-func superActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"SUPER_ADMIN"}} }
-func buyerActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
-func ownerActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}} }
+func adminActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
+func superActor(id int64) ActorContext {
+	return ActorContext{UserID: id, Roles: []string{"SUPER_ADMIN"}}
+}
+func buyerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
+func ownerActor(id int64) ActorContext {
+	return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}}
+}
 
 func svc(repo *mockRepo) *Service { return NewService(repo) }
 
