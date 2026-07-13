@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -21,10 +23,15 @@ var (
 type Service struct {
 	repository Repository
 	auditSvc   *auditlog.Service
+	redis      redis.Cmdable
 }
 
-func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
-	return &Service{repository: repository, auditSvc: auditSvc}
+func NewService(repository Repository, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
+	var rdb redis.Cmdable
+	if len(redisClients) > 0 {
+		rdb = redisClients[0]
+	}
+	return &Service{repository: repository, auditSvc: auditSvc, redis: rdb}
 }
 
 func (s *Service) ListPlans(ctx context.Context) ([]SubscriptionPlan, error) {
@@ -127,6 +134,12 @@ func (s *Service) Me(ctx context.Context, actor ActorContext) ([]UserSubscriptio
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, subscriptionID int64, input UpdateStatusRequest) (UserSubscription, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "subscriptions", subscriptionID)
+	if err != nil {
+		return UserSubscription{}, err
+	}
+	defer lock.Release(ctx)
+
 	if !hasRole(actor, "ADMIN") {
 		return UserSubscription{}, ErrForbidden
 	}
@@ -143,6 +156,12 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, subscrip
 }
 
 func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID int64, input RenewSubscriptionRequest) (UserSubscription, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "subscriptions", subscriptionID)
+	if err != nil {
+		return UserSubscription{}, err
+	}
+	defer lock.Release(ctx)
+
 	current, err := s.repository.FindByID(ctx, subscriptionID)
 	if err != nil {
 		return UserSubscription{}, err
@@ -186,6 +205,12 @@ func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID 
 }
 
 func (s *Service) Cancel(ctx context.Context, actor ActorContext, subscriptionID int64, input CancelSubscriptionRequest) (UserSubscription, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "subscriptions", subscriptionID)
+	if err != nil {
+		return UserSubscription{}, err
+	}
+	defer lock.Release(ctx)
+
 	current, err := s.repository.FindByID(ctx, subscriptionID)
 	if err != nil {
 		return UserSubscription{}, err

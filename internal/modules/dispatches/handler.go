@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 )
@@ -277,6 +278,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusConflict, "duplicate_dispatch", "dispatch already exists with this dispatch number")
 	case errors.Is(err, ErrAlreadyAccepted):
 		response.Error(w, http.StatusConflict, "dispatch_already_accepted", "this trip has already been accepted by a driver")
+	case errors.Is(err, redisutil.ErrLockBusy):
+		response.Error(w, http.StatusConflict, "resource_locked", "another update is already in progress")
 	default:
 		response.Error(w, http.StatusInternalServerError, "dispatches_error", "dispatch request failed")
 	}

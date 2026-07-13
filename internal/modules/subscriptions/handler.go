@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 )
@@ -357,6 +358,8 @@ func writeSubscriptionsError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid subscription input")
 	case errors.Is(err, ErrConflict):
 		response.Error(w, http.StatusConflict, "active_subscription_exists", "user already has an active subscription")
+	case errors.Is(err, redisutil.ErrLockBusy):
+		response.Error(w, http.StatusConflict, "resource_locked", "another update is already in progress")
 	default:
 		response.Error(w, http.StatusInternalServerError, "subscriptions_error", "subscription request failed")
 	}

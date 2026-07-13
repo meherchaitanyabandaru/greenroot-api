@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 )
@@ -402,6 +403,8 @@ func writeOrdersError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid order input")
 	case errors.Is(err, ErrInvalidStatus):
 		response.Error(w, http.StatusConflict, "invalid_status_transition", "order is not in the correct status for this action")
+	case errors.Is(err, redisutil.ErrLockBusy):
+		response.Error(w, http.StatusConflict, "resource_locked", "another update is already in progress")
 	default:
 		response.Error(w, http.StatusInternalServerError, "orders_error", "order request failed")
 	}

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -21,10 +23,15 @@ var (
 type Service struct {
 	repository Repository
 	auditSvc   *auditlog.Service
+	redis      redis.Cmdable
 }
 
-func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
-	return &Service{repository: repository, auditSvc: auditSvc}
+func NewService(repository Repository, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
+	var rdb redis.Cmdable
+	if len(redisClients) > 0 {
+		rdb = redisClients[0]
+	}
+	return &Service{repository: repository, auditSvc: auditSvc, redis: rdb}
 }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListOrdersRequest) ([]Order, Pagination, error) {
@@ -82,6 +89,12 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateOr
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID int64, input UpdateStatusRequest) (Order, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "orders", orderID)
+	if err != nil {
+		return Order{}, err
+	}
+	defer lock.Release(ctx)
+
 	status := strings.ToUpper(strings.TrimSpace(input.Status))
 	if !isAllowedStatus(status) {
 		return Order{}, ErrInvalidInput
@@ -150,6 +163,12 @@ func (s *Service) UpdateDeliverySnapshot(ctx context.Context, actor ActorContext
 
 // StartLoading marks an order as LOADING (nursery owner or assigned manager only).
 func (s *Service) StartLoading(ctx context.Context, actor ActorContext, orderID int64) (Order, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "orders", orderID)
+	if err != nil {
+		return Order{}, err
+	}
+	defer lock.Release(ctx)
+
 	order, err := s.repository.FindByID(ctx, orderID)
 	if err != nil {
 		return Order{}, err
@@ -174,6 +193,12 @@ func (s *Service) StartLoading(ctx context.Context, actor ActorContext, orderID 
 // CompleteLoading marks an order as LOADED or PARTIALLY_FULFILLED based on
 // whether any item's loaded_quantity is less than its ordered quantity.
 func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, orderID int64) (Order, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "orders", orderID)
+	if err != nil {
+		return Order{}, err
+	}
+	defer lock.Release(ctx)
+
 	order, err := s.repository.FindByID(ctx, orderID)
 	if err != nil {
 		return Order{}, err
@@ -243,6 +268,12 @@ func (s *Service) SetLoadedQuantity(ctx context.Context, actor ActorContext, ord
 
 // Cancel cancels an order.
 func (s *Service) Cancel(ctx context.Context, actor ActorContext, orderID int64, reason string) (Order, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "orders", orderID)
+	if err != nil {
+		return Order{}, err
+	}
+	defer lock.Release(ctx)
+
 	order, err := s.repository.FindByID(ctx, orderID)
 	if err != nil {
 		return Order{}, err

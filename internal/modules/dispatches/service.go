@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -22,10 +24,15 @@ var (
 type Service struct {
 	repository Repository
 	auditSvc   *auditlog.Service
+	redis      redis.Cmdable
 }
 
-func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
-	return &Service{repository: repository, auditSvc: auditSvc}
+func NewService(repository Repository, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
+	var rdb redis.Cmdable
+	if len(redisClients) > 0 {
+		rdb = redisClients[0]
+	}
+	return &Service{repository: repository, auditSvc: auditSvc, redis: rdb}
 }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListDispatchesRequest) ([]Dispatch, Pagination, error) {
@@ -85,6 +92,12 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateDisp
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatchID int64, req UpdateStatusRequest) (Dispatch, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "dispatches", dispatchID)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	defer lock.Release(ctx)
+
 	current, err := s.repository.FindByID(ctx, dispatchID)
 	if err != nil {
 		return Dispatch{}, err
@@ -199,6 +212,12 @@ func (s *Service) GetByCode(ctx context.Context, code string) (Dispatch, error) 
 }
 
 func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispatchID int64) (Dispatch, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "dispatches", dispatchID)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	defer lock.Release(ctx)
+
 	// Only drivers may accept dispatches.
 	if !hasRole(actor, "DRIVER") {
 		return Dispatch{}, ErrForbidden

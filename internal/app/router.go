@@ -18,15 +18,15 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/drivers"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/health"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/inventory"
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/market"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/invites"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/market"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/notifications"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/nurseries"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/orders"
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/quotations"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/payments"
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/plants"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/plantrequests"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/plants"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/quotations"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/ratings"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sourcing"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/storage"
@@ -66,16 +66,16 @@ func NewRouter(deps Dependencies) chi.Router {
 		admin.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		attachments.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		audit.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		dispatches.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
+		dispatches.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis).RegisterRoutes(r)
 		drivers.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		inventory.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		market.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		invites.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		notifications.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
-		subModule := subscriptions.NewModule(deps.DB, deps.JWT, deps.Audit)
+		subModule := subscriptions.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis)
 		nurseries.NewModuleWithTrial(deps.DB, deps.JWT, deps.Audit, subModule.Service()).RegisterRoutes(r)
-		orders.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
-		quotations.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage).RegisterRoutes(r)
+		orders.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis).RegisterRoutes(r)
+		quotations.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, deps.Redis).RegisterRoutes(r)
 		payments.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		plants.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		plantrequests.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)

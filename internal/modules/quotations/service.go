@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -105,10 +107,15 @@ type Service struct {
 	repository Repository
 	auditSvc   *auditlog.Service
 	storage    *storage.Client
+	redis      redis.Cmdable
 }
 
-func NewService(repository Repository, auditSvc *auditlog.Service, storageCli *storage.Client) *Service {
-	return &Service{repository: repository, auditSvc: auditSvc, storage: storageCli}
+func NewService(repository Repository, auditSvc *auditlog.Service, storageCli *storage.Client, redisClients ...redis.Cmdable) *Service {
+	var rdb redis.Cmdable
+	if len(redisClients) > 0 {
+		rdb = redisClients[0]
+	}
+	return &Service{repository: repository, auditSvc: auditSvc, storage: storageCli, redis: rdb}
 }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListQuotationsRequest) ([]Quotation, Pagination, error) {
@@ -359,6 +366,12 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, id int64) erro
 // SendToCustomer makes a CUSTOMER_DRAFT quotation visible to the buyer
 // (status -> CUSTOMER_SENT). Only nursery owner, manager, or admin may do this.
 func (s *Service) SendToCustomer(ctx context.Context, actor ActorContext, quotationID int64) (Quotation, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "quotations", quotationID)
+	if err != nil {
+		return Quotation{}, err
+	}
+	defer lock.Release(ctx)
+
 	q, err := s.repository.FindByID(ctx, quotationID)
 	if err != nil {
 		return Quotation{}, err
@@ -395,6 +408,12 @@ func (s *Service) Approve(ctx context.Context, actor ActorContext, quotationID i
 
 // Recall pulls a CUSTOMER_SENT quotation back to CUSTOMER_DRAFT so it can be edited before re-sending.
 func (s *Service) Recall(ctx context.Context, actor ActorContext, quotationID int64) (Quotation, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "quotations", quotationID)
+	if err != nil {
+		return Quotation{}, err
+	}
+	defer lock.Release(ctx)
+
 	q, err := s.repository.FindByID(ctx, quotationID)
 	if err != nil {
 		return Quotation{}, err
@@ -415,6 +434,12 @@ func (s *Service) Recall(ctx context.Context, actor ActorContext, quotationID in
 
 // ConvertToOrder auto-creates a PENDING order from the quotation's items and marks it CONVERTED.
 func (s *Service) ConvertToOrder(ctx context.Context, actor ActorContext, quotationID int64) (Quotation, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "quotations", quotationID)
+	if err != nil {
+		return Quotation{}, err
+	}
+	defer lock.Release(ctx)
+
 	q, err := s.repository.FindByID(ctx, quotationID)
 	if err != nil {
 		return Quotation{}, err
@@ -443,6 +468,12 @@ func (s *Service) ConvertToOrder(ctx context.Context, actor ActorContext, quotat
 // AssignManager assigns an active nursery member as the responsible manager for a quotation.
 // Only the nursery owner or admin may do this; the target must be an active member of the nursery.
 func (s *Service) AssignManager(ctx context.Context, actor ActorContext, quotationID int64, req AssignManagerRequest) (Quotation, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "quotations", quotationID)
+	if err != nil {
+		return Quotation{}, err
+	}
+	defer lock.Release(ctx)
+
 	q, err := s.repository.FindByID(ctx, quotationID)
 	if err != nil {
 		return Quotation{}, err
@@ -499,6 +530,12 @@ func (s *Service) UnassignManager(ctx context.Context, actor ActorContext, quota
 
 // BuyerAccept lets the buyer accept a quotation that has been sent to them.
 func (s *Service) BuyerAccept(ctx context.Context, actor ActorContext, quotationID int64) (Quotation, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "quotations", quotationID)
+	if err != nil {
+		return Quotation{}, err
+	}
+	defer lock.Release(ctx)
+
 	q, err := s.repository.FindByID(ctx, quotationID)
 	if err != nil {
 		return Quotation{}, err
@@ -525,6 +562,12 @@ func (s *Service) BuyerAccept(ctx context.Context, actor ActorContext, quotation
 
 // BuyerReject lets the buyer reject a quotation that has been sent to them.
 func (s *Service) BuyerReject(ctx context.Context, actor ActorContext, quotationID int64, req AcceptRejectQuotationRequest) (Quotation, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "quotations", quotationID)
+	if err != nil {
+		return Quotation{}, err
+	}
+	defer lock.Release(ctx)
+
 	q, err := s.repository.FindByID(ctx, quotationID)
 	if err != nil {
 		return Quotation{}, err

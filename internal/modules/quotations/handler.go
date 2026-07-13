@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 )
@@ -568,6 +569,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusConflict, "already_converted", "quotation has already been converted to an order")
 	case errors.Is(err, ErrInvalidTransition):
 		response.Error(w, http.StatusConflict, "invalid_transition", "action not allowed in current quotation status")
+	case errors.Is(err, redisutil.ErrLockBusy):
+		response.Error(w, http.StatusConflict, "resource_locked", "another update is already in progress")
 	case errors.Is(err, ErrQuotationExpired):
 		response.Error(w, http.StatusConflict, "quotation_expired", "quotation has expired and can no longer be accepted")
 	case errors.Is(err, ErrCustomerRequired):
