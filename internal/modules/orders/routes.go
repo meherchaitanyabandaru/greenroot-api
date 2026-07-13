@@ -26,6 +26,8 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Put("/{id}/status", m.handler.UpdateStatus)
 		r.Put("/{id}/delivery", m.handler.UpdateDeliverySnapshot)
 		r.Delete("/{id}", m.handler.Delete)
+		// V1 order lifecycle
+		r.Post("/{id}/confirm", m.handler.ConfirmOrder)
 		// V1 loading workflow
 		r.Post("/{id}/start-loading", m.handler.StartLoading)
 		r.Post("/{id}/complete-loading", m.handler.CompleteLoading)

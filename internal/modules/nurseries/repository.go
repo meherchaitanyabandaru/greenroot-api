@@ -546,6 +546,21 @@ func (r *PostgresRepository) AddManager(ctx context.Context, nurseryID int64, in
 	if err := tx.QueryRowContext(ctx, query, nurseryID, input.UserID, roleID, role, invitedByUserID).Scan(&nurseryUserID); err != nil {
 		return nil, err
 	}
+	// Grant MANAGER in user_roles and strip BUYER — managers are never buyers.
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO public.user_roles (user_id, role_id)
+		SELECT $1, role_id FROM public.roles WHERE role_code = 'MANAGER'
+		ON CONFLICT DO NOTHING
+	`, input.UserID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM public.user_roles
+		WHERE user_id = $1
+		  AND role_id = (SELECT role_id FROM public.roles WHERE role_code = 'BUYER')
+	`, input.UserID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}

@@ -331,7 +331,7 @@ func (s *Service) canAccessOrder(ctx context.Context, actor ActorContext, access
 	if hasRole(actor, "ADMIN") {
 		return nil
 	}
-	if hasRole(actor, "NURSERY_OWNER") && access.NurseryID != nil {
+	if (hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER")) && access.NurseryID != nil {
 		member, err := s.repository.IsNurseryMember(ctx, *access.NurseryID, actor.UserID)
 		if err != nil {
 			return err
@@ -339,6 +339,9 @@ func (s *Service) canAccessOrder(ctx context.Context, actor ActorContext, access
 		if member {
 			return nil
 		}
+	}
+	if hasRole(actor, "BUYER") && access.BuyerID != nil && *access.BuyerID == actor.UserID {
+		return nil
 	}
 	return ErrForbidden
 }

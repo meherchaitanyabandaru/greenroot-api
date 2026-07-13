@@ -244,11 +244,18 @@ func (r *PostgresRepository) AddNurseryMember(ctx context.Context, nurseryID int
 	`, nurseryID, userID, role, invitedByUserID); err != nil {
 		return err
 	}
-	// Grant the MANAGER role in user_roles so the JWT includes it and API checks pass.
-	_, err := r.db.ExecContext(ctx, `
+	// Grant MANAGER role and strip BUYER — managers are never buyers.
+	if _, err := r.db.ExecContext(ctx, `
 		INSERT INTO public.user_roles (user_id, role_id)
 		SELECT $1, role_id FROM public.roles WHERE role_code = 'MANAGER'
 		ON CONFLICT DO NOTHING
+	`, userID); err != nil {
+		return err
+	}
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM public.user_roles
+		WHERE user_id = $1
+		  AND role_id = (SELECT role_id FROM public.roles WHERE role_code = 'BUYER')
 	`, userID)
 	return err
 }

@@ -208,12 +208,17 @@ func (r *PostgresRepository) Approve(ctx context.Context, driverUserID int64, ap
 		}
 		return nil, err
 	}
-	// Grant DRIVER role so the JWT includes it and API hasRole checks pass.
+	// Grant DRIVER role and strip BUYER — drivers are never buyers.
 	if userID.Valid {
 		_, _ = r.db.ExecContext(ctx, `
 			INSERT INTO public.user_roles (user_id, role_id)
 			SELECT $1, role_id FROM public.roles WHERE role_code = 'DRIVER'
 			ON CONFLICT DO NOTHING
+		`, userID.Int64)
+		_, _ = r.db.ExecContext(ctx, `
+			DELETE FROM public.user_roles
+			WHERE user_id = $1
+			  AND role_id = (SELECT role_id FROM public.roles WHERE role_code = 'BUYER')
 		`, userID.Int64)
 	}
 	return r.FindByID(ctx, driverID)

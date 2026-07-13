@@ -723,7 +723,9 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 		}
 		return nil
 	}
-	// Default: buyer/customer sees only their own.
+	// Default: buyer/customer sees only their own — force buyer scope so
+	// buildWhere matches customer_user_id / recipient_mobile, not created_by_user_id.
+	input.Buying = true
 	input.UserID = actor.UserID
 	return nil
 }

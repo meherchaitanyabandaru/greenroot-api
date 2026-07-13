@@ -212,6 +212,24 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, MessageResponse{Message: "Order item deleted successfully"})
 }
 
+// ConfirmOrder transitions an order from PENDING to CONFIRMED status.
+func (h *Handler) ConfirmOrder(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	orderID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	order, err := h.service.UpdateStatus(r.Context(), actor, orderID, UpdateStatusRequest{Status: "CONFIRMED"})
+	if err != nil {
+		writeOrdersError(w, err)
+		return
+	}
+	response.OK(w, OrderResponse{Order: order})
+}
+
 // StartLoading transitions an order to LOADING status.
 func (h *Handler) StartLoading(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
