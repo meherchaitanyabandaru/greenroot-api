@@ -129,6 +129,10 @@ func (m *mockRepo) SetDriverUser(_ context.Context, dispatchID int64, userID int
 	return d, nil
 }
 
+func (m *mockRepo) CreateNotification(_ context.Context, _ int64, _, _, _ string) error {
+	return nil
+}
+
 func (m *mockRepo) AcknowledgeDeliveryUpdate(_ context.Context, dispatchID int64, _ int64) error {
 	if _, ok := m.dispatches[dispatchID]; !ok {
 		return ErrNotFound

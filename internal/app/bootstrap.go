@@ -82,7 +82,7 @@ func Bootstrap(ctx context.Context) (*App, error) {
 func (a *App) Run(ctx context.Context) error {
 	// Background: expire subscriptions at midnight + clean revocation map every 15 min.
 	go runCronJobs(ctx, a.deps)
-	go market.StartCounterFlusher(ctx, a.deps.DB, a.deps.Redis, a.deps.Logger, time.Minute)
+	go market.StartCounterFlusher(ctx, a.deps.DB, a.deps.Redis, a.deps.Logger, 10*time.Second)
 	go notifications.StartQueueWorker(ctx, a.deps.DB, a.deps.Redis, notifications.MockSender{}, a.deps.Logger)
 	go runRedisExpiryJobs(ctx, a.deps)
 

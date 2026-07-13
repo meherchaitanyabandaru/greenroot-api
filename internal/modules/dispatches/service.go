@@ -264,7 +264,8 @@ func (s *Service) enqueueNotification(ctx context.Context, userID int64, notifTy
 		Title:   title,
 		Message: message,
 	}); err != nil {
-		slog.Warn("notification queue enqueue failed", "type", notifType, "user_id", userID, "error", err)
+		slog.Warn("notification queue enqueue failed; falling back to direct notification", "type", notifType, "user_id", userID, "error", err)
+		_ = s.repository.CreateNotification(ctx, userID, notifType, title, message)
 	}
 }
 

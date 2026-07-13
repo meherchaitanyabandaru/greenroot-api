@@ -13,6 +13,7 @@ func runRedisExpiryJobs(ctx context.Context, deps Dependencies) {
 	if deps.Redis == nil {
 		return
 	}
+	backfillRedisExpirySets(ctx, deps)
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 
@@ -25,6 +26,89 @@ func runRedisExpiryJobs(ctx context.Context, deps Dependencies) {
 			processRedisExpiries(ctx, deps)
 		}
 	}
+}
+
+func backfillRedisExpirySets(ctx context.Context, deps Dependencies) {
+	backfillCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := backfillQuotationExpiries(backfillCtx, deps); err != nil {
+		deps.Logger.Warn("redis quotation expiry backfill failed", "error", err)
+	}
+	if err := backfillSubscriptionExpiries(backfillCtx, deps); err != nil {
+		deps.Logger.Warn("redis subscription expiry backfill failed", "error", err)
+	}
+}
+
+func backfillQuotationExpiries(ctx context.Context, deps Dependencies) error {
+	rows, err := deps.DB.QueryContext(ctx,
+		`SELECT quotation_id, EXTRACT(EPOCH FROM valid_until)::bigint
+		 FROM public.quotations
+		 WHERE valid_until IS NOT NULL
+		   AND deleted_at IS NULL
+		   AND converted_order_id IS NULL
+		   AND status IN ('INTERNAL_DRAFT', 'CUSTOMER_DRAFT', 'CUSTOMER_SENT')`,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var z []redis.Z
+	for rows.Next() {
+		var id int64
+		var expiresAt int64
+		if err := rows.Scan(&id, &expiresAt); err != nil {
+			return err
+		}
+		z = append(z, redis.Z{Score: float64(expiresAt), Member: strconv.FormatInt(id, 10)})
+		if len(z) >= 500 {
+			if err := deps.Redis.ZAdd(ctx, redisutil.KeyQuotationExpiry, z...).Err(); err != nil {
+				return err
+			}
+			z = z[:0]
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(z) > 0 {
+		return deps.Redis.ZAdd(ctx, redisutil.KeyQuotationExpiry, z...).Err()
+	}
+	return nil
+}
+
+func backfillSubscriptionExpiries(ctx context.Context, deps Dependencies) error {
+	rows, err := deps.DB.QueryContext(ctx,
+		`SELECT user_subscription_id, EXTRACT(EPOCH FROM end_date)::bigint
+		 FROM public.user_subscriptions
+		 WHERE end_date IS NOT NULL
+		   AND subscription_status IN ('ACTIVE', 'TRIAL')`,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var z []redis.Z
+	for rows.Next() {
+		var id int64
+		var expiresAt int64
+		if err := rows.Scan(&id, &expiresAt); err != nil {
+			return err
+		}
+		z = append(z, redis.Z{Score: float64(expiresAt), Member: strconv.FormatInt(id, 10)})
+		if len(z) >= 500 {
+			if err := deps.Redis.ZAdd(ctx, redisutil.KeySubscriptionExpiry, z...).Err(); err != nil {
+				return err
+			}
+			z = z[:0]
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(z) > 0 {
+		return deps.Redis.ZAdd(ctx, redisutil.KeySubscriptionExpiry, z...).Err()
+	}
+	return nil
 }
 
 func processRedisExpiries(ctx context.Context, deps Dependencies) {

@@ -87,11 +87,13 @@ func (s *Service) GetAd(ctx context.Context, actor ActorContext, id int64) (Ad, 
 	}
 	if !isOwner && nurseryID > 0 {
 		if err := s.repo.RecordView(ctx, id, nurseryID); err == nil {
-			s.incrementAdCounter(ctx, redisutil.KeyAdViews+strconv.FormatInt(id, 10), 1)
-			ad.ViewCount++
+			s.incrementAdCounter(ctx, redisutil.KeyAdViews+strconv.FormatInt(id, 10), 1, func() {
+				_ = s.repo.FlushAdCounters(ctx, map[int64]int64{id: 1}, nil)
+			})
 		}
 		ad.IsSavedByMe, _ = s.repo.IsSaved(ctx, id, nurseryID)
 	}
+	s.applyAdCounterDeltas(ctx, []Ad{ad}, func(updated Ad) { ad = updated })
 	return ad, nil
 }
 
@@ -115,6 +117,14 @@ func (s *Service) BrowseAds(ctx context.Context, actor ActorContext, q AdsQuery)
 			ads[i].IsSavedByMe, _ = s.repo.IsSaved(ctx, ads[i].ID, nurseryID)
 		}
 	}
+	s.applyAdCounterDeltas(ctx, ads, func(updated Ad) {
+		for i := range ads {
+			if ads[i].ID == updated.ID {
+				ads[i] = updated
+				break
+			}
+		}
+	})
 	return ads, total, nil
 }
 
@@ -132,7 +142,19 @@ func (s *Service) MyAds(ctx context.Context, actor ActorContext, q AdsQuery) ([]
 	if q.PerPage < 1 || q.PerPage > 50 {
 		q.PerPage = 20
 	}
-	return s.repo.ListByNursery(ctx, nurseryID, q)
+	ads, total, err := s.repo.ListByNursery(ctx, nurseryID, q)
+	if err != nil {
+		return nil, 0, err
+	}
+	s.applyAdCounterDeltas(ctx, ads, func(updated Ad) {
+		for i := range ads {
+			if ads[i].ID == updated.ID {
+				ads[i] = updated
+				break
+			}
+		}
+	})
+	return ads, total, nil
 }
 
 func (s *Service) UpdateAd(ctx context.Context, actor ActorContext, id int64, req UpdateAdRequest) (Ad, error) {
@@ -249,12 +271,17 @@ func (s *Service) ToggleSave(ctx context.Context, actor ActorContext, adID int64
 	if !saved {
 		delta = -1
 	}
-	s.incrementAdCounter(ctx, redisutil.KeyAdSaves+strconv.FormatInt(adID, 10), delta)
+	s.incrementAdCounter(ctx, redisutil.KeyAdSaves+strconv.FormatInt(adID, 10), delta, func() {
+		_ = s.repo.FlushAdCounters(ctx, nil, map[int64]int64{adID: delta})
+	})
 	return saved, nil
 }
 
-func (s *Service) incrementAdCounter(ctx context.Context, key string, delta int64) {
+func (s *Service) incrementAdCounter(ctx context.Context, key string, delta int64, fallback func()) {
 	if s.redis == nil {
+		if fallback != nil {
+			fallback()
+		}
 		return
 	}
 	var err error
@@ -265,7 +292,52 @@ func (s *Service) incrementAdCounter(ctx context.Context, key string, delta int6
 	}
 	if err != nil {
 		slog.Warn("redis market ad counter increment failed", "key", key, "delta", delta, "error", err)
+		if fallback != nil {
+			fallback()
+		}
 	}
+}
+
+func (s *Service) applyAdCounterDeltas(ctx context.Context, ads []Ad, replace func(Ad)) {
+	if s.redis == nil || len(ads) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(ads)*2)
+	for _, ad := range ads {
+		keys = append(keys,
+			redisutil.KeyAdViews+strconv.FormatInt(ad.ID, 10),
+			redisutil.KeyAdSaves+strconv.FormatInt(ad.ID, 10),
+		)
+	}
+	values, err := s.redis.MGet(ctx, keys...).Result()
+	if err != nil {
+		slog.Warn("redis market ad counter read failed", "error", err)
+		return
+	}
+	for i, ad := range ads {
+		viewDelta := int64Value(values[i*2])
+		saveDelta := int64Value(values[i*2+1])
+		if viewDelta == 0 && saveDelta == 0 {
+			continue
+		}
+		ad.ViewCount += int(viewDelta)
+		ad.SaveCount += int(saveDelta)
+		if ad.SaveCount < 0 {
+			ad.SaveCount = 0
+		}
+		replace(ad)
+	}
+}
+
+func int64Value(value any) int64 {
+	if value == nil {
+		return 0
+	}
+	parsed, err := strconv.ParseInt(fmt.Sprint(value), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return parsed
 }
 
 func (s *Service) SavedAds(ctx context.Context, actor ActorContext, q AdsQuery) ([]Ad, int, error) {
@@ -289,6 +361,14 @@ func (s *Service) SavedAds(ctx context.Context, actor ActorContext, q AdsQuery) 
 	for i := range ads {
 		ads[i].IsSavedByMe = true
 	}
+	s.applyAdCounterDeltas(ctx, ads, func(updated Ad) {
+		for i := range ads {
+			if ads[i].ID == updated.ID {
+				ads[i] = updated
+				break
+			}
+		}
+	})
 	return ads, total, nil
 }
 

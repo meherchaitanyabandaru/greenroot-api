@@ -32,6 +32,7 @@ type Repository interface {
 	IsDispatchDriver(ctx context.Context, driverID int64, userID int64) (bool, error)
 	GetOwnedNurseryID(ctx context.Context, userID int64) (*int64, error)
 	GetUserNurseryIDs(ctx context.Context, userID int64) ([]int64, error)
+	CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error
 }
 
 type CreateTripEventInput struct {
@@ -457,6 +458,15 @@ func (r *PostgresRepository) ListTripEvents(ctx context.Context, dispatchID int6
 		events = append(events, event)
 	}
 	return events, rows.Err()
+}
+
+func (r *PostgresRepository) CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO public.notifications (user_id, notification_type, title, message, channel, notification_status)
+		 VALUES ($1, $2, $3, $4, 'IN_APP', 'PENDING')`,
+		userID, notifType, title, message,
+	)
+	return err
 }
 
 func baseSelect() string {

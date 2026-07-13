@@ -9,6 +9,8 @@ const (
 	KeyAdViews            = "ad:views:"
 	KeyAdSaves            = "ad:saves:"
 	KeyNotifications      = "notifications"
+	KeyNotificationsDLQ   = "notifications:dead"
+	KeyNotificationRetry  = "notifications:retry:"
 	KeyQuotationExpiry    = "expiry:quotations"
 	KeySubscriptionExpiry = "expiry:subscriptions"
 )

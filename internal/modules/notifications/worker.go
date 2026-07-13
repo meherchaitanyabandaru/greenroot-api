@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,7 +16,12 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const notificationWorkerGroup = "api-notification-workers"
+const (
+	notificationWorkerGroup   = "api-notification-workers"
+	notificationMaxRetries    = 3
+	notificationPendingIdle   = time.Minute
+	notificationReadBatchSize = 10
+)
 
 func StartQueueWorker(ctx context.Context, db *sql.DB, rdb redis.Cmdable, sender Sender, log *slog.Logger) {
 	if db == nil || rdb == nil {
@@ -30,6 +37,7 @@ func StartQueueWorker(ctx context.Context, db *sql.DB, rdb redis.Cmdable, sender
 	if err := rdb.XGroupCreateMkStream(ctx, redisutil.KeyNotifications, notificationWorkerGroup, "0").Err(); err != nil && !isBusyGroup(err) {
 		log.Warn("notification queue group setup failed", "error", err)
 	}
+	consumer := notificationConsumerName()
 
 	for {
 		select {
@@ -38,11 +46,12 @@ func StartQueueWorker(ctx context.Context, db *sql.DB, rdb redis.Cmdable, sender
 		default:
 		}
 
+		processClaimedNotificationEvents(ctx, repo, rdb, sender, log, consumer)
 		streams, err := rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
 			Group:    notificationWorkerGroup,
-			Consumer: "api",
+			Consumer: consumer,
 			Streams:  []string{redisutil.KeyNotifications, ">"},
-			Count:    10,
+			Count:    notificationReadBatchSize,
 			Block:    5 * time.Second,
 		}).Result()
 		if errors.Is(err, redis.Nil) {
@@ -55,17 +64,56 @@ func StartQueueWorker(ctx context.Context, db *sql.DB, rdb redis.Cmdable, sender
 		}
 		for _, stream := range streams {
 			for _, msg := range stream.Messages {
-				if processNotificationEvent(ctx, repo, sender, msg, log) {
-					if err := rdb.XAck(ctx, redisutil.KeyNotifications, notificationWorkerGroup, msg.ID).Err(); err != nil {
-						log.Warn("notification queue ack failed", "message_id", msg.ID, "error", err)
-					}
-					if err := rdb.XDel(ctx, redisutil.KeyNotifications, msg.ID).Err(); err != nil {
-						log.Warn("notification queue delete failed", "message_id", msg.ID, "error", err)
-					}
-				}
+				handleNotificationMessage(ctx, repo, rdb, sender, msg, log)
 			}
 		}
 	}
+}
+
+func processClaimedNotificationEvents(ctx context.Context, repo Repository, rdb redis.Cmdable, sender Sender, log *slog.Logger, consumer string) {
+	messages, _, err := rdb.XAutoClaim(ctx, &redis.XAutoClaimArgs{
+		Stream:   redisutil.KeyNotifications,
+		Group:    notificationWorkerGroup,
+		Consumer: consumer,
+		MinIdle:  notificationPendingIdle,
+		Start:    "0-0",
+		Count:    notificationReadBatchSize,
+	}).Result()
+	if errors.Is(err, redis.Nil) {
+		return
+	}
+	if err != nil {
+		log.Warn("notification queue pending claim failed", "error", err)
+		return
+	}
+	for _, msg := range messages {
+		handleNotificationMessage(ctx, repo, rdb, sender, msg, log)
+	}
+}
+
+func handleNotificationMessage(ctx context.Context, repo Repository, rdb redis.Cmdable, sender Sender, msg redis.XMessage, log *slog.Logger) {
+	if processNotificationEvent(ctx, repo, sender, msg, log) {
+		ackNotification(ctx, rdb, msg.ID, log)
+		return
+	}
+	attempts, err := rdb.Incr(ctx, redisutil.KeyNotificationRetry+msg.ID).Result()
+	if err != nil {
+		log.Warn("notification queue retry count failed", "message_id", msg.ID, "error", err)
+		return
+	}
+	if attempts < notificationMaxRetries {
+		log.Warn("notification queue event will retry", "message_id", msg.ID, "attempts", attempts)
+		return
+	}
+	if err := rdb.XAdd(ctx, &redis.XAddArgs{
+		Stream: redisutil.KeyNotificationsDLQ,
+		Values: deadLetterValues(msg, attempts),
+	}).Err(); err != nil {
+		log.Warn("notification queue dead-letter write failed", "message_id", msg.ID, "error", err)
+		return
+	}
+	log.Warn("notification queue event moved to dead letter", "message_id", msg.ID, "attempts", attempts)
+	ackNotification(ctx, rdb, msg.ID, log)
 }
 
 func processNotificationEvent(ctx context.Context, repo Repository, sender Sender, msg redis.XMessage, log *slog.Logger) bool {
@@ -97,6 +145,36 @@ func processNotificationEvent(ctx context.Context, repo Repository, sender Sende
 		log.Warn("notification queue send failed", "notification_id", created.ID, "error", err)
 	}
 	return true
+}
+
+func deadLetterValues(msg redis.XMessage, attempts int64) map[string]any {
+	values := make(map[string]any, len(msg.Values)+2)
+	for k, v := range msg.Values {
+		values[k] = v
+	}
+	values["original_message_id"] = msg.ID
+	values["attempts"] = attempts
+	return values
+}
+
+func ackNotification(ctx context.Context, rdb redis.Cmdable, messageID string, log *slog.Logger) {
+	if err := rdb.XAck(ctx, redisutil.KeyNotifications, notificationWorkerGroup, messageID).Err(); err != nil {
+		log.Warn("notification queue ack failed", "message_id", messageID, "error", err)
+	}
+	if err := rdb.XDel(ctx, redisutil.KeyNotifications, messageID).Err(); err != nil {
+		log.Warn("notification queue delete failed", "message_id", messageID, "error", err)
+	}
+	if err := rdb.Del(ctx, redisutil.KeyNotificationRetry+messageID).Err(); err != nil {
+		log.Warn("notification queue retry cleanup failed", "message_id", messageID, "error", err)
+	}
+}
+
+func notificationConsumerName() string {
+	host, err := os.Hostname()
+	if err != nil || strings.TrimSpace(host) == "" {
+		host = "api"
+	}
+	return host + "-" + strconv.Itoa(os.Getpid())
 }
 
 func isBusyGroup(err error) bool {
