@@ -271,10 +271,49 @@ Set `REDIS_ADDR` to enable. API degrades gracefully (no-op) when not configured.
 | `REDIS_DB` | `0` | |
 
 Current usage:
-- **OTP rate limiting** — 5 `POST /auth/send-otp` requests per mobile per 10 min
-- **Verify rate limiting** — 10 `POST /auth/verify-otp` requests per IP per 15 min
+- **Distributed locks** — state transitions for orders, dispatches, quotations, and subscription activation
+- **OTP lifecycle** — 5-minute OTP storage and one-time verification
+- **JWT blocklist** — logout/account deletion token invalidation by `jti`
+- **Workspace bootstrap cache** — short-lived `/api/v1/workspaces` cache per user
+- **Subscription plan cache** — one-hour full plan cache
+- **Market counters** — ad views/saves buffered in Redis and flushed to Postgres
+- **Notification queue** — Redis Stream-backed async push notification delivery
+- **Expiry scheduling** — sorted-set scheduling for quotation and subscription expiry
+- **Live driver tracking** — Redis GEO stores only current active-trip driver locations
 
 Middleware: `internal/middleware/ratelimit.go` — `OTPRateLimit`, `VerifyRateLimit`, `RateLimit`.
+
+### Live Driver Tracking: PostGIS vs Redis GEO
+
+PostGIS remains the permanent source of truth. Redis GEO is only a temporary live-location index for active drivers during active trips.
+
+```
+PostGIS
+---------
+Permanent business locations
+Historical locations
+Nearby market queries
+Distance calculations
+
+Redis GEO
+----------
+Current live driver location only
+Temporary
+Fast in-memory lookup
+Automatically cleaned after trip completion
+```
+
+API endpoints:
+- `POST /tracking/live` — updates the current driver live location in Redis GEO. Drivers update their own location; admins can provide `driver_user_id`.
+- `GET /tracking/live/drivers/{driverUserId}` — returns the latest live Redis GEO location when still fresh.
+- `GET /tracking/live/nearby?latitude={lat}&longitude={lon}&radius_km={km}&limit={n}` — returns active live drivers near a coordinate.
+
+Runtime behavior:
+- Driver clients should send live updates every 10-20 seconds during an active trip.
+- The live `last_seen` key uses a short TTL, currently 90 seconds.
+- When a dispatch is `DELIVERED`, `CANCELLED`, or future terminal `EXPIRED`, the service removes that driver's Redis GEO member.
+- If Redis is unavailable, live tracking is skipped and logged; normal dispatch/trip operations continue.
+- Permanent trip events and historical tracking rows continue to be stored in PostgreSQL/PostGIS.
 
 ### New fields on dispatch responses
 

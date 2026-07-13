@@ -14,3 +14,29 @@ type ListResponse struct {
 type PointResponse struct {
 	Tracking *TrackingPoint `json:"tracking"`
 }
+
+type LiveLocationRequest struct {
+	DriverUserID *int64  `json:"driver_user_id,omitempty"`
+	Latitude     float64 `json:"latitude"`
+	Longitude    float64 `json:"longitude"`
+}
+
+type LiveLocationResponse struct {
+	Location *LiveDriverLocation `json:"location"`
+}
+
+type NearbyLiveDriversResponse struct {
+	Drivers []NearbyLiveDriver `json:"drivers"`
+}
+
+type LiveDriverLocation struct {
+	DriverUserID int64   `json:"driver_user_id"`
+	Latitude     float64 `json:"latitude"`
+	Longitude    float64 `json:"longitude"`
+	LastSeen     string  `json:"last_seen"`
+}
+
+type NearbyLiveDriver struct {
+	LiveDriverLocation
+	DistanceKM float64 `json:"distance_km"`
+}

@@ -34,6 +34,71 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	response.JSON(w, 201, PointResponse{Tracking: &p})
 }
+func (h *Handler) UpdateLiveLocation(w http.ResponseWriter, r *http.Request) {
+	a, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	var req LiveLocationRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	loc, err := h.service.UpdateLiveLocation(r.Context(), a, req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	response.OK(w, LiveLocationResponse{Location: loc})
+}
+func (h *Handler) GetLiveDriver(w http.ResponseWriter, r *http.Request) {
+	a, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "driverUserId")
+	if !ok {
+		return
+	}
+	loc, err := h.service.GetLiveDriver(r.Context(), a, id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	response.OK(w, LiveLocationResponse{Location: loc})
+}
+func (h *Handler) NearbyLiveDrivers(w http.ResponseWriter, r *http.Request) {
+	a, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	latitude, ok := queryFloat(w, r, "latitude")
+	if !ok {
+		return
+	}
+	longitude, ok := queryFloat(w, r, "longitude")
+	if !ok {
+		return
+	}
+	radiusKM, ok := queryFloat(w, r, "radius_km")
+	if !ok {
+		return
+	}
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			response.Error(w, 400, "invalid_limit", "invalid limit")
+			return
+		}
+		limit = parsed
+	}
+	drivers, err := h.service.NearbyLiveDrivers(r.Context(), a, latitude, longitude, radiusKM, limit)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	response.OK(w, NearbyLiveDriversResponse{Drivers: drivers})
+}
 func (h *Handler) ListDispatch(w http.ResponseWriter, r *http.Request) {
 	h.list(w, r, "dispatch_id", "dispatchId")
 }
@@ -106,6 +171,14 @@ func pathID(w http.ResponseWriter, r *http.Request, k string) (int64, bool) {
 		return 0, false
 	}
 	return id, true
+}
+func queryFloat(w http.ResponseWriter, r *http.Request, k string) (float64, bool) {
+	value, err := strconv.ParseFloat(r.URL.Query().Get(k), 64)
+	if err != nil {
+		response.Error(w, 400, "invalid_"+k, "invalid "+k)
+		return 0, false
+	}
+	return value, true
 }
 func writeErr(w http.ResponseWriter, err error) {
 	switch {

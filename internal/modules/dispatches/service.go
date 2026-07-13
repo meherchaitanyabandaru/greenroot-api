@@ -11,6 +11,7 @@ import (
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisgeo"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/redis/go-redis/v9"
 )
@@ -27,6 +28,7 @@ type Service struct {
 	repository Repository
 	auditSvc   *auditlog.Service
 	redis      redis.Cmdable
+	liveGeo    *redisgeo.Service
 }
 
 func NewService(repository Repository, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
@@ -34,7 +36,11 @@ func NewService(repository Repository, auditSvc *auditlog.Service, redisClients 
 	if len(redisClients) > 0 {
 		rdb = redisClients[0]
 	}
-	return &Service{repository: repository, auditSvc: auditSvc, redis: rdb}
+	var liveGeo *redisgeo.Service
+	if rdb != nil {
+		liveGeo = redisgeo.New(rdb)
+	}
+	return &Service{repository: repository, auditSvc: auditSvc, redis: rdb, liveGeo: liveGeo}
 }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListDispatchesRequest) ([]Dispatch, Pagination, error) {
@@ -130,6 +136,9 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 			notifyqueue.EventOrderDispatched,
 			"Order Dispatched",
 			fmt.Sprintf("Your order dispatch %s is on the way.", dispatch.DispatchCode))
+	}
+	if isTerminalLiveTrackingStatus(status) {
+		s.removeLiveDriverLocation(ctx, *dispatch)
 	}
 	s.audit(ctx, actor, "dispatches", dispatch.ID, actionUpdate, req)
 	return *dispatch, nil
@@ -475,6 +484,33 @@ func isAllowedStatus(status string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func isTerminalLiveTrackingStatus(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "DELIVERED", "CANCELLED", "EXPIRED":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) removeLiveDriverLocation(ctx context.Context, dispatch Dispatch) {
+	if s.liveGeo == nil {
+		return
+	}
+	driverID := int64(0)
+	if dispatch.DriverUserID != nil && *dispatch.DriverUserID > 0 {
+		driverID = *dispatch.DriverUserID
+	} else if dispatch.DriverID != nil && *dispatch.DriverID > 0 {
+		driverID = *dispatch.DriverID
+	}
+	if driverID <= 0 {
+		return
+	}
+	if err := s.liveGeo.RemoveDriver(ctx, driverID); err != nil {
+		slog.Warn("redis geo live driver cleanup skipped", "dispatch_id", dispatch.ID, "driver_id", driverID, "error", err)
 	}
 }
 

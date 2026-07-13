@@ -5,6 +5,10 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisgeo"
+	"github.com/redis/go-redis/v9"
 )
 
 // ── mock repository ───────────────────────────────────────────────────────────
@@ -327,6 +331,39 @@ func TestUpdateStatus_InTransitToDelivered(t *testing.T) {
 	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "DELIVERED"})
 	if err != nil {
 		t.Errorf("IN_TRANSIT→DELIVERED: %v", err)
+	}
+}
+
+func TestUpdateStatus_DeliveredRemovesLiveDriverLocation(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer func() {
+		_ = client.Close()
+		mr.Close()
+	}()
+
+	repo := newMock()
+	repo.seedNursery(1, 100)
+	nid := int64(1)
+	driverUserID := int64(400)
+	repo.seedDispatch(Dispatch{ID: 10, Status: "IN_TRANSIT", SellerNurseryID: &nid, DriverUserID: &driverUserID})
+
+	liveGeo := redisgeo.New(client)
+	if _, err := liveGeo.UpsertDriver(context.Background(), driverUserID, 17.385, 78.4867); err != nil {
+		t.Fatalf("seed live driver location: %v", err)
+	}
+
+	_, err := NewService(repo, nil, client).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "DELIVERED"})
+	if err != nil {
+		t.Fatalf("deliver dispatch: %v", err)
+	}
+
+	loc, err := liveGeo.GetDriver(context.Background(), driverUserID)
+	if err != nil {
+		t.Fatalf("get live driver after delivery: %v", err)
+	}
+	if loc != nil {
+		t.Fatalf("expected live location removed after delivery, got %#v", loc)
 	}
 }
 
