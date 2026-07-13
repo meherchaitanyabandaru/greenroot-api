@@ -5,13 +5,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
+	"github.com/redis/go-redis/v9"
 )
 
 type Module struct{ handler *Handler }
 
-func NewModule(db *sql.DB, jwt *jwtplatform.Service) Module {
+func NewModule(db *sql.DB, jwt *jwtplatform.Service, rdb *redis.Client) Module {
 	repo := NewRepository(db)
-	svc := NewService(repo)
+	svc := NewService(repo, rdb)
 	return Module{handler: NewHandler(svc, jwt)}
 }
 

@@ -4,8 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -13,9 +18,18 @@ var (
 	ErrInvalidInput = errors.New("invalid input")
 )
 
-type Service struct{ repo Repository }
+type Service struct {
+	repo  Repository
+	redis redis.Cmdable
+}
 
-func NewService(repo Repository) *Service { return &Service{repo: repo} }
+func NewService(repo Repository, redisClients ...redis.Cmdable) *Service {
+	var rdb redis.Cmdable
+	if len(redisClients) > 0 {
+		rdb = redisClients[0]
+	}
+	return &Service{repo: repo, redis: rdb}
+}
 
 // ── Access guards ─────────────────────────────────────────────
 
@@ -73,7 +87,7 @@ func (s *Service) GetAd(ctx context.Context, actor ActorContext, id int64) (Ad, 
 	}
 	if !isOwner && nurseryID > 0 {
 		if err := s.repo.RecordView(ctx, id, nurseryID); err == nil {
-			_ = s.repo.IncrementViewCount(ctx, id)
+			s.incrementAdCounter(ctx, redisutil.KeyAdViews+strconv.FormatInt(id, 10), 1)
 			ad.ViewCount++
 		}
 		ad.IsSavedByMe, _ = s.repo.IsSaved(ctx, id, nurseryID)
@@ -227,7 +241,31 @@ func (s *Service) ToggleSave(ctx context.Context, actor ActorContext, adID int64
 	if ad.NurseryID == nurseryID {
 		return false, fmt.Errorf("%w: cannot save your own ad", ErrInvalidInput)
 	}
-	return s.repo.ToggleSave(ctx, adID, nurseryID, actor.UserID)
+	saved, err := s.repo.ToggleSave(ctx, adID, nurseryID, actor.UserID)
+	if err != nil {
+		return false, err
+	}
+	delta := int64(1)
+	if !saved {
+		delta = -1
+	}
+	s.incrementAdCounter(ctx, redisutil.KeyAdSaves+strconv.FormatInt(adID, 10), delta)
+	return saved, nil
+}
+
+func (s *Service) incrementAdCounter(ctx context.Context, key string, delta int64) {
+	if s.redis == nil {
+		return
+	}
+	var err error
+	if delta == 1 {
+		err = s.redis.Incr(ctx, key).Err()
+	} else {
+		err = s.redis.IncrBy(ctx, key, delta).Err()
+	}
+	if err != nil {
+		slog.Warn("redis market ad counter increment failed", "key", key, "delta", delta, "error", err)
+	}
 }
 
 func (s *Service) SavedAds(ctx context.Context, actor ActorContext, q AdsQuery) ([]Ad, int, error) {

@@ -12,9 +12,9 @@ import (
 
 type mockRepo struct {
 	ads           map[int64]Ad
-	nurseries     map[int64]bool   // nurseryID → active
-	members       map[string]bool  // "nurseryID:userID" → member
-	userNursery   map[int64]int64  // userID → nurseryID
+	nurseries     map[int64]bool  // nurseryID → active
+	members       map[string]bool // "nurseryID:userID" → member
+	userNursery   map[int64]int64 // userID → nurseryID
 	enquiries     map[int64]Enquiry
 	saves         map[string]bool // "adID:nurseryID" → saved
 	enquiryExists map[string]bool // "adID:nurseryID"
@@ -150,12 +150,28 @@ func (m *mockRepo) SetAdStatus(_ context.Context, id int64, status string, _ *ti
 func (m *mockRepo) SetExpiry(_ context.Context, _ int64, _ time.Time) error { return nil }
 
 func (m *mockRepo) RecordView(_ context.Context, _ int64, _ int64) error { return nil }
-func (m *mockRepo) IncrementViewCount(_ context.Context, _ int64) error  { return nil }
 
 func (m *mockRepo) ToggleSave(_ context.Context, adID, nurseryID, _ int64) (bool, error) {
 	key := mk(adID, nurseryID)
 	m.saves[key] = !m.saves[key]
 	return m.saves[key], nil
+}
+
+func (m *mockRepo) FlushAdCounters(_ context.Context, views map[int64]int64, saves map[int64]int64) error {
+	for adID, delta := range views {
+		ad := m.ads[adID]
+		ad.ViewCount += int(delta)
+		m.ads[adID] = ad
+	}
+	for adID, delta := range saves {
+		ad := m.ads[adID]
+		ad.SaveCount += int(delta)
+		if ad.SaveCount < 0 {
+			ad.SaveCount = 0
+		}
+		m.ads[adID] = ad
+	}
+	return nil
 }
 
 func (m *mockRepo) IsSaved(_ context.Context, adID, nurseryID int64) (bool, error) {
@@ -249,10 +265,12 @@ func (m *mockRepo) HasEnquiry(_ context.Context, adID, nurseryID int64) (bool, e
 
 // ─── actors ──────────────────────────────────────────────────────────────────
 
-func ownerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}} }
+func ownerActor(id int64) ActorContext {
+	return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}}
+}
 func managerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"MANAGER"}} }
-func adminActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
-func buyerActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
+func adminActor(id int64) ActorContext   { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
+func buyerActor(id int64) ActorContext   { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
 
 func svc(repo *mockRepo) *Service { return NewService(repo) }
 

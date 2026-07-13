@@ -32,10 +32,10 @@ type Repository interface {
 
 	// Views & saves
 	RecordView(ctx context.Context, adID, nurseryID int64) error
-	IncrementViewCount(ctx context.Context, adID int64) error
 	ToggleSave(ctx context.Context, adID, nurseryID, userID int64) (bool, error)
 	IsSaved(ctx context.Context, adID, nurseryID int64) (bool, error)
 	ListSaved(ctx context.Context, nurseryID int64, q AdsQuery) ([]Ad, int, error)
+	FlushAdCounters(ctx context.Context, views map[int64]int64, saves map[int64]int64) error
 
 	// Reports
 	CreateReport(ctx context.Context, adID, userID, nurseryID int64, reason string, notes *string) error
@@ -389,15 +389,6 @@ func (r *PostgresRepository) RecordView(ctx context.Context, adID, nurseryID int
 	return err
 }
 
-func (r *PostgresRepository) IncrementViewCount(ctx context.Context, adID int64) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE public.market_ads SET view_count = view_count + 1, updated_at = NOW()
-		 WHERE ad_id = $1`,
-		adID,
-	)
-	return err
-}
-
 func (r *PostgresRepository) ToggleSave(ctx context.Context, adID, nurseryID, userID int64) (bool, error) {
 	already, err := r.IsSaved(ctx, adID, nurseryID)
 	if err != nil {
@@ -410,10 +401,6 @@ func (r *PostgresRepository) ToggleSave(ctx context.Context, adID, nurseryID, us
 		); err != nil {
 			return false, err
 		}
-		_, _ = r.db.ExecContext(ctx,
-			`UPDATE public.market_ads SET save_count = GREATEST(0, save_count - 1) WHERE ad_id = $1`,
-			adID,
-		)
 		return false, nil
 	}
 	if _, err := r.db.ExecContext(ctx,
@@ -422,10 +409,6 @@ func (r *PostgresRepository) ToggleSave(ctx context.Context, adID, nurseryID, us
 	); err != nil {
 		return false, err
 	}
-	_, _ = r.db.ExecContext(ctx,
-		`UPDATE public.market_ads SET save_count = save_count + 1 WHERE ad_id = $1`,
-		adID,
-	)
 	return true, nil
 }
 
@@ -444,6 +427,44 @@ func (r *PostgresRepository) ListSaved(ctx context.Context, nurseryID int64, q A
 		WHERE s.ad_id = ma.ad_id AND s.nursery_id = $1
 	)`
 	return r.listAds(ctx, filter, "", q.Page, q.PerPage, []any{nurseryID})
+}
+
+func (r *PostgresRepository) FlushAdCounters(ctx context.Context, views map[int64]int64, saves map[int64]int64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for adID, delta := range views {
+		if delta == 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE public.market_ads
+			 SET view_count = view_count + $2, updated_at = NOW()
+			 WHERE ad_id = $1`,
+			adID, delta,
+		); err != nil {
+			return err
+		}
+	}
+
+	for adID, delta := range saves {
+		if delta == 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE public.market_ads
+			 SET save_count = GREATEST(0, save_count + $2), updated_at = NOW()
+			 WHERE ad_id = $1`,
+			adID, delta,
+		); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 // ── Reports ───────────────────────────────────────────────────

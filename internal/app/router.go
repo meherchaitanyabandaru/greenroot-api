@@ -69,7 +69,7 @@ func NewRouter(deps Dependencies) chi.Router {
 		dispatches.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis).RegisterRoutes(r)
 		drivers.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis).RegisterRoutes(r)
 		inventory.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
-		market.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
+		market.NewModule(deps.DB, deps.JWT, deps.Redis).RegisterRoutes(r)
 		invites.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis).RegisterRoutes(r)
 		notifications.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		subModule := subscriptions.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis)
