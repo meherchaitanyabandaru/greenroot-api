@@ -259,7 +259,14 @@ func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, b
 	if !ok {
 		return ActorContext{}, false
 	}
-	return ActorContext{UserID: actor.UserID, Roles: actor.Roles, IPAddress: actor.IPAddress, UserAgent: actor.UserAgent}, true
+	return ActorContext{
+		UserID:        actor.UserID,
+		Roles:         actor.Roles,
+		IPAddress:     actor.IPAddress,
+		UserAgent:     actor.UserAgent,
+		TokenJTI:      actor.TokenJTI,
+		TokenExpEpoch: actor.TokenExpEpoch,
+	}, true
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {

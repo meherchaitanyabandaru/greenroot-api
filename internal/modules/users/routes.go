@@ -7,15 +7,16 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 	platformstorage "github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
+	"github.com/redis/go-redis/v9"
 )
 
 type Module struct {
 	handler *Handler
 }
 
-func NewModule(db *sql.DB, jwt *jwtplatform.Service, storage *platformstorage.Client, audit *auditlog.Service) Module {
+func NewModule(db *sql.DB, jwt *jwtplatform.Service, storage *platformstorage.Client, audit *auditlog.Service, rdb *redis.Client) Module {
 	repository := NewRepository(db)
-	service := NewService(repository, storage, audit)
+	service := NewService(repository, storage, audit, rdb)
 	return Module{handler: NewHandler(service, jwt)}
 }
 

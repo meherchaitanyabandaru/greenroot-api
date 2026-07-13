@@ -236,16 +236,36 @@ func (s *Service) RefreshToken(ctx context.Context, req RefreshTokenRequest) (Au
 	}, nil
 }
 
-func (s *Service) Logout(ctx context.Context, token string) error {
-	if token == "" {
+func (s *Service) Logout(ctx context.Context, refreshToken string, accessToken string) error {
+	if refreshToken == "" && accessToken == "" {
 		return ErrInvalidRefreshToken
 	}
 
-	session, err := s.repository.FindActiveSessionByToken(ctx, token)
-	if err != nil {
-		return err
+	if refreshToken != "" {
+		session, err := s.repository.FindActiveSessionByToken(ctx, refreshToken)
+		if err != nil {
+			return err
+		}
+		if err := s.repository.LogoutSession(ctx, session.ID); err != nil {
+			return err
+		}
+		s.blocklistJWT(ctx, refreshToken)
 	}
-	return s.repository.LogoutSession(ctx, session.ID)
+	if accessToken != "" {
+		s.blocklistJWT(ctx, accessToken)
+	}
+	return nil
+}
+
+func (s *Service) blocklistJWT(ctx context.Context, token string) {
+	if strings.TrimSpace(token) == "" {
+		return
+	}
+	claims, err := s.jwt.Verify(token)
+	if err != nil || claims.ExpiresAt == nil {
+		return
+	}
+	redisutil.BlocklistToken(ctx, s.redis, slog.Default(), claims.ID, time.Until(claims.ExpiresAt.Time))
 }
 
 func (s *Service) Me(ctx context.Context, accessToken string) (User, error) {

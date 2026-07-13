@@ -59,7 +59,7 @@ func NewRouter(deps Dependencies) chi.Router {
 	registerDocsRoutes(router)
 
 	router.Route("/api/v1", func(r chi.Router) {
-		r.Use(authctx.EnrichActorMiddleware(deps.JWT))
+		r.Use(authctx.EnrichActorMiddleware(deps.JWT, deps.Redis))
 		r.Use(appmiddleware.AuditContext) // must come after EnrichActorMiddleware
 
 		auth.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis).RegisterRoutes(r)
@@ -85,7 +85,7 @@ func NewRouter(deps Dependencies) chi.Router {
 		subModule.RegisterRoutes(r)
 		tracking.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		vehicles.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
-		users.NewModule(deps.DB, deps.JWT, deps.Storage, deps.Audit).RegisterRoutes(r)
+		users.NewModule(deps.DB, deps.JWT, deps.Storage, deps.Audit, deps.Redis).RegisterRoutes(r)
 	})
 
 	return router

@@ -438,14 +438,14 @@ func TestRefreshToken_AccessTokenRejected(t *testing.T) {
 // ─── Logout ───────────────────────────────────────────────────────────────────
 
 func TestLogout_EmptyToken(t *testing.T) {
-	err := svc(newMock()).Logout(context.Background(), "")
+	err := svc(newMock()).Logout(context.Background(), "", "")
 	if !errors.Is(err, ErrInvalidRefreshToken) {
 		t.Errorf("want ErrInvalidRefreshToken, got %v", err)
 	}
 }
 
 func TestLogout_TokenNotInDB(t *testing.T) {
-	err := svc(newMock()).Logout(context.Background(), "some-unknown-token")
+	err := svc(newMock()).Logout(context.Background(), "some-unknown-token", "")
 	if !errors.Is(err, ErrInvalidRefreshToken) {
 		t.Errorf("want ErrInvalidRefreshToken, got %v", err)
 	}
@@ -467,7 +467,7 @@ func TestLogout_ValidToken_InvalidatesSession(t *testing.T) {
 		repo.linkSession(sid, 1)
 	}
 
-	if err := s.Logout(context.Background(), loginResp.RefreshToken); err != nil {
+	if err := s.Logout(context.Background(), loginResp.RefreshToken, loginResp.AccessToken); err != nil {
 		t.Fatalf("logout failed: %v", err)
 	}
 

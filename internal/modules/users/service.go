@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/revocation"
 	platformstorage "github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -28,17 +31,24 @@ type Service struct {
 	repository Repository
 	storage    *platformstorage.Client
 	auditSvc   *auditlog.Service
+	redis      redis.Cmdable
 }
 
 type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
+	UserID        int64
+	Roles         []string
+	IPAddress     string
+	UserAgent     string
+	TokenJTI      string
+	TokenExpEpoch int64
 }
 
-func NewService(repository Repository, storage *platformstorage.Client, auditSvc *auditlog.Service) *Service {
-	return &Service{repository: repository, storage: storage, auditSvc: auditSvc}
+func NewService(repository Repository, storage *platformstorage.Client, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
+	var rdb redis.Cmdable
+	if len(redisClients) > 0 {
+		rdb = redisClients[0]
+	}
+	return &Service{repository: repository, storage: storage, auditSvc: auditSvc, redis: rdb}
 }
 
 func (s *Service) Me(ctx context.Context, actor ActorContext) (User, error) {
@@ -204,6 +214,7 @@ func (s *Service) DeleteAccount(ctx context.Context, actor ActorContext) error {
 		return err
 	}
 	revocation.Revoke(actor.UserID, 20*time.Minute)
+	s.blocklistActorToken(ctx, actor)
 	s.auditSvc.Log(ctx, auditlog.Entry{
 		UserID:      actor.UserID,
 		Module:      auditlog.ModuleUsers,
@@ -216,6 +227,13 @@ func (s *Service) DeleteAccount(ctx context.Context, actor ActorContext) error {
 		DeviceInfo:  actor.UserAgent,
 	})
 	return nil
+}
+
+func (s *Service) blocklistActorToken(ctx context.Context, actor ActorContext) {
+	if actor.TokenJTI == "" || actor.TokenExpEpoch == 0 {
+		return
+	}
+	redisutil.BlocklistToken(ctx, s.redis, slog.Default(), actor.TokenJTI, time.Until(time.Unix(actor.TokenExpEpoch, 0)))
 }
 
 func (s *Service) recordChange(ctx context.Context, actor ActorContext, table string, recordID int64, action string, activityType string, entity string, entityID int64, data any) {

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/config"
 )
 
@@ -21,11 +22,11 @@ type Claims struct {
 	TokenType string   `json:"token_type"`
 
 	// Rich context — embedded at issue time, zero DB cost on every request.
-	UserStatus      string `json:"user_status,omitempty"`      // ACTIVE | SUSPENDED | DELETED
-	NurseryID       int64  `json:"nursery_id,omitempty"`       // 0 if not nursery-affiliated
-	NurseryStatus   string `json:"nursery_status,omitempty"`   // ACTIVE | SUSPENDED | PENDING_APPROVAL
-	SubTier         string `json:"sub_tier,omitempty"`         // TRIAL | GROWTH | ENTERPRISE | ""
-	SubExpiresEpoch int64  `json:"sub_exp,omitempty"`          // Unix epoch of end_date; 0 = no expiry
+	UserStatus      string `json:"user_status,omitempty"`    // ACTIVE | SUSPENDED | DELETED
+	NurseryID       int64  `json:"nursery_id,omitempty"`     // 0 if not nursery-affiliated
+	NurseryStatus   string `json:"nursery_status,omitempty"` // ACTIVE | SUSPENDED | PENDING_APPROVAL
+	SubTier         string `json:"sub_tier,omitempty"`       // TRIAL | GROWTH | ENTERPRISE | ""
+	SubExpiresEpoch int64  `json:"sub_exp,omitempty"`        // Unix epoch of end_date; 0 = no expiry
 
 	jwt.RegisteredClaims
 }
@@ -110,6 +111,7 @@ func (s *Service) issue(tokenType, userID, sessionID, mobile string, roles []str
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    s.cfg.Issuer,
 			Subject:   userID,
+			ID:        uuid.NewString(),
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		},

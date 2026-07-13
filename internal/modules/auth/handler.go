@@ -123,12 +123,10 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	var req LogoutRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	token := strings.TrimSpace(req.RefreshToken)
-	if token == "" {
-		token = bearerToken(r)
-	}
+	refreshToken := strings.TrimSpace(req.RefreshToken)
+	accessToken := bearerToken(r)
 
-	if err := h.service.Logout(r.Context(), token); err != nil {
+	if err := h.service.Logout(r.Context(), refreshToken, accessToken); err != nil {
 		writeAuthError(w, err)
 		return
 	}

@@ -2,15 +2,18 @@ package authctx
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/revocation"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
+	"github.com/redis/go-redis/v9"
 )
 
 const gracePeriodDays = 7
@@ -39,6 +42,9 @@ type Actor struct {
 	NurseryStatus string // ACTIVE | SUSPENDED | PENDING_APPROVAL
 	SubTier       string // TRIAL | GROWTH | ENTERPRISE | ""
 	SubExpEpoch   int64  // Unix epoch of subscription end_date; 0 = no expiry
+
+	TokenJTI      string
+	TokenExpEpoch int64
 }
 
 // SubLevel returns the subscription enforcement level for this actor.
@@ -133,12 +139,25 @@ func actorFromClaims(c *jwtplatform.Claims, ip, ua string) Actor {
 		NurseryStatus: c.NurseryStatus,
 		SubTier:       c.SubTier,
 		SubExpEpoch:   c.SubExpiresEpoch,
+		TokenJTI:      c.ID,
+		TokenExpEpoch: tokenExpEpoch(c),
 	}
+}
+
+func tokenExpEpoch(c *jwtplatform.Claims) int64 {
+	if c.ExpiresAt == nil {
+		return 0
+	}
+	return c.ExpiresAt.Time.Unix()
 }
 
 // EnrichActorMiddleware validates the JWT, checks revocation, enforces user/nursery
 // status — all from in-memory data. Zero DB queries per request.
-func EnrichActorMiddleware(jwt *jwtplatform.Service) func(http.Handler) http.Handler {
+func EnrichActorMiddleware(jwt *jwtplatform.Service, redisClients ...redis.Cmdable) func(http.Handler) http.Handler {
+	var rdb redis.Cmdable
+	if len(redisClients) > 0 {
+		rdb = redisClients[0]
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := BearerToken(r)
@@ -151,6 +170,11 @@ func EnrichActorMiddleware(jwt *jwtplatform.Service) func(http.Handler) http.Han
 			if err != nil {
 				// Let individual handlers return 401 — public routes pass through.
 				next.ServeHTTP(w, r)
+				return
+			}
+
+			if redisutil.IsBlocklisted(r.Context(), rdb, slog.Default(), claims.ID) {
+				response.Error(w, http.StatusUnauthorized, "token_revoked", "token has been revoked")
 				return
 			}
 
