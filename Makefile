@@ -3,9 +3,11 @@
         test-all
 
 DB_URL ?= postgres:///greenroot?host=/tmp
+DATABASE_URL ?= $(DB_URL)
+REDIS_ADDR ?= 127.0.0.1:6379
 
 run:
-	go run ./cmd/api
+	DATABASE_URL="$(DATABASE_URL)" REDIS_ADDR="$(REDIS_ADDR)" go run ./cmd/api
 
 test:
 	go test ./...

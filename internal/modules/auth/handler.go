@@ -3,6 +3,7 @@ package auth
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"regexp"
@@ -265,6 +266,7 @@ func writeAuthError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrUserNotFound):
 		response.Error(w, http.StatusNotFound, "user_not_found", "user not found")
 	default:
+		slog.Error("auth request failed", "error", err)
 		response.Error(w, http.StatusInternalServerError, "auth_error", "authentication request failed")
 	}
 }
