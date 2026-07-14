@@ -20,6 +20,7 @@ type Repository interface {
 	FindByTrackingUUID(ctx context.Context, uuid string) (*Dispatch, error)
 	HasDuplicate(ctx context.Context, dispatchNumber string) (bool, error)
 	HasActiveForOrder(ctx context.Context, orderID int64) (bool, error)
+	DriverHasActiveTrip(ctx context.Context, userID int64, excludeDispatchID int64) (bool, error)
 	Create(ctx context.Context, actorID int64, input CreateDispatchInput) (*Dispatch, error)
 	UpdateStatus(ctx context.Context, dispatchID int64, input UpdateStatusInput) (*Dispatch, error)
 	AcknowledgeDeliveryUpdate(ctx context.Context, dispatchID int64, driverUserID int64) error
@@ -131,6 +132,21 @@ func (r *PostgresRepository) HasActiveForOrder(ctx context.Context, orderID int6
 	return exists, err
 }
 
+func (r *PostgresRepository) DriverHasActiveTrip(ctx context.Context, userID int64, excludeDispatchID int64) (bool, error) {
+	const query = `
+		SELECT EXISTS (
+			SELECT 1
+			FROM public.dispatches
+			WHERE driver_user_id = $1
+				AND dispatch_id <> $2
+				AND dispatch_status IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
+		)
+	`
+	var exists bool
+	err := r.db.QueryRowContext(ctx, query, userID, excludeDispatchID).Scan(&exists)
+	return exists, err
+}
+
 func (r *PostgresRepository) FindByID(ctx context.Context, dispatchID int64) (*Dispatch, error) {
 	dispatch, err := scanDispatch(r.db.QueryRowContext(ctx, baseSelect()+" WHERE d.dispatch_id = $1", dispatchID))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -163,13 +179,59 @@ func (r *PostgresRepository) SetDriverUser(ctx context.Context, dispatchID int64
 
 	var err error
 	if driverID > 0 {
-		_, err = r.db.ExecContext(ctx,
-			`UPDATE public.dispatches SET driver_user_id = $1, driver_id = $2, dispatch_status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP WHERE dispatch_id = $3`,
+		result, execErr := r.db.ExecContext(ctx,
+			`UPDATE public.dispatches
+			 SET driver_user_id = $1, driver_id = $2, dispatch_status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP
+			 WHERE dispatch_id = $3
+			   AND NOT EXISTS (
+			   	SELECT 1
+			   	FROM public.dispatches active
+			   	WHERE active.driver_user_id = $1
+			   	  AND active.dispatch_id <> $3
+			   	  AND active.dispatch_status IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
+			   )`,
 			userID, driverID, dispatchID)
+		err = execErr
+		if err == nil {
+			if affected, rowsErr := result.RowsAffected(); rowsErr != nil {
+				err = rowsErr
+			} else if affected == 0 {
+				if active, activeErr := r.DriverHasActiveTrip(ctx, userID, dispatchID); activeErr != nil {
+					err = activeErr
+				} else if active {
+					err = ErrActiveDriverTrip
+				} else {
+					err = ErrNotFound
+				}
+			}
+		}
 	} else {
-		_, err = r.db.ExecContext(ctx,
-			`UPDATE public.dispatches SET driver_user_id = $1, dispatch_status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP WHERE dispatch_id = $2`,
+		result, execErr := r.db.ExecContext(ctx,
+			`UPDATE public.dispatches
+			 SET driver_user_id = $1, dispatch_status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP
+			 WHERE dispatch_id = $2
+			   AND NOT EXISTS (
+			   	SELECT 1
+			   	FROM public.dispatches active
+			   	WHERE active.driver_user_id = $1
+			   	  AND active.dispatch_id <> $2
+			   	  AND active.dispatch_status IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
+			   )`,
 			userID, dispatchID)
+		err = execErr
+		if err == nil {
+			if affected, rowsErr := result.RowsAffected(); rowsErr != nil {
+				err = rowsErr
+			} else if affected == 0 {
+				if active, activeErr := r.DriverHasActiveTrip(ctx, userID, dispatchID); activeErr != nil {
+					err = activeErr
+				} else if active {
+					err = ErrActiveDriverTrip
+				} else {
+					err = ErrNotFound
+				}
+			}
+		}
 	}
 	if err != nil {
 		return nil, err

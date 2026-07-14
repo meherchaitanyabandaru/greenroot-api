@@ -107,6 +107,18 @@ func (m *mockRepo) HasActiveForOrder(_ context.Context, orderID int64) (bool, er
 	return false, nil
 }
 
+func (m *mockRepo) DriverHasActiveTrip(_ context.Context, userID int64, excludeDispatchID int64) (bool, error) {
+	for _, d := range m.dispatches {
+		if d.ID == excludeDispatchID || d.DriverUserID == nil || *d.DriverUserID != userID {
+			continue
+		}
+		if isActiveDriverTripStatus(d.Status) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (m *mockRepo) Create(_ context.Context, actorID int64, input CreateDispatchInput) (*Dispatch, error) {
 	m.nextID++
 	d := &Dispatch{
@@ -475,6 +487,33 @@ func TestAcceptDispatch_DriverSuccess(t *testing.T) {
 	d, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10)
 	if err != nil {
 		t.Fatalf("driver accept dispatch: %v", err)
+	}
+	if d.Status != "ACCEPTED" {
+		t.Errorf("status after accept: want ACCEPTED, got %s", d.Status)
+	}
+}
+
+func TestAcceptDispatch_DriverWithActiveTripRejected(t *testing.T) {
+	repo := newMock()
+	nid := int64(1)
+	driverID := int64(400)
+	repo.seedDispatch(Dispatch{ID: 9, Status: "IN_TRANSIT", SellerNurseryID: &nid, DriverUserID: &driverID})
+	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
+	_, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10)
+	if !errors.Is(err, ErrActiveDriverTrip) {
+		t.Errorf("driver with active trip accept: want ErrActiveDriverTrip, got %v", err)
+	}
+}
+
+func TestAcceptDispatch_DriverWithTerminalTripCanAccept(t *testing.T) {
+	repo := newMock()
+	nid := int64(1)
+	driverID := int64(400)
+	repo.seedDispatch(Dispatch{ID: 9, Status: "DELIVERED", SellerNurseryID: &nid, DriverUserID: &driverID})
+	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
+	d, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10)
+	if err != nil {
+		t.Fatalf("driver with terminal trip should accept: %v", err)
 	}
 	if d.Status != "ACCEPTED" {
 		t.Errorf("status after accept: want ACCEPTED, got %s", d.Status)

@@ -280,6 +280,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusConflict, "active_dispatch_exists", "this order already has an active dispatch")
 	case errors.Is(err, ErrAlreadyAccepted):
 		response.Error(w, http.StatusConflict, "dispatch_already_accepted", "this trip has already been accepted by a driver")
+	case errors.Is(err, ErrActiveDriverTrip):
+		response.Error(w, http.StatusConflict, "active_driver_trip_exists", "driver already has an active trip")
 	case errors.Is(err, redisutil.ErrLockBusy):
 		response.Error(w, http.StatusConflict, "resource_locked", "another update is already in progress")
 	default:

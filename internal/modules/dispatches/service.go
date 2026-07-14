@@ -17,12 +17,13 @@ import (
 )
 
 var (
-	ErrForbidden       = errors.New("forbidden")
-	ErrInvalidInput    = errors.New("invalid input")
-	ErrInvalidStatus   = errors.New("invalid status transition")
-	ErrDuplicate       = errors.New("duplicate dispatch")
-	ErrActiveDispatch  = errors.New("active dispatch already exists for order")
-	ErrAlreadyAccepted = errors.New("dispatch already accepted")
+	ErrForbidden        = errors.New("forbidden")
+	ErrInvalidInput     = errors.New("invalid input")
+	ErrInvalidStatus    = errors.New("invalid status transition")
+	ErrDuplicate        = errors.New("duplicate dispatch")
+	ErrActiveDispatch   = errors.New("active dispatch already exists for order")
+	ErrAlreadyAccepted  = errors.New("dispatch already accepted")
+	ErrActiveDriverTrip = errors.New("driver already has an active trip")
 )
 
 type Service struct {
@@ -263,6 +264,13 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 	if dispatch.DriverID != nil || dispatch.DriverUserID != nil {
 		return Dispatch{}, ErrAlreadyAccepted
 	}
+	active, err := s.repository.DriverHasActiveTrip(ctx, actor.UserID, dispatchID)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if active {
+		return Dispatch{}, ErrActiveDriverTrip
+	}
 	updated, err := s.repository.SetDriverUser(ctx, dispatchID, actor.UserID)
 	if err != nil {
 		return Dispatch{}, err
@@ -491,6 +499,15 @@ func validTransition(from, to string) bool {
 func isAllowedStatus(status string) bool {
 	switch status {
 	case "PENDING", "ACCEPTED", "DISPATCHED", "IN_TRANSIT", "DELIVERED", "CANCELLED":
+		return true
+	default:
+		return false
+	}
+}
+
+func isActiveDriverTripStatus(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "ACCEPTED", "DISPATCHED", "IN_TRANSIT":
 		return true
 	default:
 		return false
