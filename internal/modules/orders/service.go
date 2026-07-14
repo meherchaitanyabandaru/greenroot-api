@@ -109,6 +109,9 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID 
 	if !validOrderTransition(current.Status, status) {
 		return Order{}, ErrInvalidStatus
 	}
+	if status == "CONFIRMED" && !hasUsableDeliverySnapshot(current.DeliverySnapshot) {
+		return Order{}, ErrInvalidInput
+	}
 	if status == "COMPLETED" {
 		hasUndeliveredDispatch, err := s.repository.OrderHasUndeliveredDispatch(ctx, orderID)
 		if err != nil {
@@ -187,6 +190,9 @@ func (s *Service) StartLoading(ctx context.Context, actor ActorContext, orderID 
 	}
 	if err := s.canManage(ctx, actor, *order); err != nil {
 		return Order{}, err
+	}
+	if !hasUsableDeliverySnapshot(order.DeliverySnapshot) {
+		return Order{}, ErrInvalidInput
 	}
 	updated, err := s.repository.UpdateStatusWithLoading(ctx, actor.UserID, orderID, "LOADING", "start")
 	if err != nil {
@@ -639,6 +645,13 @@ func validateDeliverySnapshot(input DeliverySnapshotRequest) error {
 		return ErrInvalidInput
 	}
 	return nil
+}
+
+func hasUsableDeliverySnapshot(snapshot *DeliverySnapshot) bool {
+	if snapshot == nil || snapshot.AddressLine1 == nil {
+		return false
+	}
+	return strings.TrimSpace(*snapshot.AddressLine1) != ""
 }
 
 func isAllowedLocationSource(value string) bool {

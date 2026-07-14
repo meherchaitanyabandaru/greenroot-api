@@ -325,6 +325,10 @@ func validItem() OrderItemRequest {
 	return OrderItemRequest{PlantID: 1, Quantity: 10, UnitPrice: 50, TotalPrice: 500}
 }
 
+func testDeliverySnapshot() *DeliverySnapshot {
+	return &DeliverySnapshot{AddressLine1: str("Delivery address")}
+}
+
 func svc(repo *mockRepo) *Service { return NewService(repo, nil) }
 
 // ── Create ────────────────────────────────────────────────────────────────────
@@ -491,13 +495,24 @@ func TestUpdateStatus_PendingToConfirmed(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid, DeliverySnapshot: testDeliverySnapshot()})
 	o, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "CONFIRMED"})
 	if err != nil {
 		t.Fatalf("PENDING→CONFIRMED: %v", err)
 	}
 	if o.Status != "CONFIRMED" {
 		t.Errorf("status: want CONFIRMED, got %s", o.Status)
+	}
+}
+
+func TestUpdateStatus_PendingToConfirmedRequiresDeliveryAddress(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, 100)
+	nid := int64(1)
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "CONFIRMED"})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("PENDING→CONFIRMED without delivery: want ErrInvalidInput, got %v", err)
 	}
 }
 
@@ -590,7 +605,7 @@ func TestUpdateStatus_AssignedManagerCanUpdate(t *testing.T) {
 	repo.seedNursery(1, 100)
 	nid := int64(1)
 	mgr := int64(200)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid, AssignedManagerUserID: &mgr})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid, AssignedManagerUserID: &mgr, DeliverySnapshot: testDeliverySnapshot()})
 	_, err := svc(repo).UpdateStatus(context.Background(), managerActor(200), 10, UpdateStatusRequest{Status: "CONFIRMED"})
 	if err != nil {
 		t.Errorf("assigned manager update: %v", err)
@@ -603,7 +618,7 @@ func TestStartLoading_FromConfirmed(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", NurseryID: &nid, DeliverySnapshot: testDeliverySnapshot()})
 	o, err := svc(repo).StartLoading(context.Background(), ownerActor(100), 10)
 	if err != nil {
 		t.Fatalf("StartLoading from CONFIRMED: %v", err)

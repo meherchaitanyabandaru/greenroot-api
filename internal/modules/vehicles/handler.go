@@ -159,6 +159,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid vehicle input")
 	case errors.Is(err, ErrDuplicate):
 		response.Error(w, http.StatusConflict, "duplicate_vehicle", "vehicle already exists with this vehicle number")
+	case errors.Is(err, ErrVehicleAssigned):
+		response.Error(w, http.StatusConflict, "vehicle_assigned", "vehicle is assigned to an active approved driver")
 	default:
 		response.Error(w, http.StatusInternalServerError, "vehicles_error", "vehicle request failed")
 	}

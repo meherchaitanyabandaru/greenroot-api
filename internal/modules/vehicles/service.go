@@ -11,9 +11,10 @@ import (
 )
 
 var (
-	ErrForbidden    = errors.New("forbidden")
-	ErrInvalidInput = errors.New("invalid input")
-	ErrDuplicate    = errors.New("duplicate vehicle")
+	ErrForbidden       = errors.New("forbidden")
+	ErrInvalidInput    = errors.New("invalid input")
+	ErrDuplicate       = errors.New("duplicate vehicle")
+	ErrVehicleAssigned = errors.New("vehicle assigned to active driver")
 )
 
 type Service struct {

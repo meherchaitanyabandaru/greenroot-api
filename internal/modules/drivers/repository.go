@@ -170,6 +170,12 @@ func (r *PostgresRepository) UserOwnsANursery(ctx context.Context, userID int64)
 }
 
 func (r *PostgresRepository) Upsert(ctx context.Context, userID int64, req ApplyDriverRequest) (*Driver, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	const query = `
 		INSERT INTO public.drivers (driver_code, user_id, license_number, licence_photo_url, vehicle_number, vehicle_type, profile_status, approval_status, status, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, 'COMPLETE', 'PENDING', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -180,29 +186,47 @@ func (r *PostgresRepository) Upsert(ctx context.Context, userID int64, req Apply
 			vehicle_type = EXCLUDED.vehicle_type,
 			profile_status = 'COMPLETE',
 			updated_at = CURRENT_TIMESTAMP
-		RETURNING driver_id
+		RETURNING driver_id, COALESCE(approval_status, 'PENDING')
 	`
-	driverCode, err := publiccode.Next(ctx, r.db, publiccode.Drivers, time.Now())
+	driverCode, err := publiccode.Next(ctx, tx, publiccode.Drivers, time.Now())
 	if err != nil {
 		return nil, err
 	}
 	var driverID int64
-	if err := r.db.QueryRowContext(ctx, query, driverCode, userID, req.LicenceNumber, req.LicencePhotoURL, req.VehicleNumber, req.VehicleType).Scan(&driverID); err != nil {
+	var approvalStatus string
+	if err := tx.QueryRowContext(ctx, query, driverCode, userID, req.LicenceNumber, req.LicencePhotoURL, req.VehicleNumber, req.VehicleType).Scan(&driverID, &approvalStatus); err != nil {
+		return nil, err
+	}
+	vehicleStatus := "INACTIVE"
+	if strings.EqualFold(approvalStatus, "APPROVED") {
+		vehicleStatus = "ACTIVE"
+	}
+	if err := syncDriverVehicleTx(ctx, tx, userID, req.VehicleNumber, req.VehicleType, vehicleStatus); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return r.FindByID(ctx, driverID)
 }
 
 func (r *PostgresRepository) Approve(ctx context.Context, driverUserID int64, approvedByUserID int64) (*Driver, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	const query = `
 		UPDATE public.drivers
 		SET approval_status = 'APPROVED', approved_by_user_id = $2, approved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 		WHERE driver_id = $1 AND COALESCE(status::text, '') <> 'DELETED'
-		RETURNING driver_id, user_id
+		RETURNING driver_id, user_id, vehicle_number, vehicle_type
 	`
 	var driverID int64
 	var userID sql.NullInt64
-	if err := r.db.QueryRowContext(ctx, query, driverUserID, approvedByUserID).Scan(&driverID, &userID); err != nil {
+	var vehicleNumber, vehicleType sql.NullString
+	if err := tx.QueryRowContext(ctx, query, driverUserID, approvedByUserID).Scan(&driverID, &userID, &vehicleNumber, &vehicleType); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -210,18 +234,70 @@ func (r *PostgresRepository) Approve(ctx context.Context, driverUserID int64, ap
 	}
 	// Grant DRIVER role and strip BUYER — drivers are never buyers.
 	if userID.Valid {
-		_, _ = r.db.ExecContext(ctx, `
+		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO public.user_roles (user_id, role_id)
 			SELECT $1, role_id FROM public.roles WHERE role_code = 'DRIVER'
 			ON CONFLICT DO NOTHING
-		`, userID.Int64)
-		_, _ = r.db.ExecContext(ctx, `
+		`, userID.Int64); err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `
 			DELETE FROM public.user_roles
 			WHERE user_id = $1
 			  AND role_id = (SELECT role_id FROM public.roles WHERE role_code = 'BUYER')
-		`, userID.Int64)
+		`, userID.Int64); err != nil {
+			return nil, err
+		}
+		if err := syncDriverVehicleTx(ctx, tx, userID.Int64, vehicleNumber.String, vehicleType.String, "ACTIVE"); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 	return r.FindByID(ctx, driverID)
+}
+
+func syncDriverVehicleTx(ctx context.Context, tx *sql.Tx, userID int64, vehicleNumber string, vehicleType string, status string) error {
+	vehicleNumber = strings.ToUpper(strings.TrimSpace(vehicleNumber))
+	vehicleType = strings.TrimSpace(vehicleType)
+	if vehicleNumber == "" {
+		return nil
+	}
+	vehicleCode, err := publiccode.Next(ctx, tx, publiccode.Vehicles, time.Now())
+	if err != nil {
+		return err
+	}
+	status = statusOrActive(status)
+
+	const query = `
+		WITH profile AS (
+			SELECT
+				NULLIF(TRIM(CONCAT_WS(' ', first_name, last_name)), '') AS owner_name,
+				NULLIF(TRIM(mobile), '') AS mobile
+			FROM public.users
+			WHERE user_id = $5
+		),
+		resolved_profile AS (
+			SELECT owner_name, mobile FROM profile
+			UNION ALL
+			SELECT NULL::text, NULL::text
+			WHERE NOT EXISTS (SELECT 1 FROM profile)
+		)
+		INSERT INTO public.vehicles (
+			vehicle_code, vehicle_number, vehicle_type, owner_name, mobile, status, created_at, updated_at
+		)
+		SELECT $1, $2, NULLIF($3, ''), owner_name, mobile, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+		FROM resolved_profile
+		ON CONFLICT (vehicle_number) DO UPDATE
+		SET vehicle_type = COALESCE(EXCLUDED.vehicle_type, public.vehicles.vehicle_type),
+			owner_name = COALESCE(EXCLUDED.owner_name, public.vehicles.owner_name),
+			mobile = COALESCE(EXCLUDED.mobile, public.vehicles.mobile),
+			status = EXCLUDED.status,
+			updated_at = CURRENT_TIMESTAMP
+	`
+	_, err = tx.ExecContext(ctx, query, vehicleCode, vehicleNumber, vehicleType, status, userID)
+	return err
 }
 
 func (r *PostgresRepository) CreateLocation(ctx context.Context, driverID int64, actorID int64, input LocationRequest) (*DriverLocation, error) {
@@ -236,7 +312,6 @@ func (r *PostgresRepository) CreateLocation(ctx context.Context, driverID int64,
 	}
 	return &location, err
 }
-
 
 func baseSelect() string {
 	return `
