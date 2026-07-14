@@ -19,6 +19,7 @@ type Repository interface {
 	FindByCode(ctx context.Context, code string) (*Dispatch, error)
 	FindByTrackingUUID(ctx context.Context, uuid string) (*Dispatch, error)
 	HasDuplicate(ctx context.Context, dispatchNumber string) (bool, error)
+	HasActiveForOrder(ctx context.Context, orderID int64) (bool, error)
 	Create(ctx context.Context, actorID int64, input CreateDispatchInput) (*Dispatch, error)
 	UpdateStatus(ctx context.Context, dispatchID int64, input UpdateStatusInput) (*Dispatch, error)
 	AcknowledgeDeliveryUpdate(ctx context.Context, dispatchID int64, driverUserID int64) error
@@ -113,6 +114,20 @@ func (r *PostgresRepository) HasDuplicate(ctx context.Context, dispatchNumber st
 	`
 	var exists bool
 	err := r.db.QueryRowContext(ctx, query, strings.TrimSpace(dispatchNumber)).Scan(&exists)
+	return exists, err
+}
+
+func (r *PostgresRepository) HasActiveForOrder(ctx context.Context, orderID int64) (bool, error) {
+	const query = `
+		SELECT EXISTS (
+			SELECT 1
+			FROM public.dispatches
+			WHERE order_id = $1
+				AND COALESCE(dispatch_status::text, '') <> 'CANCELLED'
+		)
+	`
+	var exists bool
+	err := r.db.QueryRowContext(ctx, query, orderID).Scan(&exists)
 	return exists, err
 }
 
@@ -483,6 +498,7 @@ func (r *PostgresRepository) CreateNotification(ctx context.Context, userID int6
 func baseSelect() string {
 	return `
 		SELECT d.dispatch_id, d.dispatch_code, d.order_id, o.order_number,
+			o.order_status::text, o.loading_started_at, o.loading_completed_at,
 			COALESCE(o.nursery_id, o.seller_nursery_id), d.dispatch_number,
 			COALESCE(d.dispatch_status::text, ''), d.vehicle_id, v.vehicle_number, d.driver_id,
 			u.first_name, u.mobile, d.dispatched_by, d.dispatch_date, d.delivery_date, d.destination_address,
@@ -583,11 +599,11 @@ func sortClause(input ListDispatchesRequest) string {
 
 func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 	var dispatch Dispatch
-	var orderNumber, dispatchNumber, vehicleNumber, driverName, driverMobile, destination, notes sql.NullString
+	var orderNumber, orderStatus, dispatchNumber, vehicleNumber, driverName, driverMobile, destination, notes sql.NullString
 	var nurseryID, vehicleID, driverID, dispatchedBy sql.NullInt64
 	var deliveryLat, deliveryLon sql.NullFloat64
 	var requiresDriverAck sql.NullBool
-	var dispatchDate, deliveryDate, updatedAt sql.NullTime
+	var loadingStartedAt, loadingCompletedAt, dispatchDate, deliveryDate, updatedAt sql.NullTime
 	// V1 snapshot fields
 	var v1NurseryID, assignedManagerUserID, driverUserID sql.NullInt64
 	var ownerUserIDSnapshot, customerUserID sql.NullInt64
@@ -597,6 +613,7 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 	var trackingUUID, tripUUID sql.NullString
 	if err := row.Scan(
 		&dispatch.ID, &dispatch.DispatchCode, &dispatch.OrderID, &orderNumber,
+		&orderStatus, &loadingStartedAt, &loadingCompletedAt,
 		&nurseryID, &dispatchNumber,
 		&dispatch.Status, &vehicleID, &vehicleNumber, &driverID,
 		&driverName, &driverMobile, &dispatchedBy, &dispatchDate, &deliveryDate, &destination,
@@ -612,6 +629,13 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 		return Dispatch{}, err
 	}
 	dispatch.OrderNumber = nullableString(orderNumber)
+	dispatch.OrderStatus = nullableString(orderStatus)
+	if loadingStartedAt.Valid {
+		dispatch.LoadingStartedAt = &loadingStartedAt.Time
+	}
+	if loadingCompletedAt.Valid {
+		dispatch.LoadingCompletedAt = &loadingCompletedAt.Time
+	}
 	dispatch.SellerNurseryID = nullableInt64(nurseryID)
 	dispatch.DispatchNumber = nullableString(dispatchNumber)
 	dispatch.VehicleID = nullableInt64(vehicleID)

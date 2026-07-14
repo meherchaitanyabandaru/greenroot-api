@@ -276,6 +276,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusUnprocessableEntity, "invalid_status_transition", "this status transition is not allowed")
 	case errors.Is(err, ErrDuplicate):
 		response.Error(w, http.StatusConflict, "duplicate_dispatch", "dispatch already exists with this dispatch number")
+	case errors.Is(err, ErrActiveDispatch):
+		response.Error(w, http.StatusConflict, "active_dispatch_exists", "this order already has an active dispatch")
 	case errors.Is(err, ErrAlreadyAccepted):
 		response.Error(w, http.StatusConflict, "dispatch_already_accepted", "this trip has already been accepted by a driver")
 	case errors.Is(err, redisutil.ErrLockBusy):

@@ -98,6 +98,15 @@ func (m *mockRepo) HasDuplicate(_ context.Context, num string) (bool, error) {
 	return m.duplicates[num], nil
 }
 
+func (m *mockRepo) HasActiveForOrder(_ context.Context, orderID int64) (bool, error) {
+	for _, d := range m.dispatches {
+		if d.OrderID == orderID && d.Status != "CANCELLED" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (m *mockRepo) Create(_ context.Context, actorID int64, input CreateDispatchInput) (*Dispatch, error) {
 	m.nextID++
 	d := &Dispatch{
@@ -309,6 +318,19 @@ func TestCreate_DuplicateDispatchNumber(t *testing.T) {
 	})
 	if !errors.Is(err, ErrDuplicate) {
 		t.Errorf("duplicate dispatch number: want ErrDuplicate, got %v", err)
+	}
+}
+
+func TestCreate_DuplicateActiveOrderDispatch(t *testing.T) {
+	repo := newMock()
+	nurseryID := int64(1)
+	repo.seedNursery(1, 100)
+	repo.seedOrderAccess(10, &nurseryID)
+	repo.seedDispatch(Dispatch{ID: 1, OrderID: 10, Status: "ACCEPTED"})
+
+	_, err := svc(repo).Create(context.Background(), ownerActor(100), CreateDispatchRequest{OrderID: 10})
+	if !errors.Is(err, ErrActiveDispatch) {
+		t.Errorf("duplicate active order dispatch: want ErrActiveDispatch, got %v", err)
 	}
 }
 

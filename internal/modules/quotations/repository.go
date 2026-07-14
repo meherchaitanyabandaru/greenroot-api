@@ -564,7 +564,9 @@ func (r *PostgresRepository) CreateOrderAndConvert(ctx context.Context, q *Quota
 		buyerNurseryID = sql.NullInt64{Int64: *q.BuyerNurseryID, Valid: true}
 	}
 	var buyerUserID sql.NullInt64
-	if q.BuyerNurseryID != nil {
+	if q.CustomerUserID != nil {
+		buyerUserID = sql.NullInt64{Int64: *q.CustomerUserID, Valid: true}
+	} else if q.BuyerNurseryID != nil {
 		var ownerID int64
 		if scanErr := tx.QueryRowContext(ctx,
 			`SELECT owner_user_id FROM public.nurseries WHERE nursery_id = $1`,
@@ -582,11 +584,11 @@ func (r *PostgresRepository) CreateOrderAndConvert(ctx context.Context, q *Quota
 	if err := tx.QueryRowContext(ctx, `
 		INSERT INTO public.orders (
 			order_code, order_number, seller_nursery_id, buyer_nursery_id,
-			buyer_user_id, quotation_id, order_status, total_amount,
+			buyer_user_id, customer_user_id, quotation_id, order_status, total_amount,
 			notes, order_date, created_at, updated_at, created_by, updated_by
-		) VALUES ($1,$2,$3,$4,$5,$6,'PENDING',0,$7,$8,$8,$8,$9,$9)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,'PENDING',0,$8,$9,$9,$9,$10,$10)
 		RETURNING order_id
-	`, orderCode, orderNumber, nurseryID, buyerNurseryID, buyerUserID, q.ID, notes, now, byUserID,
+	`, orderCode, orderNumber, nurseryID, buyerNurseryID, buyerUserID, nullableInt64FromPtr(q.CustomerUserID), q.ID, notes, now, byUserID,
 	).Scan(&orderID); err != nil {
 		return 0, err
 	}
@@ -938,6 +940,13 @@ func nullableInt64(v sql.NullInt64) *int64 {
 		return nil
 	}
 	return &v.Int64
+}
+
+func nullableInt64FromPtr(v *int64) sql.NullInt64 {
+	if v == nil {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: *v, Valid: true}
 }
 
 func stringOrEmpty(v *string) string {

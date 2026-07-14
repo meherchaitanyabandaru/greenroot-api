@@ -21,6 +21,7 @@ var (
 	ErrInvalidInput    = errors.New("invalid input")
 	ErrInvalidStatus   = errors.New("invalid status transition")
 	ErrDuplicate       = errors.New("duplicate dispatch")
+	ErrActiveDispatch  = errors.New("active dispatch already exists for order")
 	ErrAlreadyAccepted = errors.New("dispatch already accepted")
 )
 
@@ -83,6 +84,13 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateDisp
 	}
 	if err := s.canAccessOrder(ctx, actor, access); err != nil {
 		return Dispatch{}, err
+	}
+	exists, err := s.repository.HasActiveForOrder(ctx, input.OrderID)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if exists {
+		return Dispatch{}, ErrActiveDispatch
 	}
 	if input.DispatchNumber != nil {
 		duplicate, err := s.repository.HasDuplicate(ctx, *input.DispatchNumber)

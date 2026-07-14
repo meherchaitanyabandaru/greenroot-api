@@ -8,12 +8,15 @@ const (
 )
 
 type Dispatch struct {
-	ID              int64   `json:"id"`
-	DispatchCode    string  `json:"dispatch_code"`
-	TripUUID        *string `json:"trip_uuid,omitempty"`
-	OrderID         int64   `json:"order_id"`
-	OrderNumber     *string `json:"order_number,omitempty"`
-	SellerNurseryID *int64  `json:"seller_nursery_id,omitempty"`
+	ID                 int64      `json:"id"`
+	DispatchCode       string     `json:"dispatch_code"`
+	TripUUID           *string    `json:"trip_uuid,omitempty"`
+	OrderID            int64      `json:"order_id"`
+	OrderNumber        *string    `json:"order_number,omitempty"`
+	OrderStatus        *string    `json:"order_status,omitempty"`
+	LoadingStartedAt   *time.Time `json:"loading_started_at,omitempty"`
+	LoadingCompletedAt *time.Time `json:"loading_completed_at,omitempty"`
+	SellerNurseryID    *int64     `json:"seller_nursery_id,omitempty"`
 	// V1 snapshot fields
 	NurseryID              *int64     `json:"nursery_id,omitempty"`
 	AssignedManagerUserID  *int64     `json:"assigned_manager_user_id,omitempty"`
@@ -27,26 +30,26 @@ type Dispatch struct {
 	CompletedAt            *time.Time `json:"completed_at,omitempty"`
 	TrackingUUID           *string    `json:"tracking_uuid,omitempty"`
 	// Legacy fields
-	DispatchNumber     *string        `json:"dispatch_number,omitempty"`
-	Status             string         `json:"dispatch_status"`
-	VehicleID          *int64         `json:"vehicle_id,omitempty"`
-	VehicleNumber      *string        `json:"vehicle_number,omitempty"`
-	DriverID           *int64         `json:"driver_id,omitempty"`
-	DriverName         *string        `json:"driver_name,omitempty"`
-	DriverMobile       *string        `json:"driver_mobile,omitempty"`
-	DispatchedBy       *int64         `json:"dispatched_by,omitempty"`
-	DispatchDate       *time.Time     `json:"dispatch_date,omitempty"`
-	DeliveryDate       *time.Time     `json:"delivery_date,omitempty"`
-	DestinationAddress *string        `json:"destination_address,omitempty"`
+	DispatchNumber     *string    `json:"dispatch_number,omitempty"`
+	Status             string     `json:"dispatch_status"`
+	VehicleID          *int64     `json:"vehicle_id,omitempty"`
+	VehicleNumber      *string    `json:"vehicle_number,omitempty"`
+	DriverID           *int64     `json:"driver_id,omitempty"`
+	DriverName         *string    `json:"driver_name,omitempty"`
+	DriverMobile       *string    `json:"driver_mobile,omitempty"`
+	DispatchedBy       *int64     `json:"dispatched_by,omitempty"`
+	DispatchDate       *time.Time `json:"dispatch_date,omitempty"`
+	DeliveryDate       *time.Time `json:"delivery_date,omitempty"`
+	DestinationAddress *string    `json:"destination_address,omitempty"`
 	// Delivery coordinates from the order's delivery snapshot.
 	// Always reflects the latest confirmed delivery location — drivers use
 	// these to open navigation rather than relying on the address text.
-	DeliveryLatitude  *float64   `json:"delivery_latitude,omitempty"`
-	DeliveryLongitude *float64   `json:"delivery_longitude,omitempty"`
-	RequiresDriverAck *bool      `json:"requires_driver_ack,omitempty"`
-	Notes             *string    `json:"notes,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         *time.Time `json:"updated_at,omitempty"`
+	DeliveryLatitude  *float64       `json:"delivery_latitude,omitempty"`
+	DeliveryLongitude *float64       `json:"delivery_longitude,omitempty"`
+	RequiresDriverAck *bool          `json:"requires_driver_ack,omitempty"`
+	Notes             *string        `json:"notes,omitempty"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         *time.Time     `json:"updated_at,omitempty"`
 	Items             []DispatchItem `json:"items,omitempty"`
 	TripEvents        []TripEvent    `json:"trip_events,omitempty"`
 }
