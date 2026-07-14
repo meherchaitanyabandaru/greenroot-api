@@ -18,6 +18,7 @@ type mockRepo struct {
 	ownedNurseries map[int64]int64   // user_id → nursery_id (owners only)
 	driverUserIDs  map[int64]int64   // order_id → driver user_id
 	startedOrders  map[int64]bool
+	undelivered    map[int64]bool
 	notifications  []int64
 	nextID         int64
 	nextItemID     int64
@@ -34,6 +35,7 @@ func newMock() *mockRepo {
 		ownedNurseries: make(map[int64]int64),
 		driverUserIDs:  make(map[int64]int64),
 		startedOrders:  make(map[int64]bool),
+		undelivered:    make(map[int64]bool),
 	}
 }
 
@@ -145,6 +147,10 @@ func (m *mockRepo) UpdateDeliverySnapshot(_ context.Context, orderID int64, acto
 
 func (m *mockRepo) OrderHasStartedDispatch(_ context.Context, orderID int64) (bool, error) {
 	return m.startedOrders[orderID], nil
+}
+
+func (m *mockRepo) OrderHasUndeliveredDispatch(_ context.Context, orderID int64) (bool, error) {
+	return m.undelivered[orderID], nil
 }
 
 func (m *mockRepo) StartedDispatchDriverUserID(_ context.Context, orderID int64) (*int64, error) {
@@ -519,6 +525,19 @@ func TestUpdateStatus_LoadedToCompleted(t *testing.T) {
 	}
 	if o.Status != "COMPLETED" {
 		t.Errorf("status: want COMPLETED, got %s", o.Status)
+	}
+}
+
+func TestUpdateStatus_LoadedToCompletedBlockedByUndeliveredDispatch(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, 100)
+	nid := int64(1)
+	repo.seedOrder(Order{ID: 10, Status: "LOADED", NurseryID: &nid})
+	repo.undelivered[10] = true
+
+	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "COMPLETED"})
+	if !errors.Is(err, ErrInvalidStatus) {
+		t.Errorf("LOADED→COMPLETED with undelivered dispatch: want ErrInvalidStatus, got %v", err)
 	}
 }
 

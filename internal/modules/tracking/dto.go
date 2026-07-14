@@ -17,6 +17,7 @@ type PointResponse struct {
 
 type LiveLocationRequest struct {
 	DriverUserID *int64  `json:"driver_user_id,omitempty"`
+	DispatchID   *int64  `json:"dispatch_id,omitempty"`
 	Latitude     float64 `json:"latitude"`
 	Longitude    float64 `json:"longitude"`
 }

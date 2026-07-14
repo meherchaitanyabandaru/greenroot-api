@@ -109,6 +109,15 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID 
 	if !validOrderTransition(current.Status, status) {
 		return Order{}, ErrInvalidStatus
 	}
+	if status == "COMPLETED" {
+		hasUndeliveredDispatch, err := s.repository.OrderHasUndeliveredDispatch(ctx, orderID)
+		if err != nil {
+			return Order{}, err
+		}
+		if hasUndeliveredDispatch {
+			return Order{}, ErrInvalidStatus
+		}
+	}
 	order, err := s.repository.UpdateStatus(ctx, actor.UserID, orderID, status)
 	if err != nil {
 		return Order{}, err

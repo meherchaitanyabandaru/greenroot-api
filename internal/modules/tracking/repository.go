@@ -8,10 +8,17 @@ import (
 
 type Repository interface {
 	Create(context.Context, CreateRequest) (*TrackingPoint, error)
+	DispatchAccess(context.Context, int64) (*DispatchAccess, error)
 	ListBy(context.Context, string, int64) ([]TrackingPoint, error)
 	LatestBy(context.Context, string, int64) (*TrackingPoint, error)
 }
 type PostgresRepository struct{ db *sql.DB }
+
+type DispatchAccess struct {
+	Status       string
+	DriverID     *int64
+	DriverUserID *int64
+}
 
 func NewRepository(db *sql.DB) Repository { return &PostgresRepository{db: db} }
 func (r *PostgresRepository) Create(ctx context.Context, in CreateRequest) (*TrackingPoint, error) {
@@ -21,6 +28,24 @@ func (r *PostgresRepository) Create(ctx context.Context, in CreateRequest) (*Tra
 		return nil, err
 	}
 	return r.LatestBy(ctx, "tracking_id", id)
+}
+func (r *PostgresRepository) DispatchAccess(ctx context.Context, dispatchID int64) (*DispatchAccess, error) {
+	var access DispatchAccess
+	var driverID, driverUserID sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COALESCE(dispatch_status, ''), driver_id, driver_user_id
+		FROM public.dispatches
+		WHERE dispatch_id = $1
+	`, dispatchID).Scan(&access.Status, &driverID, &driverUserID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrInvalidInput
+	}
+	if err != nil {
+		return nil, err
+	}
+	access.DriverID = nullableInt64(driverID)
+	access.DriverUserID = nullableInt64(driverUserID)
+	return &access, nil
 }
 func (r *PostgresRepository) ListBy(ctx context.Context, col string, id int64) ([]TrackingPoint, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT tracking_id,vehicle_id,driver_id,dispatch_id,latitude,longitude,tracked_at,notes FROM public.vehicle_tracking WHERE `+col+`=$1 ORDER BY tracked_at DESC LIMIT 100`, id)
@@ -81,4 +106,10 @@ func stringOrEmpty(v *string) string {
 		return ""
 	}
 	return *v
+}
+func nullableInt64(v sql.NullInt64) *int64 {
+	if !v.Valid {
+		return nil
+	}
+	return &v.Int64
 }

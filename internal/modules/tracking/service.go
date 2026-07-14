@@ -32,6 +32,11 @@ func (s *Service) Create(ctx context.Context, a ActorContext, in CreateRequest) 
 	if (in.VehicleID == nil && in.DriverID == nil && in.DispatchID == nil) || in.Latitude < -90 || in.Latitude > 90 || in.Longitude < -180 || in.Longitude > 180 {
 		return TrackingPoint{}, ErrInvalidInput
 	}
+	if in.DispatchID != nil {
+		if err := s.canTrackDispatch(ctx, a, *in.DispatchID); err != nil {
+			return TrackingPoint{}, err
+		}
+	}
 	p, err := s.repository.Create(ctx, in)
 	if err != nil {
 		return TrackingPoint{}, err
@@ -44,6 +49,12 @@ func (s *Service) UpdateLiveLocation(ctx context.Context, a ActorContext, in Liv
 	}
 	if in.Latitude < -90 || in.Latitude > 90 || in.Longitude < -180 || in.Longitude > 180 {
 		return nil, ErrInvalidInput
+	}
+	if in.DispatchID == nil || *in.DispatchID <= 0 {
+		return nil, ErrInvalidInput
+	}
+	if err := s.canTrackDispatch(ctx, a, *in.DispatchID); err != nil {
+		return nil, err
 	}
 
 	driverUserID := a.UserID
@@ -67,6 +78,25 @@ func (s *Service) UpdateLiveLocation(ctx context.Context, a ActorContext, in Liv
 		return nil, nil
 	}
 	return toLiveLocation(loc), nil
+}
+func (s *Service) canTrackDispatch(ctx context.Context, a ActorContext, dispatchID int64) error {
+	access, err := s.repository.DispatchAccess(ctx, dispatchID)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(access.Status, "IN_TRANSIT") {
+		return ErrInvalidInput
+	}
+	if hasRole(a, "ADMIN") {
+		return nil
+	}
+	if !hasRole(a, "DRIVER") {
+		return ErrForbidden
+	}
+	if access.DriverUserID == nil || *access.DriverUserID != a.UserID {
+		return ErrForbidden
+	}
+	return nil
 }
 func (s *Service) GetLiveDriver(ctx context.Context, a ActorContext, driverUserID int64) (*LiveDriverLocation, error) {
 	if !hasAnyRole(a, "ADMIN", "DRIVER", "NURSERY_OWNER", "MANAGER") {

@@ -20,6 +20,7 @@ type Repository interface {
 	GetDeliverySnapshot(ctx context.Context, orderID int64) (*DeliverySnapshot, error)
 	UpdateDeliverySnapshot(ctx context.Context, orderID int64, actorID int64, input DeliverySnapshotRequest) (*DeliverySnapshot, error)
 	OrderHasStartedDispatch(ctx context.Context, orderID int64) (bool, error)
+	OrderHasUndeliveredDispatch(ctx context.Context, orderID int64) (bool, error)
 	StartedDispatchDriverUserID(ctx context.Context, orderID int64) (*int64, error)
 	UpdateStatus(ctx context.Context, actorID int64, orderID int64, status string) (*Order, error)
 	UpdateStatusWithLoading(ctx context.Context, actorID int64, orderID int64, status string, phase string) (*Order, error)
@@ -283,6 +284,19 @@ func (r *PostgresRepository) OrderHasStartedDispatch(ctx context.Context, orderI
 				trip_started_at IS NOT NULL
 				OR dispatch_status IN ('IN_TRANSIT', 'DELIVERED')
 			  )
+		)
+	`, orderID).Scan(&exists)
+	return exists, err
+}
+
+func (r *PostgresRepository) OrderHasUndeliveredDispatch(ctx context.Context, orderID int64) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM public.dispatches
+			WHERE order_id = $1
+			  AND COALESCE(dispatch_status, '') <> 'CANCELLED'
+			  AND COALESCE(dispatch_status, '') <> 'DELIVERED'
 		)
 	`, orderID).Scan(&exists)
 	return exists, err

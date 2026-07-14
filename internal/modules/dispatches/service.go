@@ -468,21 +468,21 @@ func parseOptionalTime(value *string) (*time.Time, error) {
 // validTransition enforces the dispatch lifecycle state machine.
 //
 // PENDING → ACCEPTED only via /accept (driver QR scan).
-// PENDING → DISPATCHED | IN_TRANSIT | CANCELLED via PUT /status (owner pre-assigns driver).
-// ACCEPTED → DISPATCHED | IN_TRANSIT | CANCELLED via PUT /status.
-// DISPATCHED → IN_TRANSIT | CANCELLED via PUT /status.
-// IN_TRANSIT → DELIVERED | CANCELLED via PUT /status.
+// PENDING → DISPATCHED | CANCELLED via PUT /status (owner pre-assigns driver).
+// ACCEPTED → DISPATCHED | CANCELLED via PUT /status.
+// DISPATCHED → IN_TRANSIT via PUT /status.
+// IN_TRANSIT → DELIVERED via PUT /status.
 // DELIVERED and CANCELLED are terminal — no further transitions allowed.
 func validTransition(from, to string) bool {
 	switch from {
 	case "PENDING":
-		return to == "DISPATCHED" || to == "IN_TRANSIT" || to == "CANCELLED"
+		return to == "DISPATCHED" || to == "CANCELLED"
 	case "ACCEPTED":
-		return to == "DISPATCHED" || to == "IN_TRANSIT" || to == "CANCELLED"
+		return to == "DISPATCHED" || to == "CANCELLED"
 	case "DISPATCHED":
-		return to == "IN_TRANSIT" || to == "CANCELLED"
+		return to == "IN_TRANSIT"
 	case "IN_TRANSIT":
-		return to == "DELIVERED" || to == "CANCELLED"
+		return to == "DELIVERED"
 	default:
 		return false
 	}

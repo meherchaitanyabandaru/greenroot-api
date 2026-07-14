@@ -10,11 +10,12 @@ import (
 // ─── mock repository ─────────────────────────────────────────────────────────
 
 type mockRepo struct {
-	points []TrackingPoint
-	nextID int64
+	points     []TrackingPoint
+	dispatches map[int64]DispatchAccess
+	nextID     int64
 }
 
-func newMock() *mockRepo { return &mockRepo{nextID: 100} }
+func newMock() *mockRepo { return &mockRepo{dispatches: map[int64]DispatchAccess{}, nextID: 100} }
 
 func (m *mockRepo) Create(_ context.Context, in CreateRequest) (*TrackingPoint, error) {
 	m.nextID++
@@ -30,6 +31,14 @@ func (m *mockRepo) Create(_ context.Context, in CreateRequest) (*TrackingPoint, 
 	}
 	m.points = append(m.points, *p)
 	return p, nil
+}
+
+func (m *mockRepo) DispatchAccess(_ context.Context, dispatchID int64) (*DispatchAccess, error) {
+	access, ok := m.dispatches[dispatchID]
+	if !ok {
+		return nil, ErrInvalidInput
+	}
+	return &access, nil
 }
 
 func (m *mockRepo) ListBy(_ context.Context, col string, id int64) ([]TrackingPoint, error) {
@@ -69,9 +78,15 @@ func ptr[T any](v T) *T { return &v }
 func adminActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
 func driverActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"DRIVER"}} }
 func buyerActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
-func ownerActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}} }
+func ownerActor(id int64) ActorContext {
+	return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}}
+}
 
 func svc(repo *mockRepo) *Service { return NewService(repo) }
+
+func (m *mockRepo) seedDispatch(id int64, status string, driverUserID *int64) {
+	m.dispatches[id] = DispatchAccess{Status: status, DriverUserID: driverUserID}
+}
 
 // ─── Create ──────────────────────────────────────────────────────────────────
 
@@ -90,13 +105,43 @@ func TestCreate_DriverWithVehicle(t *testing.T) {
 }
 
 func TestCreate_AdminWithDispatch(t *testing.T) {
-	_, err := svc(newMock()).Create(context.Background(), adminActor(1), CreateRequest{
+	repo := newMock()
+	repo.seedDispatch(10, "IN_TRANSIT", nil)
+	_, err := svc(repo).Create(context.Background(), adminActor(1), CreateRequest{
 		DispatchID: ptr(int64(10)),
 		Latitude:   12.97,
 		Longitude:  77.59,
 	})
 	if err != nil {
 		t.Fatalf("admin should create tracking point: %v", err)
+	}
+}
+
+func TestCreate_DriverDispatchMustBeInTransit(t *testing.T) {
+	repo := newMock()
+	repo.seedDispatch(10, "ACCEPTED", ptr(int64(7)))
+
+	_, err := svc(repo).Create(context.Background(), driverActor(7), CreateRequest{
+		DispatchID: ptr(int64(10)),
+		Latitude:   12.97,
+		Longitude:  77.59,
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("tracking before IN_TRANSIT: want ErrInvalidInput, got %v", err)
+	}
+}
+
+func TestCreate_DriverDispatchMustBeAssigned(t *testing.T) {
+	repo := newMock()
+	repo.seedDispatch(10, "IN_TRANSIT", ptr(int64(8)))
+
+	_, err := svc(repo).Create(context.Background(), driverActor(7), CreateRequest{
+		DispatchID: ptr(int64(10)),
+		Latitude:   12.97,
+		Longitude:  77.59,
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Errorf("tracking by unassigned driver: want ErrForbidden, got %v", err)
 	}
 }
 
