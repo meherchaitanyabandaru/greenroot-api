@@ -308,9 +308,16 @@ func TestOTPLifecycle_Redis(t *testing.T) {
 		t.Fatal("expected otp key to be consumed")
 	}
 
-	_, err = s.VerifyOTP(ctx, VerifyOTPRequest{Mobile: "9000000000", OTP: mockOTP}, ClientContext{})
+	// In dev mode, mockOTP is always accepted even when no Redis key exists (redis.Nil fallback).
+	// This allows logging in without clicking "Send OTP" first during local development.
+	if _, err = s.VerifyOTP(ctx, VerifyOTPRequest{Mobile: "9000000000", OTP: mockOTP}, ClientContext{}); err != nil {
+		t.Fatalf("expected mockOTP to still work after key consumed (dev fallback), got: %v", err)
+	}
+
+	// Wrong OTPs must still be rejected.
+	_, err = s.VerifyOTP(ctx, VerifyOTPRequest{Mobile: "9000000000", OTP: "000000"}, ClientContext{})
 	if !errors.Is(err, ErrInvalidOTP) {
-		t.Fatalf("expected consumed otp to fail with ErrInvalidOTP, got %v", err)
+		t.Fatalf("expected wrong otp to fail with ErrInvalidOTP, got %v", err)
 	}
 }
 
