@@ -10,6 +10,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/config"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/logger"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/revocation"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/database"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/market"
@@ -66,6 +67,10 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		Audit:      auditlog.NewService(db, logManager.Logger()),
 		Redis:      connectRedis(ctx, cfg.Redis, logManager.Logger()),
 	}
+
+	// Sync suspension state into Redis before accepting any traffic.
+	// Closes the gap where users suspended before this deploy have no Redis key.
+	redisutil.ReconcileSuspensions(ctx, deps.DB, deps.Redis, deps.Logger)
 
 	server := &http.Server{
 		Addr:              cfg.HTTP.Addr(),

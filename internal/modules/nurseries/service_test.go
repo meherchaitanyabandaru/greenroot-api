@@ -303,6 +303,10 @@ func (m *mockRepo) CancelPendingInvitesForUser(_ context.Context, _ int64, _ int
 	return nil
 }
 
+func (m *mockRepo) ResubmitByOwner(_ context.Context, _ int64, _ int64, _ CreateNurseryRequest) (*Nursery, error) {
+	return &Nursery{ID: 99, Status: "PENDING"}, nil
+}
+
 func (m *mockRepo) WorkspaceUserIDs(_ context.Context, nurseryID int64) ([]int64, error) {
 	userIDs := make([]int64, 0)
 	for ownerUserID, ownerNurseryID := range m.owners {

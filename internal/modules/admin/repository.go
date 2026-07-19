@@ -13,6 +13,7 @@ type Repository interface {
 	UpdateUserStatus(ctx context.Context, actorID int64, userID int64, status string, reason string) error
 	UpdateNurseryStatus(ctx context.Context, actorID int64, nurseryID int64, status string, reason string) error
 	WorkspaceUserIDs(ctx context.Context, nurseryID int64) ([]int64, error)
+	NurseryOwnerID(ctx context.Context, nurseryID int64) (int64, error)
 }
 type PostgresRepository struct{ db *sql.DB }
 
@@ -279,6 +280,14 @@ func (r *PostgresRepository) WorkspaceUserIDs(ctx context.Context, nurseryID int
 		userIDs = append(userIDs, userID)
 	}
 	return userIDs, rows.Err()
+}
+
+func (r *PostgresRepository) NurseryOwnerID(ctx context.Context, nurseryID int64) (int64, error) {
+	var ownerID int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COALESCE(owner_user_id, 0) FROM public.nurseries WHERE nursery_id = $1
+	`, nurseryID).Scan(&ownerID)
+	return ownerID, err
 }
 
 func splitCSV(value sql.NullString) []string {

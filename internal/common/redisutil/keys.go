@@ -13,4 +13,6 @@ const (
 	KeyNotificationRetry  = "notifications:retry:"
 	KeyQuotationExpiry    = "expiry:quotations"
 	KeySubscriptionExpiry = "expiry:subscriptions"
+	KeySuspendedUser      = "suspension:user:"
+	KeySuspendedNursery   = "suspension:nursery:"
 )

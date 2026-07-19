@@ -184,8 +184,15 @@ func EnrichActorMiddleware(jwt *jwtplatform.Service, redisClients ...redis.Cmdab
 				return
 			}
 
-			// Revocation check — catches immediate suspend/block after token issue.
+			// In-memory revocation — catches immediate suspend within this process.
 			if revocation.IsRevoked(userID) {
+				response.Error(w, http.StatusForbidden, "USER_SUSPENDED",
+					"your account has been suspended — contact support")
+				return
+			}
+
+			// Redis-backed suspension — survives API restarts.
+			if redisutil.IsUserSuspended(r.Context(), rdb, userID) {
 				response.Error(w, http.StatusForbidden, "USER_SUSPENDED",
 					"your account has been suspended — contact support")
 				return
@@ -202,10 +209,17 @@ func EnrichActorMiddleware(jwt *jwtplatform.Service, redisClients ...redis.Cmdab
 				return
 			}
 
-			// Nursery status — suspended nursery blocks all nursery-scoped writes.
-			// Handlers that need to enforce this call actor.NurseryStatus directly.
 			host, _, _ := net.SplitHostPort(r.RemoteAddr)
 			actor := actorFromClaims(claims, host, r.UserAgent())
+
+			// Redis nursery suspension — patches actor status so handlers see current state
+			// even when the JWT still carries the pre-suspension NurseryStatus.
+			if actor.NurseryID > 0 && actor.NurseryStatus != "SUSPENDED" {
+				if redisutil.IsNurserySuspended(r.Context(), rdb, actor.NurseryID) {
+					actor.NurseryStatus = "SUSPENDED"
+				}
+			}
+
 			next.ServeHTTP(w, r.WithContext(StoreActor(r.Context(), actor)))
 		})
 	}

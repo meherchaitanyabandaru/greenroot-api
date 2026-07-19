@@ -30,18 +30,22 @@ func (m *mockRepo) ListUsers(_ context.Context, _ ListUsersRequest) ([]User, int
 	return m.users, int64(len(m.users)), nil
 }
 
-func (m *mockRepo) UpdateUserStatus(_ context.Context, userID int64, status string) error {
+func (m *mockRepo) UpdateUserStatus(_ context.Context, _ int64, userID int64, status string, _ string) error {
 	m.userStatuses[userID] = status
 	return nil
 }
 
-func (m *mockRepo) UpdateNurseryStatus(_ context.Context, nurseryID int64, status string) error {
+func (m *mockRepo) UpdateNurseryStatus(_ context.Context, _ int64, nurseryID int64, status string, _ string) error {
 	m.nursStatuses[nurseryID] = status
 	return nil
 }
 
 func (m *mockRepo) WorkspaceUserIDs(_ context.Context, nurseryID int64) ([]int64, error) {
 	return []int64{nurseryID + 100}, nil
+}
+
+func (m *mockRepo) NurseryOwnerID(_ context.Context, _ int64) (int64, error) {
+	return 0, nil
 }
 
 // ─── actors ──────────────────────────────────────────────────────────────────
@@ -120,7 +124,7 @@ func TestListUsers_BuyerForbidden(t *testing.T) {
 func TestUpdateUserStatus_AdminSuspends(t *testing.T) {
 	repo := newMock()
 
-	err := svc(repo).UpdateUserStatus(context.Background(), adminActor(1), 10, UpdateUserStatusRequest{Status: "SUSPENDED"})
+	err := svc(repo).UpdateUserStatus(context.Background(), adminActor(1), 10, UpdateUserStatusRequest{Status: "SUSPENDED", Reason: "policy violation"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -172,7 +176,7 @@ func TestUpdateUserStatus_BuyerForbidden(t *testing.T) {
 func TestUpdateNurseryStatus_AdminSuccess(t *testing.T) {
 	repo := newMock()
 
-	err := svc(repo).UpdateNurseryStatus(context.Background(), adminActor(1), 5, UpdateNurseryStatusRequest{Status: "SUSPENDED"})
+	err := svc(repo).UpdateNurseryStatus(context.Background(), adminActor(1), 5, UpdateNurseryStatusRequest{Status: "SUSPENDED", Reason: "policy violation"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

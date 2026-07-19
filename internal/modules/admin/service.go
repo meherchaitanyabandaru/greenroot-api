@@ -71,8 +71,10 @@ func (s *Service) UpdateUserStatus(ctx context.Context, a ActorContext, userID i
 	switch status {
 	case "SUSPENDED", "DELETED":
 		revocation.Revoke(userID, 20*time.Minute)
+		redisutil.SuspendUser(ctx, s.redis, slog.Default(), userID)
 	case "ACTIVE":
 		revocation.Remove(userID)
+		redisutil.ClearUserSuspension(ctx, s.redis, slog.Default(), userID)
 	}
 	redisutil.InvalidateWorkspaces(ctx, s.redis, slog.Default(), userID)
 	return nil
@@ -92,6 +94,27 @@ func (s *Service) UpdateNurseryStatus(ctx context.Context, a ActorContext, nurse
 	if err := s.repository.UpdateNurseryStatus(ctx, a.UserID, nurseryID, status, strings.TrimSpace(req.Reason)); err != nil {
 		return err
 	}
+
+	// Revoke the nursery owner immediately so their in-flight JWT is blocked.
+	ownerID, err := s.repository.NurseryOwnerID(ctx, nurseryID)
+	if err != nil {
+		slog.Warn("nursery owner lookup failed", "nursery_id", nurseryID, "error", err)
+	}
+	switch status {
+	case "SUSPENDED":
+		redisutil.SuspendNursery(ctx, s.redis, slog.Default(), nurseryID)
+		if ownerID > 0 {
+			revocation.Revoke(ownerID, 20*time.Minute)
+			redisutil.SuspendUser(ctx, s.redis, slog.Default(), ownerID)
+		}
+	case "ACTIVE":
+		redisutil.ClearNurserySuspension(ctx, s.redis, slog.Default(), nurseryID)
+		if ownerID > 0 {
+			revocation.Remove(ownerID)
+			redisutil.ClearUserSuspension(ctx, s.redis, slog.Default(), ownerID)
+		}
+	}
+
 	userIDs, err := s.repository.WorkspaceUserIDs(ctx, nurseryID)
 	if err != nil {
 		slog.Warn("workspace invalidation user lookup failed", "nursery_id", nurseryID, "error", err)
