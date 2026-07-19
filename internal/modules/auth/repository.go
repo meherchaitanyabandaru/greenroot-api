@@ -94,7 +94,7 @@ func (r *PostgresRepository) CreateUser(ctx context.Context, mobile string) (*Us
 		VALUES ($1, $2, $3, true, false, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING user_id, user_code, first_name, last_name, mobile, email, profile_image_url,
 			mobile_verified, email_verified, onboarding_completed, initial_activity,
-			onboarding_completed_at, status::text, last_login_at, created_at, updated_at
+			onboarding_completed_at, status::text, suspension_reason, suspended_at, last_login_at, created_at, updated_at
 	`
 
 	user, err := scanUserRow(r.db.QueryRowContext(ctx, query, userCode, defaultUserFirstName, mobile))
