@@ -54,9 +54,10 @@ type Dispatch struct {
 	Notes             *string                     `json:"notes,omitempty"`
 	CreatedAt         time.Time                   `json:"created_at"`
 	UpdatedAt         *time.Time                  `json:"updated_at,omitempty"`
-	Items             []DispatchItem              `json:"items,omitempty"`
-	TripEvents        []TripEvent                 `json:"trip_events,omitempty"`
-	Lifecycle         *lifecycle.DispatchDisplays `json:"lifecycle,omitempty"`
+	Items        []DispatchItem              `json:"items,omitempty"`
+	TripEvents   []TripEvent                 `json:"trip_events,omitempty"`
+	Lifecycle    *lifecycle.DispatchDisplays `json:"lifecycle,omitempty"`
+	Capabilities *DispatchCapabilities       `json:"capabilities,omitempty"`
 }
 
 type TripEvent struct {

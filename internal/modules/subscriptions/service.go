@@ -339,6 +339,8 @@ func (s *Service) CreateTrialForOwner(ctx context.Context, ownerUserID int64, ap
 
 func enrichSubscription(actor ActorContext, subscription UserSubscription) UserSubscription {
 	status := strings.ToUpper(strings.TrimSpace(subscription.Status))
+	subscription.Status = status
+
 	daysRemaining := subscription.DaysRemaining
 	if daysRemaining == nil && subscription.EndDate != nil {
 		days := int(subscription.EndDate.Sub(time.Now()).Hours() / 24)
@@ -348,16 +350,13 @@ func enrichSubscription(actor ActorContext, subscription UserSubscription) UserS
 		daysRemaining = &days
 		subscription.DaysRemaining = daysRemaining
 	}
-	isAdmin := hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN")
-	isOwner := subscription.UserID == actor.UserID
+
 	isActive := status == statusActive
 	isExpired := status == statusExpired || (daysRemaining != nil && *daysRemaining < 0)
 	isExpiringSoon := isActive && daysRemaining != nil && *daysRemaining >= 0 && *daysRemaining <= 14
 	paymentStatus := ""
-	canRetryPayment := false
 	if subscription.LatestPayment != nil {
 		paymentStatus = strings.ToUpper(strings.TrimSpace(subscription.LatestPayment.Status))
-		canRetryPayment = paymentStatus == "FAILED" || paymentStatus == "PENDING"
 	}
 
 	subscription.Lifecycle = lifecyclePtr(lifecycle.Subscription(status, daysRemaining))
@@ -367,14 +366,8 @@ func enrichSubscription(actor ActorContext, subscription UserSubscription) UserS
 		IsExpiringSoon: isExpiringSoon,
 		PaymentStatus:  paymentStatus,
 	}
-	subscription.Capabilities = &SubscriptionCapabilities{
-		CanRenew:        isOwner || isAdmin,
-		CanCancel:       (isOwner || isAdmin) && (status == statusActive || status == statusPaused),
-		CanPause:        isAdmin && status == statusActive,
-		CanResume:       isAdmin && status == statusPaused,
-		CanChangePlan:   isOwner || isAdmin,
-		CanRetryPayment: (isOwner || isAdmin) && canRetryPayment,
-	}
+	caps := BuildCapabilities(actor, subscription)
+	subscription.Capabilities = &caps
 	return subscription
 }
 

@@ -45,6 +45,7 @@ type Order struct {
 	ActiveDispatchID     *int64                   `json:"active_dispatch_id,omitempty"`
 	ActiveDispatchStatus *string                  `json:"active_dispatch_status,omitempty"`
 	Lifecycle            *lifecycle.OrderDisplays `json:"lifecycle,omitempty"`
+	Capabilities         *OrderCapabilities       `json:"capabilities,omitempty"`
 }
 
 type ActiveDispatchSummary struct {

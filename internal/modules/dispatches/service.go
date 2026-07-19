@@ -55,7 +55,7 @@ func (s *Service) List(ctx context.Context, actor ActorContext, input ListDispat
 	if err != nil {
 		return nil, Pagination{}, err
 	}
-	enrichDispatches(dispatches)
+	enrichDispatches(actor, dispatches)
 	return dispatches, Pagination{Page: input.Page, PerPage: input.PerPage, Total: total, TotalPages: totalPages(total, input.PerPage)}, nil
 }
 
@@ -67,8 +67,7 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, dispatchID int64)
 	if err := s.canAccess(ctx, actor, *dispatch); err != nil {
 		return Dispatch{}, err
 	}
-	enrichDispatch(dispatch)
-	return withLifecycle(*dispatch), nil
+	return withLifecycle(actor, *dispatch), nil
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateDispatchRequest) (Dispatch, error) {
@@ -89,7 +88,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateDisp
 	if err := s.canAccessOrder(ctx, actor, access); err != nil {
 		return Dispatch{}, err
 	}
-	if !isDispatchableOrderStatus(access.OrderStatus) {
+	if !IsDispatchableOrderStatus(access.OrderStatus) {
 		return Dispatch{}, ErrInvalidStatus
 	}
 	exists, err := s.repository.HasActiveForOrder(ctx, input.OrderID)
@@ -113,7 +112,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateDisp
 		return Dispatch{}, err
 	}
 	s.audit(ctx, actor, "dispatches", dispatch.ID, actionInsert, req)
-	return withLifecycle(*dispatch), nil
+	return withLifecycle(actor, *dispatch), nil
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatchID int64, req UpdateStatusRequest) (Dispatch, error) {
@@ -134,10 +133,10 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 	if status == "" {
 		status = strings.ToUpper(strings.TrimSpace(req.StatusAlias))
 	}
-	if !isAllowedStatus(status) {
+	if !AllowedStatus(status) {
 		return Dispatch{}, ErrInvalidInput
 	}
-	if !validTransition(current.Status, status) {
+	if !CanTransition(current.Status, status) {
 		return Dispatch{}, ErrInvalidStatus
 	}
 	deliveryDate, err := parseOptionalTime(req.DeliveryDate)
@@ -162,11 +161,11 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 			"Order Dispatched",
 			fmt.Sprintf("Your order dispatch %s is on the way.", dispatch.DispatchCode))
 	}
-	if isTerminalLiveTrackingStatus(status) {
+	if IsLiveTrackingTerminal(status) {
 		s.removeLiveDriverLocation(ctx, *dispatch)
 	}
 	s.audit(ctx, actor, "dispatches", dispatch.ID, actionUpdate, req)
-	return withLifecycle(*dispatch), nil
+	return withLifecycle(actor, *dispatch), nil
 }
 
 func (s *Service) AcknowledgeDeliveryUpdate(ctx context.Context, actor ActorContext, dispatchID int64) (Dispatch, error) {
@@ -185,7 +184,7 @@ func (s *Service) AcknowledgeDeliveryUpdate(ctx context.Context, actor ActorCont
 		return Dispatch{}, err
 	}
 	s.audit(ctx, actor, "dispatches", dispatchID, actionUpdate, map[string]any{"delivery_update_acknowledged": true})
-	return withLifecycle(*updated), nil
+	return withLifecycle(actor, *updated), nil
 }
 
 func (s *Service) CreateItem(ctx context.Context, actor ActorContext, dispatchID int64, req DispatchItemRequest) (DispatchItem, error) {
@@ -196,7 +195,7 @@ func (s *Service) CreateItem(ctx context.Context, actor ActorContext, dispatchID
 	if err := s.canAccess(ctx, actor, *dispatch); err != nil {
 		return DispatchItem{}, err
 	}
-	if isTerminalDispatchStatus(dispatch.Status) {
+	if IsTerminal(dispatch.Status) {
 		return DispatchItem{}, ErrInvalidStatus
 	}
 	if req.Quantity <= 0 {
@@ -231,7 +230,7 @@ func (s *Service) CreateTripEvent(ctx context.Context, actor ActorContext, dispa
 			return TripEvent{}, ErrForbidden
 		}
 	}
-	if isTerminalDispatchStatus(dispatch.Status) || dispatch.Status == "PENDING" {
+	if IsTerminal(dispatch.Status) || dispatch.Status == "PENDING" {
 		return TripEvent{}, ErrInvalidStatus
 	}
 	event, err := s.repository.CreateTripEvent(ctx, CreateTripEventInput{
@@ -250,13 +249,13 @@ func (s *Service) CreateTripEvent(ctx context.Context, actor ActorContext, dispa
 	return *event, nil
 }
 
-// GetPublicTracking returns dispatch info for a public tracking UUID (no auth required).
+// GetByCode returns dispatch info for a trip code (no auth required — used by drivers scanning QR).
 func (s *Service) GetByCode(ctx context.Context, code string) (Dispatch, error) {
 	dispatch, err := s.repository.FindByCode(ctx, code)
 	if err != nil {
 		return Dispatch{}, err
 	}
-	return withLifecycle(*dispatch), nil
+	return withLifecycle(ActorContext{}, *dispatch), nil
 }
 
 func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispatchID int64) (Dispatch, error) {
@@ -276,7 +275,7 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 	}
 	// If already accepted by this same driver, return the dispatch (idempotent).
 	if dispatch.Status == "ACCEPTED" && dispatch.DriverUserID != nil && *dispatch.DriverUserID == actor.UserID {
-		return withLifecycle(*dispatch), nil
+		return withLifecycle(actor, *dispatch), nil
 	}
 	if dispatch.Status != "PENDING" {
 		return Dispatch{}, ErrForbidden
@@ -301,7 +300,7 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 			"Dispatch Accepted",
 			fmt.Sprintf("Dispatch %s was accepted by the driver.", updated.DispatchCode))
 	}
-	return withLifecycle(*updated), nil
+	return withLifecycle(actor, *updated), nil
 }
 
 func (s *Service) enqueueNotification(ctx context.Context, userID int64, notifType, title, message string) {
@@ -321,7 +320,7 @@ func (s *Service) GetPublicTracking(ctx context.Context, uuid string) (Dispatch,
 	if err != nil {
 		return Dispatch{}, err
 	}
-	return withLifecycle(*dispatch), nil
+	return withLifecycle(ActorContext{}, *dispatch), nil
 }
 
 func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *ListDispatchesRequest) error {
@@ -493,73 +492,7 @@ func parseOptionalTime(value *string) (*time.Time, error) {
 	return &parsed, nil
 }
 
-// validTransition enforces the dispatch lifecycle state machine.
-//
-// PENDING → ACCEPTED only via /accept (driver QR scan).
-// PENDING → DISPATCHED | CANCELLED via PUT /status (owner pre-assigns driver).
-// ACCEPTED → DISPATCHED | CANCELLED via PUT /status.
-// DISPATCHED → IN_TRANSIT via PUT /status.
-// IN_TRANSIT → DELIVERED via PUT /status.
-// DELIVERED and CANCELLED are terminal — no further transitions allowed.
-func validTransition(from, to string) bool {
-	switch from {
-	case "PENDING":
-		return to == "DISPATCHED" || to == "CANCELLED"
-	case "ACCEPTED":
-		return to == "DISPATCHED" || to == "CANCELLED"
-	case "DISPATCHED":
-		return to == "IN_TRANSIT"
-	case "IN_TRANSIT":
-		return to == "DELIVERED"
-	default:
-		return false
-	}
-}
-
-func isAllowedStatus(status string) bool {
-	switch status {
-	case "PENDING", "ACCEPTED", "DISPATCHED", "IN_TRANSIT", "DELIVERED", "CANCELLED":
-		return true
-	default:
-		return false
-	}
-}
-
-func isActiveDriverTripStatus(status string) bool {
-	switch strings.ToUpper(strings.TrimSpace(status)) {
-	case "ACCEPTED", "DISPATCHED", "IN_TRANSIT":
-		return true
-	default:
-		return false
-	}
-}
-
-func isTerminalLiveTrackingStatus(status string) bool {
-	switch strings.ToUpper(strings.TrimSpace(status)) {
-	case "DELIVERED", "CANCELLED", "EXPIRED":
-		return true
-	default:
-		return false
-	}
-}
-
-func isTerminalDispatchStatus(status string) bool {
-	switch strings.ToUpper(strings.TrimSpace(status)) {
-	case "DELIVERED", "CANCELLED":
-		return true
-	default:
-		return false
-	}
-}
-
-func isDispatchableOrderStatus(status string) bool {
-	switch strings.ToUpper(strings.TrimSpace(status)) {
-	case "LOADED", "PARTIALLY_FULFILLED":
-		return true
-	default:
-		return false
-	}
-}
+// Status predicates and CanTransition are defined in policy.go.
 
 func (s *Service) removeLiveDriverLocation(ctx context.Context, dispatch Dispatch) {
 	if s.liveGeo == nil {
@@ -595,22 +528,17 @@ func totalPages(total int64, perPage int) int {
 	return int(math.Ceil(float64(total) / float64(perPage)))
 }
 
-func enrichDispatches(dispatches []Dispatch) {
+func enrichDispatches(actor ActorContext, dispatches []Dispatch) {
 	for i := range dispatches {
-		dispatches[i] = withLifecycle(dispatches[i])
+		dispatches[i] = withLifecycle(actor, dispatches[i])
 	}
 }
 
-func enrichDispatch(dispatch *Dispatch) {
-	if dispatch == nil {
-		return
-	}
-	*dispatch = withLifecycle(*dispatch)
-}
-
-func withLifecycle(dispatch Dispatch) Dispatch {
+func withLifecycle(actor ActorContext, dispatch Dispatch) Dispatch {
 	lc := lifecycle.Dispatch(dispatch.Status)
 	dispatch.Lifecycle = &lc
+	caps := BuildCapabilities(actor, dispatch.Status)
+	dispatch.Capabilities = &caps
 	return dispatch
 }
 

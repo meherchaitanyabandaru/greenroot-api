@@ -116,7 +116,7 @@ func (m *mockRepo) DriverHasActiveTrip(_ context.Context, userID int64, excludeD
 		if d.ID == excludeDispatchID || d.DriverUserID == nil || *d.DriverUserID != userID {
 			continue
 		}
-		if isActiveDriverTripStatus(d.Status) {
+		if IsActive(d.Status) {
 			return true, nil
 		}
 	}
@@ -715,7 +715,7 @@ func TestValidDispatchTransitions(t *testing.T) {
 		{"CANCELLED", "PENDING", false},
 	}
 	for _, c := range cases {
-		got := validTransition(c.from, c.to)
+		got := CanTransition(c.from, c.to)
 		if got != c.valid {
 			t.Errorf("transition %s→%s: want valid=%v, got %v", c.from, c.to, c.valid, got)
 		}
@@ -726,13 +726,13 @@ func TestIsAllowedStatus(t *testing.T) {
 	allowed := []string{"PENDING", "ACCEPTED", "DISPATCHED", "IN_TRANSIT", "DELIVERED", "CANCELLED"}
 	notAllowed := []string{"LOADING", "COMPLETED", "UNICORN", ""}
 	for _, s := range allowed {
-		if !isAllowedStatus(s) {
-			t.Errorf("isAllowedStatus(%s): want true", s)
+		if !AllowedStatus(s) {
+			t.Errorf("AllowedStatus(%s): want true", s)
 		}
 	}
 	for _, s := range notAllowed {
-		if isAllowedStatus(s) {
-			t.Errorf("isAllowedStatus(%s): want false", s)
+		if AllowedStatus(s) {
+			t.Errorf("AllowedStatus(%s): want false", s)
 		}
 	}
 }

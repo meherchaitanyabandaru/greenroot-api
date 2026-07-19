@@ -101,11 +101,7 @@ var publicVerifyLimiter = newIPRateLimiter(10*time.Minute, 30)
 
 var nonDigit = regexp.MustCompile(`\D`)
 
-// editableStatuses enumerates statuses in which a quotation's content may be modified.
-var editableStatuses = map[string]bool{
-	"INTERNAL_DRAFT": true,
-	"CUSTOMER_DRAFT": true,
-}
+// IsEditable and BuildCapabilities are defined in policy.go.
 
 type Service struct {
 	repository Repository
@@ -295,7 +291,7 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, inpu
 		return Quotation{}, err
 	}
 	// Business rule: quotations are editable only until approved (i.e., while in a DRAFT status).
-	if !editableStatuses[q.Status] {
+	if !IsEditable(q.Status) {
 		return Quotation{}, ErrInvalidTransition
 	}
 	// Business rule: both nursery owners and managers can edit quotations.
@@ -821,35 +817,11 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 
 func enrichQuotation(actor ActorContext, q Quotation) Quotation {
 	status := strings.ToUpper(strings.TrimSpace(q.Status))
+	q.Status = status
 	q.Lifecycle = lifecyclePtr(lifecycle.Quotation(status))
 	q.ExpirySummary = quotationExpirySummary(q.ValidUntil)
-	q.Capabilities = quotationCapabilities(actor, q, status)
+	q.Capabilities = BuildCapabilities(actor, q)
 	return q
-}
-
-func quotationCapabilities(actor ActorContext, q Quotation, status string) *QuotationCapabilities {
-	isAdmin := hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN")
-	isSeller := isAdmin || hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER")
-	isOwnerRole := isAdmin || hasRole(actor, "NURSERY_OWNER")
-	isCustomer := isAdmin || (q.CustomerUserID != nil && *q.CustomerUserID == actor.UserID)
-	isEditable := editableStatuses[status] && q.ConvertedOrderID == nil
-	isCustomerSent := status == "CUSTOMER_SENT" && !isExpired(q.ValidUntil)
-
-	assignedToOther := q.AssignedManagerUserID != nil && *q.AssignedManagerUserID != actor.UserID && !isOwnerRole
-
-	return &QuotationCapabilities{
-		CanEdit:              isSeller && isEditable && !assignedToOther,
-		CanUpdateCustomer:    isOwnerRole && q.QuotationType == "CUSTOMER" && q.ConvertedOrderID == nil && q.CustomerRespondedAt == nil,
-		CanDelete:            isOwnerRole && q.ConvertedOrderID == nil,
-		CanSend:              isSeller && status == "CUSTOMER_DRAFT",
-		CanRecall:            isSeller && status == "CUSTOMER_SENT",
-		CanAccept:            isCustomer && isCustomerSent,
-		CanReject:            isCustomer && isCustomerSent,
-		CanConvert:           isSeller && status == "CUSTOMER_ACCEPTED" && q.ConvertedOrderID == nil,
-		CanAssignManager:     isOwnerRole && q.ConvertedOrderID == nil,
-		CanGenerateDocument:  isSeller && q.DeletedAt == nil,
-		CanManageVerifyToken: isSeller && q.DeletedAt == nil,
-	}
 }
 
 func quotationExpirySummary(validUntil *time.Time) *QuotationExpirySummary {
@@ -865,10 +837,6 @@ func quotationExpirySummary(validUntil *time.Time) *QuotationExpirySummary {
 		IsExpired:     validUntil.Before(now),
 		DaysRemaining: &days,
 	}
-}
-
-func isExpired(validUntil *time.Time) bool {
-	return validUntil != nil && time.Now().After(*validUntil)
 }
 
 func lifecyclePtr[T any](value T) *T {

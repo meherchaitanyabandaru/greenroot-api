@@ -509,17 +509,69 @@ func (r *PostgresRepository) upsertCareGuide(ctx context.Context, tx *sql.Tx, pl
 }
 
 func (r *PostgresRepository) attachPlantRelations(ctx context.Context, plants []Plant) error {
-	for index := range plants {
-		categories, err := r.categoriesForPlant(ctx, plants[index].ID)
+	if len(plants) == 0 {
+		return nil
+	}
+
+	ids := make([]any, len(plants))
+	placeholders := make([]string, len(plants))
+	for i, p := range plants {
+		ids[i] = p.ID
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+	}
+	inClause := strings.Join(placeholders, ",")
+
+	// Batch-fetch categories
+	catQuery := fmt.Sprintf(`
+		SELECT pcm.plant_id, c.category_id, c.category_name, c.is_active, c.created_at, c.updated_at
+		FROM public.plant_category_mapping pcm
+		JOIN public.plant_categories c ON c.category_id = pcm.category_id
+		WHERE pcm.plant_id IN (%s) AND c.is_active = true
+		ORDER BY c.category_name`, inClause)
+	catRows, err := r.db.QueryContext(ctx, catQuery, ids...)
+	if err != nil {
+		return err
+	}
+	defer catRows.Close()
+	catMap := make(map[int64][]Category)
+	for catRows.Next() {
+		var plantID int64
+		var cat Category
+		if err := catRows.Scan(&plantID, &cat.ID, &cat.Name, &cat.IsActive, &cat.CreatedAt, &cat.UpdatedAt); err != nil {
+			return err
+		}
+		catMap[plantID] = append(catMap[plantID], cat)
+	}
+	if err := catRows.Err(); err != nil {
+		return err
+	}
+
+	// Batch-fetch images
+	imgQuery := fmt.Sprintf(`
+		SELECT image_id, plant_id, image_url, alt_text, display_order, is_primary, created_at, updated_at
+		FROM public.plant_images
+		WHERE plant_id IN (%s)
+		ORDER BY is_primary DESC, display_order ASC, image_id ASC`, inClause)
+	imgRows, err := r.db.QueryContext(ctx, imgQuery, ids...)
+	if err != nil {
+		return err
+	}
+	defer imgRows.Close()
+	imgMap := make(map[int64][]Image)
+	for imgRows.Next() {
+		img, err := scanImageRows(imgRows)
 		if err != nil {
 			return err
 		}
-		images, err := r.imagesForPlant(ctx, plants[index].ID)
-		if err != nil {
-			return err
-		}
-		plants[index].Categories = categories
-		plants[index].Images = images
+		imgMap[img.PlantID] = append(imgMap[img.PlantID], img)
+	}
+	if err := imgRows.Err(); err != nil {
+		return err
+	}
+
+	for i := range plants {
+		plants[i].Categories = catMap[plants[i].ID]
+		plants[i].Images = imgMap[plants[i].ID]
 	}
 	return nil
 }

@@ -1093,7 +1093,7 @@ func TestValidOrderTransitions(t *testing.T) {
 		{"CANCELLED", "CONFIRMED", false},
 	}
 	for _, c := range cases {
-		got := validOrderTransition(c.from, c.to)
+		got := CanTransition(c.from, c.to)
 		if got != c.valid {
 			t.Errorf("transition %s→%s: want valid=%v, got %v", c.from, c.to, c.valid, got)
 		}
@@ -1104,13 +1104,13 @@ func TestIsEditableStatus(t *testing.T) {
 	editable := []string{"PENDING", "CONFIRMED", "LOADING"}
 	locked := []string{"LOADED", "PARTIALLY_FULFILLED", "COMPLETED", "CANCELLED"}
 	for _, s := range editable {
-		if !isEditableStatus(s) {
-			t.Errorf("isEditableStatus(%s): want true", s)
+		if !IsEditable(s) {
+			t.Errorf("IsEditable(%s): want true", s)
 		}
 	}
 	for _, s := range locked {
-		if isEditableStatus(s) {
-			t.Errorf("isEditableStatus(%s): want false", s)
+		if IsEditable(s) {
+			t.Errorf("IsEditable(%s): want false", s)
 		}
 	}
 }

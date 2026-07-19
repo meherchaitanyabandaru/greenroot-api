@@ -667,16 +667,18 @@ func enrichNursery(actor NurseryActor, nursery Nursery) Nursery {
 		IsSuspended: status == "SUSPENDED",
 		IsDeleted:   deleted,
 	}
-	nursery.Capabilities = &NurseryCapabilities{
-		CanEdit:            (isAdmin || isOwner) && !deleted,
-		CanDelete:          isAdmin && !deleted,
-		CanApprove:         isAdmin && status == "PENDING",
-		CanReject:          isAdmin && status == "PENDING",
-		CanSuspend:         isAdmin && active,
-		CanReactivate:      isAdmin && status == "SUSPENDED",
-		CanManageInventory: (isAdmin || isOwner) && active,
-		CanManageUsers:     (isAdmin || isOwner) && !deleted,
-		CanManageAddresses: (isAdmin || isOwner) && !deleted,
+	if actor.UserID > 0 || len(actor.Roles) > 0 {
+		nursery.Capabilities = &NurseryCapabilities{
+			CanEdit:            (isAdmin || isOwner) && !deleted,
+			CanDelete:          isAdmin && !deleted,
+			CanApprove:         isAdmin && status == "PENDING",
+			CanReject:          isAdmin && status == "PENDING",
+			CanSuspend:         isAdmin && active,
+			CanReactivate:      isAdmin && status == "SUSPENDED",
+			CanManageInventory: (isAdmin || isOwner) && active,
+			CanManageUsers:     (isAdmin || isOwner) && !deleted,
+			CanManageAddresses: (isAdmin || isOwner) && !deleted,
+		}
 	}
 	return nursery
 }

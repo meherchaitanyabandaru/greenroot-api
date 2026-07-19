@@ -44,7 +44,7 @@ func (s *Service) List(ctx context.Context, actor ActorContext, input ListOrders
 	if err != nil {
 		return nil, Pagination{}, err
 	}
-	s.enrichOrders(ctx, orders)
+	s.enrichOrders(ctx, actor, orders)
 	return orders, Pagination{Page: input.Page, PerPage: input.PerPage, Total: total, TotalPages: totalPages(total, input.PerPage)}, nil
 }
 
@@ -56,7 +56,7 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, orderID int64) (O
 	if err := s.canView(ctx, actor, *order); err != nil {
 		return Order{}, err
 	}
-	s.enrichOrder(ctx, order)
+	s.enrichOrder(ctx, actor, order)
 	return *order, nil
 }
 
@@ -88,7 +88,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateOr
 	}
 	s.audit(ctx, actor, auditlog.EntityOrder, order.ID, auditlog.ActionCreate,
 		fmt.Sprintf("Order %s created", order.OrderNumber), nil, input)
-	s.enrichOrder(ctx, order)
+	s.enrichOrder(ctx, actor, order)
 	return *order, nil
 }
 
@@ -100,7 +100,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID 
 	defer lock.Release(ctx)
 
 	status := strings.ToUpper(strings.TrimSpace(input.Status))
-	if !isAllowedStatus(status) {
+	if !AllowedStatus(status) {
 		return Order{}, ErrInvalidInput
 	}
 	current, err := s.repository.FindByID(ctx, orderID)
@@ -110,7 +110,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID 
 	if err := s.canManage(ctx, actor, *current); err != nil {
 		return Order{}, err
 	}
-	if !validOrderTransition(current.Status, status) {
+	if !CanTransition(current.Status, status) {
 		return Order{}, ErrInvalidStatus
 	}
 	if status == "CONFIRMED" && !hasUsableDeliverySnapshot(current.DeliverySnapshot) {
@@ -133,7 +133,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID 
 		fmt.Sprintf("Order #%d status %s → %s", orderID, current.Status, status),
 		map[string]any{"status": current.Status},
 		map[string]any{"status": status})
-	s.enrichOrder(ctx, order)
+	s.enrichOrder(ctx, actor, order)
 	return *order, nil
 }
 
@@ -175,7 +175,7 @@ func (s *Service) UpdateDeliverySnapshot(ctx context.Context, actor ActorContext
 		fmt.Sprintf("Order #%d delivery snapshot updated", orderID),
 		current.DeliverySnapshot,
 		updated.DeliverySnapshot)
-	s.enrichOrder(ctx, updated)
+	s.enrichOrder(ctx, actor, updated)
 	return *updated, nil
 }
 
@@ -208,7 +208,7 @@ func (s *Service) StartLoading(ctx context.Context, actor ActorContext, orderID 
 		fmt.Sprintf("Order #%d status %s → LOADING", orderID, order.Status),
 		map[string]any{"status": order.Status},
 		map[string]any{"status": "LOADING"})
-	s.enrichOrder(ctx, updated)
+	s.enrichOrder(ctx, actor, updated)
 	return *updated, nil
 }
 
@@ -251,7 +251,7 @@ func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, order
 		fmt.Sprintf("Order #%d status LOADING → %s", orderID, finalStatus),
 		map[string]any{"status": "LOADING"},
 		map[string]any{"status": finalStatus})
-	s.enrichOrder(ctx, updated)
+	s.enrichOrder(ctx, actor, updated)
 	return *updated, nil
 }
 
@@ -319,7 +319,7 @@ func (s *Service) Cancel(ctx context.Context, actor ActorContext, orderID int64,
 		fmt.Sprintf("Order #%d cancelled: %s", orderID, reason),
 		map[string]any{"status": order.Status},
 		map[string]any{"status": "CANCELLED", "reason": reason})
-	s.enrichOrder(ctx, updated)
+	s.enrichOrder(ctx, actor, updated)
 	return *updated, nil
 }
 
@@ -350,7 +350,7 @@ func (s *Service) AssignManager(ctx context.Context, actor ActorContext, orderID
 		fmt.Sprintf("Order #%d manager assigned", orderID),
 		map[string]any{"assigned_manager_user_id": order.AssignedManagerUserID},
 		map[string]any{"assigned_manager_user_id": managerUserID})
-	s.enrichOrder(ctx, updated)
+	s.enrichOrder(ctx, actor, updated)
 	return *updated, nil
 }
 
@@ -393,7 +393,7 @@ func (s *Service) CreateItem(ctx context.Context, actor ActorContext, orderID in
 	if err := s.canManage(ctx, actor, *order); err != nil {
 		return OrderItem{}, err
 	}
-	if !isEditableStatus(order.Status) {
+	if !IsEditable(order.Status) {
 		return OrderItem{}, ErrInvalidStatus
 	}
 	if err := validateItem(input); err != nil {
@@ -424,7 +424,7 @@ func (s *Service) UpdateItem(ctx context.Context, actor ActorContext, itemID int
 	if err := s.canManage(ctx, actor, *order); err != nil {
 		return OrderItem{}, err
 	}
-	if !isEditableStatus(order.Status) {
+	if !IsEditable(order.Status) {
 		return OrderItem{}, ErrInvalidStatus
 	}
 	item, err := s.repository.UpdateItem(ctx, itemID, input)
@@ -449,7 +449,7 @@ func (s *Service) DeleteItem(ctx context.Context, actor ActorContext, itemID int
 	if err := s.canManage(ctx, actor, *order); err != nil {
 		return err
 	}
-	if !isEditableStatus(order.Status) {
+	if !IsEditable(order.Status) {
 		return ErrInvalidStatus
 	}
 	if err := s.repository.DeleteItem(ctx, itemID); err != nil {
@@ -619,7 +619,7 @@ func validateOrder(input CreateOrderRequest) error {
 	if input.BuyerUserID == nil || *input.BuyerUserID <= 0 || input.SellerNurseryID == nil || *input.SellerNurseryID <= 0 {
 		return ErrInvalidInput
 	}
-	if !isAllowedStatus(input.Status) {
+	if !AllowedStatus(input.Status) {
 		return ErrInvalidInput
 	}
 	for _, item := range input.Items {
@@ -677,13 +677,13 @@ func stringPtr(value string) *string {
 	return &value
 }
 
-func (s *Service) enrichOrders(ctx context.Context, orders []Order) {
+func (s *Service) enrichOrders(ctx context.Context, actor ActorContext, orders []Order) {
 	for i := range orders {
-		s.enrichOrder(ctx, &orders[i])
+		s.enrichOrder(ctx, actor, &orders[i])
 	}
 }
 
-func (s *Service) enrichOrder(ctx context.Context, order *Order) {
+func (s *Service) enrichOrder(ctx context.Context, actor ActorContext, order *Order) {
 	if order == nil {
 		return
 	}
@@ -692,15 +692,17 @@ func (s *Service) enrichOrder(ctx context.Context, order *Order) {
 		order.ActiveDispatchID = &active.ID
 		order.ActiveDispatchStatus = &active.Status
 	}
-	*order = withLifecycle(*order)
+	*order = withLifecycle(actor, *order)
 }
 
-func withLifecycle(order Order) Order {
+func withLifecycle(actor ActorContext, order Order) Order {
 	lc := lifecycle.Order(order.Status)
 	if order.ActiveDispatchStatus != nil {
 		lc = lifecycle.OrderWithDispatch(order.Status, *order.ActiveDispatchStatus)
 	}
 	order.Lifecycle = &lc
+	caps := BuildCapabilities(actor, order.Status)
+	order.Capabilities = &caps
 	return order
 }
 
@@ -715,49 +717,7 @@ func validateItem(input OrderItemRequest) error {
 	return nil
 }
 
-// validOrderTransition enforces the order lifecycle state machine for the generic
-// PUT /orders/{id}/status endpoint. Dedicated endpoints (start-loading, complete-loading,
-// cancel) enforce their own transitions and bypass this function.
-//
-// PENDING   → CONFIRMED              (cancel via POST /cancel only)
-// LOADING   → (no generic transition; cancel via POST /cancel only)
-// LOADED    → COMPLETED              (no cancel — truck dispatched)
-// PARTIALLY_FULFILLED → COMPLETED    (no cancel — truck dispatched)
-// COMPLETED / CANCELLED → terminal
-func validOrderTransition(from, to string) bool {
-	switch from {
-	case "PENDING", "DRAFT":
-		return to == "CONFIRMED"
-	case "CONFIRMED":
-		return false
-	case "LOADED":
-		return to == "COMPLETED"
-	case "PARTIALLY_FULFILLED":
-		return to == "COMPLETED"
-	default:
-		return false
-	}
-}
-
-// isEditableStatus returns true while order items can still be added/edited/deleted.
-// Items are locked once loading is completed (LOADED, PARTIALLY_FULFILLED, COMPLETED, CANCELLED).
-func isEditableStatus(status string) bool {
-	switch status {
-	case "PENDING", "CONFIRMED", "LOADING":
-		return true
-	default:
-		return false
-	}
-}
-
-func isAllowedStatus(value string) bool {
-	switch value {
-	case "PENDING", "CONFIRMED", "PARTIALLY_FULFILLED", "COMPLETED", "CANCELLED":
-		return true
-	default:
-		return false
-	}
-}
+// Status predicates and CanTransition are defined in policy.go.
 
 func hasRole(actor ActorContext, role string) bool {
 	for _, item := range actor.Roles {
