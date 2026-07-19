@@ -83,9 +83,37 @@ func (s *Service) UpdateMe(ctx context.Context, actor ActorContext, input Update
 	return *user, nil
 }
 
+func (s *Service) CompleteOnboarding(ctx context.Context, actor ActorContext, input CompleteOnboardingRequest) (User, error) {
+	activity := strings.ToUpper(trimString(input.InitialActivity))
+	if !isAllowedInitialActivity(activity) {
+		return User{}, ErrInvalidInput
+	}
+
+	now := time.Now()
+	user, err := s.repository.CompleteOnboarding(ctx, actor.UserID, activity, now)
+	if err != nil {
+		return User{}, err
+	}
+
+	s.recordChange(ctx, actor, "users", user.ID, "UPDATE", activityCompleteOnboarding, "USER", user.ID, map[string]any{
+		"initial_activity": activity,
+	})
+
+	return *user, nil
+}
+
 func isLockedName(name string) bool {
 	name = strings.TrimSpace(name)
 	return name != "" && !strings.EqualFold(name, defaultUserFirstName)
+}
+
+func isAllowedInitialActivity(activity string) bool {
+	switch activity {
+	case "CUSTOMER", "OWNER", "DRIVER", "MANAGER":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) UploadAvatar(ctx context.Context, actor ActorContext, data []byte, contentType string, ext string) (User, error) {
@@ -215,6 +243,9 @@ func (s *Service) DeleteAccount(ctx context.Context, actor ActorContext) error {
 	}
 	revocation.Revoke(actor.UserID, 20*time.Minute)
 	s.blocklistActorToken(ctx, actor)
+	if s.auditSvc == nil {
+		return nil
+	}
 	s.auditSvc.Log(ctx, auditlog.Entry{
 		UserID:      actor.UserID,
 		Module:      auditlog.ModuleUsers,
@@ -260,6 +291,9 @@ func (s *Service) recordChange(ctx context.Context, actor ActorContext, table st
 		entityType = auditlog.EntityUserAddress
 	}
 
+	if s.auditSvc == nil {
+		return
+	}
 	s.auditSvc.Log(ctx, auditlog.Entry{
 		UserID:      actor.UserID,
 		Module:      auditlog.ModuleUsers,

@@ -58,7 +58,6 @@ type CreateActivityInput struct {
 	At        time.Time
 }
 
-
 type PostgresRepository struct {
 	db *sql.DB
 }
@@ -94,7 +93,8 @@ func (r *PostgresRepository) CreateUser(ctx context.Context, mobile string) (*Us
 		)
 		VALUES ($1, $2, $3, true, false, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING user_id, user_code, first_name, last_name, mobile, email, profile_image_url,
-			mobile_verified, email_verified, status::text, last_login_at, created_at, updated_at
+			mobile_verified, email_verified, onboarding_completed, initial_activity,
+			onboarding_completed_at, status::text, last_login_at, created_at, updated_at
 	`
 
 	user, err := scanUserRow(r.db.QueryRowContext(ctx, query, userCode, defaultUserFirstName, mobile))
@@ -246,11 +246,11 @@ func (r *PostgresRepository) CreateUserActivity(ctx context.Context, input Creat
 	return err
 }
 
-
 func (r *PostgresRepository) scanUser(ctx context.Context, where string, args ...any) (*User, error) {
 	query := fmt.Sprintf(`
 		SELECT user_id, user_code, first_name, last_name, mobile, email, profile_image_url,
-			mobile_verified, email_verified, status::text, last_login_at, created_at, updated_at
+			mobile_verified, email_verified, onboarding_completed, initial_activity,
+			onboarding_completed_at, status::text, last_login_at, created_at, updated_at
 		FROM public.users
 		%s
 	`, where)
@@ -279,6 +279,8 @@ func scanUserRow(row interface {
 	var lastName sql.NullString
 	var email sql.NullString
 	var profileImageURL sql.NullString
+	var initialActivity sql.NullString
+	var onboardingCompletedAt sql.NullTime
 	var lastLoginAt sql.NullTime
 
 	err := row.Scan(
@@ -291,6 +293,9 @@ func scanUserRow(row interface {
 		&profileImageURL,
 		&user.MobileVerified,
 		&user.EmailVerified,
+		&user.OnboardingCompleted,
+		&initialActivity,
+		&onboardingCompletedAt,
 		&user.Status,
 		&lastLoginAt,
 		&user.CreatedAt,
@@ -308,6 +313,12 @@ func scanUserRow(row interface {
 	}
 	if profileImageURL.Valid {
 		user.ProfileImageURL = &profileImageURL.String
+	}
+	if initialActivity.Valid {
+		user.InitialActivity = &initialActivity.String
+	}
+	if onboardingCompletedAt.Valid {
+		user.OnboardingCompletedAt = &onboardingCompletedAt.Time
 	}
 	if lastLoginAt.Valid {
 		user.LastLoginAt = &lastLoginAt.Time

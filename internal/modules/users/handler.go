@@ -66,6 +66,24 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, UserResponse{User: user})
 }
 
+// CompleteOnboarding marks the user's one-time mobile onboarding as complete.
+func (h *Handler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	var req CompleteOnboardingRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	user, err := h.service.CompleteOnboarding(r.Context(), actor, req)
+	if err != nil {
+		writeUsersError(w, err)
+		return
+	}
+	response.OK(w, UserResponse{User: user})
+}
+
 // UploadAvatar handles POST /api/v1/users/me/avatar
 // Accepts multipart/form-data with field "avatar" (max 5 MB).
 // Uploads to MinIO profile-images bucket and updates the user's profile_image_url.

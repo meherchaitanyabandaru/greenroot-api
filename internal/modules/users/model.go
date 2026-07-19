@@ -3,28 +3,32 @@ package users
 import "time"
 
 const (
-	activityUpdateProfile = "UPDATE_PROFILE"
-	activityCreateAddress = "CREATE_ADDRESS"
-	activityUpdateAddress = "UPDATE_ADDRESS"
-	activityDeleteAddress = "DELETE_ADDRESS"
+	activityUpdateProfile      = "UPDATE_PROFILE"
+	activityCompleteOnboarding = "COMPLETE_ONBOARDING"
+	activityCreateAddress      = "CREATE_ADDRESS"
+	activityUpdateAddress      = "UPDATE_ADDRESS"
+	activityDeleteAddress      = "DELETE_ADDRESS"
 )
 
 type User struct {
-	ID              int64      `json:"id"`
-	UserCode        string     `json:"user_code"`
-	FirstName       string     `json:"first_name"`
-	LastName        *string    `json:"last_name,omitempty"`
-	Gender          *string    `json:"gender,omitempty"`
-	Mobile          string     `json:"mobile"`
-	Email           *string    `json:"email,omitempty"`
-	ProfileImageURL *string    `json:"profile_image_url,omitempty"`
-	MobileVerified  bool       `json:"mobile_verified"`
-	EmailVerified   bool       `json:"email_verified"`
-	Status          string     `json:"status"`
-	LastLoginAt     *time.Time `json:"last_login_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
-	Roles           []Role     `json:"roles,omitempty"`
+	ID                    int64      `json:"id"`
+	UserCode              string     `json:"user_code"`
+	FirstName             string     `json:"first_name"`
+	LastName              *string    `json:"last_name,omitempty"`
+	Gender                *string    `json:"gender,omitempty"`
+	Mobile                string     `json:"mobile"`
+	Email                 *string    `json:"email,omitempty"`
+	ProfileImageURL       *string    `json:"profile_image_url,omitempty"`
+	MobileVerified        bool       `json:"mobile_verified"`
+	EmailVerified         bool       `json:"email_verified"`
+	OnboardingCompleted   bool       `json:"onboarding_completed"`
+	InitialActivity       *string    `json:"initial_activity,omitempty"`
+	OnboardingCompletedAt *time.Time `json:"onboarding_completed_at,omitempty"`
+	Status                string     `json:"status"`
+	LastLoginAt           *time.Time `json:"last_login_at,omitempty"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
+	Roles                 []Role     `json:"roles,omitempty"`
 }
 
 type Address struct {

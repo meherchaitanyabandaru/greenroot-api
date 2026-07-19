@@ -29,6 +29,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 	router.Route("/users", func(r chi.Router) {
 		r.Get("/me", m.handler.Me)
 		r.Put("/me", m.handler.UpdateMe)
+		r.Post("/me/onboarding", m.handler.CompleteOnboarding)
 		r.Delete("/me", m.handler.DeleteAccount)
 		r.Post("/me/avatar", m.handler.UploadAvatar)
 		r.Get("/{id}", m.handler.GetUser)

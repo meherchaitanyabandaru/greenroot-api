@@ -58,6 +58,17 @@ func (m *mockRepo) UpdateProfile(_ context.Context, userID int64, input UpdatePr
 	return u, nil
 }
 
+func (m *mockRepo) CompleteOnboarding(_ context.Context, userID int64, initialActivity string, at time.Time) (*User, error) {
+	u, ok := m.users[userID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	u.OnboardingCompleted = true
+	u.InitialActivity = &initialActivity
+	u.OnboardingCompletedAt = &at
+	return u, nil
+}
+
 func (m *mockRepo) ListAddresses(_ context.Context, userID int64) ([]Address, error) {
 	var result []Address
 	for _, a := range m.addresses {

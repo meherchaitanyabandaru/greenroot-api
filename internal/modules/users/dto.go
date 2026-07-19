@@ -10,6 +10,10 @@ type UpdateProfileRequest struct {
 	Gender          *string `json:"gender,omitempty"`
 }
 
+type CompleteOnboardingRequest struct {
+	InitialActivity string `json:"initial_activity"`
+}
+
 type CreateAddressRequest struct {
 	AddressType         *string    `json:"address_type"`
 	ContactName         *string    `json:"contact_name"`

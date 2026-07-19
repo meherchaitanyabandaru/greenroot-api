@@ -12,6 +12,7 @@ var ErrNotFound = errors.New("not found")
 type Repository interface {
 	FindUserByID(ctx context.Context, userID int64) (*User, error)
 	UpdateProfile(ctx context.Context, userID int64, input UpdateProfileRequest, at time.Time) (*User, error)
+	CompleteOnboarding(ctx context.Context, userID int64, initialActivity string, at time.Time) (*User, error)
 	ListAddresses(ctx context.Context, userID int64) ([]Address, error)
 	CreateAddress(ctx context.Context, userID int64, input CreateAddressRequest) (*Address, error)
 	UpdateAddress(ctx context.Context, userID int64, addressID int64, input UpdateAddressRequest) (*Address, error)
@@ -71,7 +72,8 @@ func (r *PostgresRepository) UpdateProfile(ctx context.Context, userID int64, in
 			updated_by = $1
 		WHERE user_id = $1 AND deleted_at IS NULL
 		RETURNING user_id, user_code, first_name, last_name, gender::text, mobile, email, profile_image_url,
-			mobile_verified, email_verified, status::text, last_login_at, created_at, updated_at
+			mobile_verified, email_verified, onboarding_completed, initial_activity, onboarding_completed_at,
+			status::text, last_login_at, created_at, updated_at
 	`
 	user, err := scanUserRow(r.db.QueryRowContext(
 		ctx,
@@ -84,6 +86,30 @@ func (r *PostgresRepository) UpdateProfile(ctx context.Context, userID int64, in
 		stringOrEmpty(input.ProfileImageURL),
 		at,
 	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	user.Roles, _ = r.ListRoles(ctx, user.ID)
+	return user, nil
+}
+
+func (r *PostgresRepository) CompleteOnboarding(ctx context.Context, userID int64, initialActivity string, at time.Time) (*User, error) {
+	const query = `
+		UPDATE public.users
+		SET onboarding_completed = true,
+			initial_activity = $2,
+			onboarding_completed_at = COALESCE(onboarding_completed_at, $3),
+			updated_at = $3,
+			updated_by = $1
+		WHERE user_id = $1 AND deleted_at IS NULL
+		RETURNING user_id, user_code, first_name, last_name, gender::text, mobile, email, profile_image_url,
+			mobile_verified, email_verified, onboarding_completed, initial_activity, onboarding_completed_at,
+			status::text, last_login_at, created_at, updated_at
+	`
+	user, err := scanUserRow(r.db.QueryRowContext(ctx, query, userID, initialActivity, at))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -450,8 +476,9 @@ func (r *PostgresRepository) SoftDeleteAccount(ctx context.Context, userID int64
 func (r *PostgresRepository) scanUser(ctx context.Context, where string, args ...any) (*User, error) {
 	query := `
 		SELECT user_id, user_code, first_name, last_name, gender::text, mobile, email, profile_image_url,
-			COALESCE(mobile_verified, false), COALESCE(email_verified, false), COALESCE(status::text, ''),
-			last_login_at, created_at, updated_at
+			COALESCE(mobile_verified, false), COALESCE(email_verified, false),
+			COALESCE(onboarding_completed, false), initial_activity, onboarding_completed_at,
+			COALESCE(status::text, ''), last_login_at, created_at, updated_at
 		FROM public.users
 		` + where
 
@@ -465,7 +492,8 @@ func (r *PostgresRepository) scanUser(ctx context.Context, where string, args ..
 func scanUserRow(row interface{ Scan(dest ...any) error }) (*User, error) {
 	var user User
 	var lastName, gender, email, profileImageURL sql.NullString
-	var lastLoginAt, createdAt, updatedAt sql.NullTime
+	var initialActivity sql.NullString
+	var lastLoginAt, createdAt, updatedAt, onboardingCompletedAt sql.NullTime
 	if err := row.Scan(
 		&user.ID,
 		&user.UserCode,
@@ -477,6 +505,9 @@ func scanUserRow(row interface{ Scan(dest ...any) error }) (*User, error) {
 		&profileImageURL,
 		&user.MobileVerified,
 		&user.EmailVerified,
+		&user.OnboardingCompleted,
+		&initialActivity,
+		&onboardingCompletedAt,
 		&user.Status,
 		&lastLoginAt,
 		&createdAt,
@@ -488,6 +519,10 @@ func scanUserRow(row interface{ Scan(dest ...any) error }) (*User, error) {
 	user.Gender = nullableString(gender)
 	user.Email = nullableString(email)
 	user.ProfileImageURL = nullableString(profileImageURL)
+	user.InitialActivity = nullableString(initialActivity)
+	if onboardingCompletedAt.Valid {
+		user.OnboardingCompletedAt = &onboardingCompletedAt.Time
+	}
 	if lastLoginAt.Valid {
 		user.LastLoginAt = &lastLoginAt.Time
 	}
