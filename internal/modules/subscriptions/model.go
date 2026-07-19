@@ -1,6 +1,10 @@
 package subscriptions
 
-import "time"
+import (
+	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+)
 
 const (
 	actionInsert = "INSERT"
@@ -32,20 +36,39 @@ type SubscriptionPlan struct {
 }
 
 type UserSubscription struct {
-	ID               int64      `json:"id"`
-	SubscriptionCode string     `json:"subscription_code"`
-	UserID           int64      `json:"user_id"`
-	PlanID           int64      `json:"plan_id"`
-	PlanCode         string     `json:"plan_code"`
-	PlanName         string     `json:"plan_name"`
-	StartDate        time.Time  `json:"start_date"`
-	EndDate          *time.Time `json:"end_date,omitempty"`
-	Status           string     `json:"subscription_status"`
-	AutoRenew        bool       `json:"auto_renew"`
-	DaysRemaining    *int       `json:"days_remaining,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
-	LatestPayment    *Payment   `json:"latest_payment,omitempty"`
+	ID               int64                           `json:"id"`
+	SubscriptionCode string                          `json:"subscription_code"`
+	UserID           int64                           `json:"user_id"`
+	PlanID           int64                           `json:"plan_id"`
+	PlanCode         string                          `json:"plan_code"`
+	PlanName         string                          `json:"plan_name"`
+	StartDate        time.Time                       `json:"start_date"`
+	EndDate          *time.Time                      `json:"end_date,omitempty"`
+	Status           string                          `json:"subscription_status"`
+	AutoRenew        bool                            `json:"auto_renew"`
+	DaysRemaining    *int                            `json:"days_remaining,omitempty"`
+	CreatedAt        time.Time                       `json:"created_at"`
+	UpdatedAt        *time.Time                      `json:"updated_at,omitempty"`
+	LatestPayment    *Payment                        `json:"latest_payment,omitempty"`
+	Lifecycle        *lifecycle.SubscriptionDisplays `json:"lifecycle,omitempty"`
+	Capabilities     *SubscriptionCapabilities       `json:"capabilities,omitempty"`
+	Summary          *SubscriptionSummary            `json:"summary,omitempty"`
+}
+
+type SubscriptionCapabilities struct {
+	CanRenew        bool `json:"can_renew"`
+	CanCancel       bool `json:"can_cancel"`
+	CanPause        bool `json:"can_pause"`
+	CanResume       bool `json:"can_resume"`
+	CanChangePlan   bool `json:"can_change_plan"`
+	CanRetryPayment bool `json:"can_retry_payment"`
+}
+
+type SubscriptionSummary struct {
+	IsActive       bool   `json:"is_active"`
+	IsExpired      bool   `json:"is_expired"`
+	IsExpiringSoon bool   `json:"is_expiring_soon"`
+	PaymentStatus  string `json:"payment_status,omitempty"`
 }
 
 type Payment struct {

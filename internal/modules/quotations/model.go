@@ -1,6 +1,10 @@
 package quotations
 
-import "time"
+import (
+	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+)
 
 const (
 	actionInsert = "INSERT"
@@ -27,20 +31,42 @@ type Quotation struct {
 	RecipientName   *string `json:"recipient_name,omitempty"`
 	RecipientMobile *string `json:"recipient_mobile,omitempty"`
 	// Conversion
-	ConvertedOrderID    *int64          `json:"converted_order_id,omitempty"`
-	ConvertedOrderCode  *string         `json:"converted_order_code,omitempty"`
-	ConvertedAt         *time.Time      `json:"converted_at,omitempty"`
-	Notes               *string         `json:"notes,omitempty"`
-	RejectionReason     *string         `json:"rejection_reason,omitempty"`
-	TotalAmount         float64         `json:"total_amount"`
-	Status              string          `json:"status"`
-	ValidUntil          *time.Time      `json:"valid_until,omitempty"`
-	SentAt              *time.Time      `json:"sent_at,omitempty"`
-	CustomerRespondedAt *time.Time      `json:"customer_responded_at,omitempty"`
-	DeletedAt           *time.Time      `json:"deleted_at,omitempty"`
-	CreatedAt           time.Time       `json:"created_at"`
-	UpdatedAt           time.Time       `json:"updated_at"`
-	Items               []QuotationItem `json:"items,omitempty"`
+	ConvertedOrderID    *int64                       `json:"converted_order_id,omitempty"`
+	ConvertedOrderCode  *string                      `json:"converted_order_code,omitempty"`
+	ConvertedAt         *time.Time                   `json:"converted_at,omitempty"`
+	Notes               *string                      `json:"notes,omitempty"`
+	RejectionReason     *string                      `json:"rejection_reason,omitempty"`
+	TotalAmount         float64                      `json:"total_amount"`
+	Status              string                       `json:"status"`
+	ValidUntil          *time.Time                   `json:"valid_until,omitempty"`
+	SentAt              *time.Time                   `json:"sent_at,omitempty"`
+	CustomerRespondedAt *time.Time                   `json:"customer_responded_at,omitempty"`
+	DeletedAt           *time.Time                   `json:"deleted_at,omitempty"`
+	CreatedAt           time.Time                    `json:"created_at"`
+	UpdatedAt           time.Time                    `json:"updated_at"`
+	Items               []QuotationItem              `json:"items,omitempty"`
+	Lifecycle           *lifecycle.QuotationDisplays `json:"lifecycle,omitempty"`
+	Capabilities        *QuotationCapabilities       `json:"capabilities,omitempty"`
+	ExpirySummary       *QuotationExpirySummary      `json:"expiry_summary,omitempty"`
+}
+
+type QuotationCapabilities struct {
+	CanEdit              bool `json:"can_edit"`
+	CanUpdateCustomer    bool `json:"can_update_customer"`
+	CanDelete            bool `json:"can_delete"`
+	CanSend              bool `json:"can_send"`
+	CanRecall            bool `json:"can_recall"`
+	CanAccept            bool `json:"can_accept"`
+	CanReject            bool `json:"can_reject"`
+	CanConvert           bool `json:"can_convert"`
+	CanAssignManager     bool `json:"can_assign_manager"`
+	CanGenerateDocument  bool `json:"can_generate_document"`
+	CanManageVerifyToken bool `json:"can_manage_verify_token"`
+}
+
+type QuotationExpirySummary struct {
+	IsExpired     bool `json:"is_expired"`
+	DaysRemaining *int `json:"days_remaining,omitempty"`
 }
 
 type QuotationItem struct {

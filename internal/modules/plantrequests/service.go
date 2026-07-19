@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 )
 
 var (
@@ -34,6 +35,9 @@ func (s *Service) List(ctx context.Context, actor ActorContext, input ListReques
 	if err != nil {
 		return nil, Pagination{}, err
 	}
+	for i := range requests {
+		requests[i] = s.enrichPlantRequest(ctx, actor, requests[i])
+	}
 	return requests, Pagination{Page: input.Page, PerPage: input.PerPage, Total: total, TotalPages: totalPages(total, input.PerPage)}, nil
 }
 
@@ -45,7 +49,7 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, requestID int64) 
 	if err != nil {
 		return PlantRequest{}, err
 	}
-	return *request, nil
+	return s.enrichPlantRequest(ctx, actor, *request), nil
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateRequest) (PlantRequest, error) {
@@ -61,7 +65,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateRe
 		return PlantRequest{}, err
 	}
 	s.audit(ctx, actor, "plant_requests", request.ID, actionInsert, input)
-	return *request, nil
+	return s.enrichPlantRequest(ctx, actor, *request), nil
 }
 
 func (s *Service) Update(ctx context.Context, actor ActorContext, requestID int64, input UpdateRequest) (PlantRequest, error) {
@@ -77,7 +81,7 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, requestID int6
 		return PlantRequest{}, err
 	}
 	s.audit(ctx, actor, "plant_requests", request.ID, actionUpdate, input)
-	return *request, nil
+	return s.enrichPlantRequest(ctx, actor, *request), nil
 }
 
 // UpdateStatus advances the request lifecycle (OPEN → ACCEPTED, CLOSED, REJECTED, etc.)
@@ -99,7 +103,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, requestI
 		return PlantRequest{}, err
 	}
 	s.audit(ctx, actor, "plant_requests", requestID, actionUpdate, input)
-	return *request, nil
+	return s.enrichPlantRequest(ctx, actor, *request), nil
 }
 
 func (s *Service) Delete(ctx context.Context, actor ActorContext, requestID int64) error {
@@ -202,6 +206,50 @@ func canUseRequests(actor ActorContext) bool {
 	// Per business rules: managers usually perform sourcing work and need full access
 	return hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") ||
 		hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER")
+}
+
+func (s *Service) enrichPlantRequest(ctx context.Context, actor ActorContext, request PlantRequest) PlantRequest {
+	status := strings.ToUpper(strings.TrimSpace(request.Status))
+	canManage := s.canManageNursery(ctx, actor, request.RequestingNurseryID) == nil
+	canUse := canUseRequests(actor)
+	openForResponses := status == "OPEN" || status == "PARTIALLY_ACCEPTED"
+
+	request.Lifecycle = ptr(lifecycle.PlantRequest(status))
+	request.Summary = plantRequestSummary(request)
+	request.Capabilities = &PlantRequestCapabilities{
+		CanEdit:           canManage && (status == "DRAFT" || status == "OPEN"),
+		CanDelete:         canManage && (status == "DRAFT" || status == "OPEN" || status == "REJECTED"),
+		CanPublish:        canManage && status == "DRAFT",
+		CanClose:          canManage && openForResponses,
+		CanReject:         canManage && (status == "DRAFT" || status == "OPEN"),
+		CanRespond:        canUse && openForResponses,
+		CanAcceptResponse: canManage && openForResponses,
+		CanRejectResponse: canManage && openForResponses,
+	}
+	return request
+}
+
+func plantRequestSummary(request PlantRequest) *PlantRequestSummary {
+	summary := PlantRequestSummary{RemainingQuantity: request.QuantityRequired}
+	for _, response := range request.Responses {
+		summary.ResponseCount++
+		switch strings.ToUpper(strings.TrimSpace(response.Status)) {
+		case "ACCEPTED":
+			summary.AcceptedResponseCount++
+			summary.AcceptedQuantity += response.AvailableQuantity
+		case "AVAILABLE", "PARTIAL":
+			summary.AvailableQuantity += response.AvailableQuantity
+		}
+	}
+	summary.RemainingQuantity = request.QuantityRequired - summary.AcceptedQuantity
+	if summary.RemainingQuantity < 0 {
+		summary.RemainingQuantity = 0
+	}
+	return &summary
+}
+
+func ptr[T any](value T) *T {
+	return &value
 }
 
 func normalizeList(input ListRequestsRequest) ListRequestsRequest {

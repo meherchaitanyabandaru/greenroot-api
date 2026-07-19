@@ -17,6 +17,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
 )
@@ -135,6 +136,9 @@ func (s *Service) List(ctx context.Context, actor ActorContext, input ListQuotat
 			redactCustomerContact(&qs[i])
 		}
 	}
+	for i := range qs {
+		qs[i] = enrichQuotation(actor, qs[i])
+	}
 	return qs, Pagination{
 		Page:       input.Page,
 		PerPage:    input.PerPage,
@@ -154,7 +158,7 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, id int64) (Quotat
 	if isManagerOnly(actor) {
 		redactCustomerContact(q)
 	}
-	return *q, nil
+	return enrichQuotation(actor, *q), nil
 }
 
 func (s *Service) RenderPDF(ctx context.Context, actor ActorContext, id int64) ([]byte, string, error) {
@@ -249,7 +253,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQu
 	}
 	s.scheduleQuotationExpiry(ctx, q)
 	s.audit(ctx, actor, auditlog.EntityQuotation, q.ID, actionInsert, input)
-	return *q, nil
+	return enrichQuotation(actor, *q), nil
 }
 
 func (s *Service) scheduleQuotationExpiry(ctx context.Context, q *Quotation) {
@@ -322,7 +326,7 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, inpu
 	}
 	s.scheduleQuotationExpiry(ctx, updated)
 	s.audit(ctx, actor, auditlog.EntityQuotation, id, actionUpdate, input)
-	return *updated, nil
+	return enrichQuotation(actor, *updated), nil
 }
 
 func (s *Service) UpdateCustomer(ctx context.Context, actor ActorContext, id int64, input UpdateQuotationCustomerRequest) (Quotation, error) {
@@ -357,7 +361,7 @@ func (s *Service) UpdateCustomer(ctx context.Context, actor ActorContext, id int
 		return Quotation{}, err
 	}
 	s.audit(ctx, actor, auditlog.EntityQuotation, id, actionUpdate, map[string]any{"customer": input})
-	return *updated, nil
+	return enrichQuotation(actor, *updated), nil
 }
 
 func (s *Service) Delete(ctx context.Context, actor ActorContext, id int64) error {
@@ -423,7 +427,7 @@ func (s *Service) SendToCustomer(ctx context.Context, actor ActorContext, quotat
 			"Quotation Ready for Review",
 			fmt.Sprintf("Quotation %s from %s is ready for your review.", approved.QuotationCode, nurseryName))
 	}
-	return *approved, nil
+	return enrichQuotation(actor, *approved), nil
 }
 
 // Approve is kept as a backward-compatible alias for older clients.
@@ -454,7 +458,7 @@ func (s *Service) Recall(ctx context.Context, actor ActorContext, quotationID in
 		return Quotation{}, err
 	}
 	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_DRAFT", "recalled": true})
-	return *recalled, nil
+	return enrichQuotation(actor, *recalled), nil
 }
 
 // ConvertToOrder auto-creates a PENDING order from the quotation's items and marks it CONVERTED.
@@ -487,7 +491,7 @@ func (s *Service) ConvertToOrder(ctx context.Context, actor ActorContext, quotat
 		return Quotation{}, err
 	}
 	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, actionUpdate, map[string]any{"status": "CONVERTED", "order_id": orderID})
-	return *converted, nil
+	return enrichQuotation(actor, *converted), nil
 }
 
 // AssignManager assigns an active nursery member as the responsible manager for a quotation.
@@ -527,7 +531,7 @@ func (s *Service) AssignManager(ctx context.Context, actor ActorContext, quotati
 		"QUOTATION_ASSIGNED",
 		"Quotation Assigned to You",
 		fmt.Sprintf("You have been assigned to quotation %s.", updated.QuotationCode))
-	return *updated, nil
+	return enrichQuotation(actor, *updated), nil
 }
 
 // UnassignManager removes the assigned manager from a quotation, making it owner-private again.
@@ -550,7 +554,7 @@ func (s *Service) UnassignManager(ctx context.Context, actor ActorContext, quota
 		return Quotation{}, err
 	}
 	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, actionUpdate, map[string]any{"assigned_manager_user_id": nil})
-	return *updated, nil
+	return enrichQuotation(actor, *updated), nil
 }
 
 // BuyerAccept lets the buyer accept a quotation that has been sent to them.
@@ -582,7 +586,7 @@ func (s *Service) BuyerAccept(ctx context.Context, actor ActorContext, quotation
 			"Quotation Accepted",
 			fmt.Sprintf("Buyer accepted quotation %s.", updated.QuotationCode))
 	}
-	return *updated, nil
+	return enrichQuotation(actor, *updated), nil
 }
 
 // BuyerReject lets the buyer reject a quotation that has been sent to them.
@@ -622,7 +626,7 @@ func (s *Service) BuyerReject(ctx context.Context, actor ActorContext, quotation
 			"Quotation Rejected",
 			msg)
 	}
-	return *updated, nil
+	return enrichQuotation(actor, *updated), nil
 }
 
 func (s *Service) enqueueNotification(ctx context.Context, userID int64, notifType, title, message string) {
@@ -813,6 +817,62 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 	input.Buying = true
 	input.UserID = actor.UserID
 	return nil
+}
+
+func enrichQuotation(actor ActorContext, q Quotation) Quotation {
+	status := strings.ToUpper(strings.TrimSpace(q.Status))
+	q.Lifecycle = lifecyclePtr(lifecycle.Quotation(status))
+	q.ExpirySummary = quotationExpirySummary(q.ValidUntil)
+	q.Capabilities = quotationCapabilities(actor, q, status)
+	return q
+}
+
+func quotationCapabilities(actor ActorContext, q Quotation, status string) *QuotationCapabilities {
+	isAdmin := hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN")
+	isSeller := isAdmin || hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER")
+	isOwnerRole := isAdmin || hasRole(actor, "NURSERY_OWNER")
+	isCustomer := isAdmin || (q.CustomerUserID != nil && *q.CustomerUserID == actor.UserID)
+	isEditable := editableStatuses[status] && q.ConvertedOrderID == nil
+	isCustomerSent := status == "CUSTOMER_SENT" && !isExpired(q.ValidUntil)
+
+	assignedToOther := q.AssignedManagerUserID != nil && *q.AssignedManagerUserID != actor.UserID && !isOwnerRole
+
+	return &QuotationCapabilities{
+		CanEdit:              isSeller && isEditable && !assignedToOther,
+		CanUpdateCustomer:    isOwnerRole && q.QuotationType == "CUSTOMER" && q.ConvertedOrderID == nil && q.CustomerRespondedAt == nil,
+		CanDelete:            isOwnerRole && q.ConvertedOrderID == nil,
+		CanSend:              isSeller && status == "CUSTOMER_DRAFT",
+		CanRecall:            isSeller && status == "CUSTOMER_SENT",
+		CanAccept:            isCustomer && isCustomerSent,
+		CanReject:            isCustomer && isCustomerSent,
+		CanConvert:           isSeller && status == "CUSTOMER_ACCEPTED" && q.ConvertedOrderID == nil,
+		CanAssignManager:     isOwnerRole && q.ConvertedOrderID == nil,
+		CanGenerateDocument:  isSeller && q.DeletedAt == nil,
+		CanManageVerifyToken: isSeller && q.DeletedAt == nil,
+	}
+}
+
+func quotationExpirySummary(validUntil *time.Time) *QuotationExpirySummary {
+	if validUntil == nil {
+		return nil
+	}
+	now := time.Now()
+	days := int(validUntil.Sub(now).Hours() / 24)
+	if validUntil.After(now) && days == 0 {
+		days = 1
+	}
+	return &QuotationExpirySummary{
+		IsExpired:     validUntil.Before(now),
+		DaysRemaining: &days,
+	}
+}
+
+func isExpired(validUntil *time.Time) bool {
+	return validUntil != nil && time.Now().After(*validUntil)
+}
+
+func lifecyclePtr[T any](value T) *T {
+	return &value
 }
 
 // ── validation ────────────────────────────────────────────────────────────────
@@ -1042,7 +1102,7 @@ func (s *Service) GetByToken(ctx context.Context, actor ActorContext, token stri
 
 	s.audit(ctx, actor, auditlog.EntityQuotation, q.ID, auditlog.ActionDownload,
 		map[string]any{"event": "full_view_by_token"})
-	return *q, nil
+	return enrichQuotation(actor, *q), nil
 }
 
 func (s *Service) verifyURL(token string) string {

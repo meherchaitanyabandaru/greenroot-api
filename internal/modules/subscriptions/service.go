@@ -13,6 +13,7 @@ import (
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -108,6 +109,9 @@ func (s *Service) List(ctx context.Context, actor ActorContext, input ListSubscr
 	if err != nil {
 		return nil, Pagination{}, err
 	}
+	for i := range subscriptions {
+		subscriptions[i] = enrichSubscription(actor, subscriptions[i])
+	}
 	return subscriptions, Pagination{Page: input.Page, PerPage: input.PerPage, Total: total, TotalPages: totalPages(total, input.PerPage)}, nil
 }
 
@@ -119,7 +123,7 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, subscriptionID in
 	if err := s.canAccess(actor, *subscription); err != nil {
 		return UserSubscription{}, err
 	}
-	return *subscription, nil
+	return enrichSubscription(actor, *subscription), nil
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateSubscriptionRequest) (UserSubscription, error) {
@@ -176,7 +180,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateSu
 	}
 	s.scheduleSubscriptionExpiry(ctx, subscription)
 	s.audit(ctx, actor, subscription.ID, actionInsert, map[string]any{"plan_id": input.PlanID, "user_id": userID, "billing_cycle": input.BillingCycle, "promo_code": input.PromoCode})
-	return *subscription, nil
+	return enrichSubscription(actor, *subscription), nil
 }
 
 func (s *Service) Me(ctx context.Context, actor ActorContext) ([]UserSubscription, Pagination, error) {
@@ -206,7 +210,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, subscrip
 		return UserSubscription{}, err
 	}
 	s.audit(ctx, actor, subscription.ID, actionUpdate, map[string]any{"subscription_status": status})
-	return *subscription, nil
+	return enrichSubscription(actor, *subscription), nil
 }
 
 func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID int64, input RenewSubscriptionRequest) (UserSubscription, error) {
@@ -256,7 +260,7 @@ func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID 
 	}
 	s.scheduleSubscriptionExpiry(ctx, subscription)
 	s.audit(ctx, actor, subscription.ID, actionUpdate, map[string]any{"renewed_until": endDate.Format(time.DateOnly), "billing_cycle": input.BillingCycle, "promo_code": input.PromoCode})
-	return *subscription, nil
+	return enrichSubscription(actor, *subscription), nil
 }
 
 func (s *Service) scheduleSubscriptionExpiry(ctx context.Context, subscription *UserSubscription) {
@@ -290,7 +294,7 @@ func (s *Service) Cancel(ctx context.Context, actor ActorContext, subscriptionID
 		return UserSubscription{}, err
 	}
 	s.audit(ctx, actor, subscription.ID, actionUpdate, map[string]any{"subscription_status": statusCancelled, "reason": stringOrEmpty(input.Reason), "cancel_immediately": input.CancelImmediately})
-	return *subscription, nil
+	return enrichSubscription(actor, *subscription), nil
 }
 
 func (s *Service) ListPayments(ctx context.Context, actor ActorContext, subscriptionID int64) ([]Payment, error) {
@@ -331,6 +335,51 @@ func (s *Service) CreateTrialForOwner(ctx context.Context, ownerUserID int64, ap
 		return nil
 	}
 	return err
+}
+
+func enrichSubscription(actor ActorContext, subscription UserSubscription) UserSubscription {
+	status := strings.ToUpper(strings.TrimSpace(subscription.Status))
+	daysRemaining := subscription.DaysRemaining
+	if daysRemaining == nil && subscription.EndDate != nil {
+		days := int(subscription.EndDate.Sub(time.Now()).Hours() / 24)
+		if subscription.EndDate.After(time.Now()) && days == 0 {
+			days = 1
+		}
+		daysRemaining = &days
+		subscription.DaysRemaining = daysRemaining
+	}
+	isAdmin := hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN")
+	isOwner := subscription.UserID == actor.UserID
+	isActive := status == statusActive
+	isExpired := status == statusExpired || (daysRemaining != nil && *daysRemaining < 0)
+	isExpiringSoon := isActive && daysRemaining != nil && *daysRemaining >= 0 && *daysRemaining <= 14
+	paymentStatus := ""
+	canRetryPayment := false
+	if subscription.LatestPayment != nil {
+		paymentStatus = strings.ToUpper(strings.TrimSpace(subscription.LatestPayment.Status))
+		canRetryPayment = paymentStatus == "FAILED" || paymentStatus == "PENDING"
+	}
+
+	subscription.Lifecycle = lifecyclePtr(lifecycle.Subscription(status, daysRemaining))
+	subscription.Summary = &SubscriptionSummary{
+		IsActive:       isActive,
+		IsExpired:      isExpired,
+		IsExpiringSoon: isExpiringSoon,
+		PaymentStatus:  paymentStatus,
+	}
+	subscription.Capabilities = &SubscriptionCapabilities{
+		CanRenew:        isOwner || isAdmin,
+		CanCancel:       (isOwner || isAdmin) && (status == statusActive || status == statusPaused),
+		CanPause:        isAdmin && status == statusActive,
+		CanResume:       isAdmin && status == statusPaused,
+		CanChangePlan:   isOwner || isAdmin,
+		CanRetryPayment: (isOwner || isAdmin) && canRetryPayment,
+	}
+	return subscription
+}
+
+func lifecyclePtr[T any](value T) *T {
+	return &value
 }
 
 func (s *Service) canAccess(actor ActorContext, subscription UserSubscription) error {
