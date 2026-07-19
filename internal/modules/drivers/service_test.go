@@ -9,10 +9,10 @@ import (
 // ─── mock repository ─────────────────────────────────────────────────────────
 
 type mockRepo struct {
-	drivers    map[int64]*Driver       // driverID → Driver
-	byUserID   map[int64]*Driver       // userID → Driver
-	owners     map[int64]bool          // userID → owns a nursery
-	duplicates map[string]bool         // licenseNumber → exists
+	drivers    map[int64]*Driver // driverID → Driver
+	byUserID   map[int64]*Driver // userID → Driver
+	owners     map[int64]bool    // userID → owns a nursery
+	duplicates map[string]bool   // licenseNumber → exists
 	nextID     int64
 }
 
@@ -127,11 +127,15 @@ func (m *mockRepo) CreateLocation(_ context.Context, driverID, actorID int64, in
 
 // ─── actors ──────────────────────────────────────────────────────────────────
 
-func adminActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
-func superActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"SUPER_ADMIN"}} }
+func adminActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
+func superActor(id int64) ActorContext {
+	return ActorContext{UserID: id, Roles: []string{"SUPER_ADMIN"}}
+}
 func driverActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"DRIVER"}} }
 func buyerActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
-func ownerActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}} }
+func ownerActor(id int64) ActorContext {
+	return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}}
+}
 
 func ptr[T any](v T) *T { return &v }
 

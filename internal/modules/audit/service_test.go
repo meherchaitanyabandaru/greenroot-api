@@ -27,7 +27,9 @@ func (m *mockRepo) ListSecurity(_ context.Context, _ ListSecurityRequest) ([]Sec
 
 func adminActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
 func buyerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
-func ownerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}} }
+func ownerActor(id int64) ActorContext {
+	return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}}
+}
 
 func svc(repo *mockRepo) *Service { return NewService(repo) }
 

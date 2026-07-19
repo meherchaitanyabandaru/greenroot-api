@@ -131,13 +131,27 @@ func (r *PostgresRepository) ListSecurity(ctx context.Context, in ListSecurityRe
 		); err != nil {
 			return nil, 0, err
 		}
-		if desc.Valid { s.Description = &desc.String }
-		if userID.Valid { s.UserID = &userID.Int64 }
-		if nurseryID.Valid { s.NurseryID = &nurseryID.Int64 }
-		if reqID.Valid { s.RequestID = &reqID.String }
-		if ip.Valid { s.IPAddress = &ip.String }
-		if deviceInfo.Valid { s.DeviceInfo = &deviceInfo.String }
-		if metadata.Valid { s.Metadata = &metadata.String }
+		if desc.Valid {
+			s.Description = &desc.String
+		}
+		if userID.Valid {
+			s.UserID = &userID.Int64
+		}
+		if nurseryID.Valid {
+			s.NurseryID = &nurseryID.Int64
+		}
+		if reqID.Valid {
+			s.RequestID = &reqID.String
+		}
+		if ip.Valid {
+			s.IPAddress = &ip.String
+		}
+		if deviceInfo.Valid {
+			s.DeviceInfo = &deviceInfo.String
+		}
+		if metadata.Valid {
+			s.Metadata = &metadata.String
+		}
 		out = append(out, s)
 	}
 	return out, total, rows.Err()

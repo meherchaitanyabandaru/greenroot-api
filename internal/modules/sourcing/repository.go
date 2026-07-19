@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/location"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
-	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
-var ErrNotFound     = apperrs.ErrNotFound
+var ErrNotFound = apperrs.ErrNotFound
 
 type Repository interface {
 	// Network membership
@@ -565,7 +565,6 @@ func (r *PostgresRepository) IsNurseryOwner(ctx context.Context, nurseryID int64
 		nurseryID, userID).Scan(&exists)
 	return exists, err
 }
-
 
 // ---- SQL helpers ----
 

@@ -86,10 +86,10 @@ type DispatchCapabilities struct {
 // BuildCapabilities computes the capability set for the given actor and dispatch status.
 // No database access — status string and actor roles are the only inputs.
 func BuildCapabilities(actor ActorContext, status string) DispatchCapabilities {
-	isDriver   := actor.HasRole("DRIVER")
+	isDriver := actor.HasRole("DRIVER")
 	isOperator := actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER")
-	isAdmin    := actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
-	terminal   := IsTerminal(status)
+	isAdmin := actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
+	terminal := IsTerminal(status)
 
 	return DispatchCapabilities{
 		CanAccept:         isDriver && status == "PENDING",

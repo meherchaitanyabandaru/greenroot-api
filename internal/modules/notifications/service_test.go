@@ -143,7 +143,9 @@ func (m *mockRepo) DeleteTemplate(_ context.Context, id int64) error {
 
 func adminActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
 func buyerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
-func ownerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}} }
+func ownerActor(id int64) ActorContext {
+	return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}}
+}
 
 func ptr[T any](v T) *T { return &v }
 

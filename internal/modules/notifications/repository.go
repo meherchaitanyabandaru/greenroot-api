@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
 )
 
-var ErrNotFound     = apperrs.ErrNotFound
+var ErrNotFound = apperrs.ErrNotFound
 
 type Repository interface {
 	List(ctx context.Context, input ListNotificationsRequest) ([]Notification, int64, error)
@@ -230,7 +230,6 @@ func (r *PostgresRepository) DeleteTemplate(ctx context.Context, id int64) error
 	}
 	return nil
 }
-
 
 func (r *PostgresRepository) findDevice(ctx context.Context, id int64) (*Device, error) {
 	d, err := scanDevice(r.db.QueryRowContext(ctx, deviceSelect()+" WHERE device_id=$1", id))

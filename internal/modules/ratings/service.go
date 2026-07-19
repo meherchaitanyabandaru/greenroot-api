@@ -6,7 +6,7 @@ import (
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
-var ErrForbidden    = apperrs.ErrForbidden
+var ErrForbidden = apperrs.ErrForbidden
 var ErrInvalidInput = apperrs.ErrInvalidInput
 
 type Service struct {

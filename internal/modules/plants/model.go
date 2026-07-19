@@ -1,13 +1,11 @@
 package plants
 
 import (
-	"time"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+	"time"
 )
 
 type ActorContext = authctx.ActorContext
-
-
 
 type Plant struct {
 	ID                 int64      `json:"id"`

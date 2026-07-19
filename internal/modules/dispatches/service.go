@@ -10,17 +10,17 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisgeo"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/redis/go-redis/v9"
-	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden    = apperrs.ErrForbidden
-	ErrInvalidInput = apperrs.ErrInvalidInput
+	ErrForbidden        = apperrs.ErrForbidden
+	ErrInvalidInput     = apperrs.ErrInvalidInput
 	ErrInvalidStatus    = errors.New("invalid status transition")
 	ErrDuplicate        = errors.New("duplicate dispatch")
 	ErrActiveDispatch   = errors.New("active dispatch already exists for order")

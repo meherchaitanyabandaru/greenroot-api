@@ -15,17 +15,17 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
-	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden    = apperrs.ErrForbidden
-	ErrInvalidInput = apperrs.ErrInvalidInput
+	ErrForbidden         = apperrs.ErrForbidden
+	ErrInvalidInput      = apperrs.ErrInvalidInput
 	ErrAlreadyConverted  = errors.New("quotation already converted to an order")
 	ErrCustomerRequired  = errors.New("customer information required for customer quotations")
 	ErrInvalidTransition = errors.New("action not allowed in current quotation status")

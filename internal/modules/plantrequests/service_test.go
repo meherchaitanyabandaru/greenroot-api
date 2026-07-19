@@ -30,7 +30,7 @@ func newMock() *mockRepo {
 	}
 }
 
-func mk(a, b int64) string  { return fmt.Sprintf("%d:%d", a, b) }
+func mk(a, b int64) string   { return fmt.Sprintf("%d:%d", a, b) }
 func mkPI(n, p int64) string { return fmt.Sprintf("%d:%d", n, p) }
 
 func (m *mockRepo) seedMember(nurseryID, userID int64) {
@@ -157,10 +157,12 @@ func (m *mockRepo) IsNurseryMember(_ context.Context, nurseryID, userID int64) (
 
 // ─── actors ──────────────────────────────────────────────────────────────────
 
-func adminActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
-func ownerActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}} }
+func adminActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
+func ownerActor(id int64) ActorContext {
+	return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}}
+}
 func managerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"MANAGER"}} }
-func buyerActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
+func buyerActor(id int64) ActorContext   { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
 
 func svc(repo *mockRepo) *Service { return NewService(repo, nil) }
 
@@ -381,7 +383,7 @@ func TestDelete_OwnerSuccess(t *testing.T) {
 
 func TestDelete_OtherNurseryForbidden(t *testing.T) {
 	repo := newMock()
-	repo.seedMember(2, 20) // member of nursery 2
+	repo.seedMember(2, 20)            // member of nursery 2
 	repo.seedRequest(1, 1, "OPEN", 5) // belongs to nursery 1
 
 	err := svc(repo).Delete(context.Background(), ownerActor(20), 1)
@@ -394,7 +396,7 @@ func TestDelete_OtherNurseryForbidden(t *testing.T) {
 
 func TestCreateResponse_AvailableSuccess(t *testing.T) {
 	repo := newMock()
-	repo.seedMember(2, 20) // supplier is nursery 2
+	repo.seedMember(2, 20)            // supplier is nursery 2
 	repo.seedRequest(1, 1, "OPEN", 5) // requesting nursery 1
 	repo.inventory[mkPI(2, 5)] = 100  // plenty in stock
 

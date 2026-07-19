@@ -1,12 +1,11 @@
 package notifications
 
 import (
-	"time"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+	"time"
 )
 
 type ActorContext = authctx.ActorContext
-
 
 const (
 	actionInsert = "INSERT"

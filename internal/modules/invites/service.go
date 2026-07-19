@@ -7,14 +7,14 @@ import (
 	"strings"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/redis/go-redis/v9"
-	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden    = apperrs.ErrForbidden
-	ErrInvalidInput = apperrs.ErrInvalidInput
+	ErrForbidden       = apperrs.ErrForbidden
+	ErrInvalidInput    = apperrs.ErrInvalidInput
 	ErrConflictingRole = errors.New("conflicting role")
 	ErrAlreadyMember   = errors.New("already member of another nursery")
 	ErrWrongTarget     = errors.New("invite addressed to a different person")

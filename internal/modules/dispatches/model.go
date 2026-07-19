@@ -3,12 +3,11 @@ package dispatches
 import (
 	"time"
 
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 )
 
 type ActorContext = authctx.ActorContext
-
 
 const (
 	actionInsert = "INSERT"
@@ -58,10 +57,10 @@ type Dispatch struct {
 	Notes             *string                     `json:"notes,omitempty"`
 	CreatedAt         time.Time                   `json:"created_at"`
 	UpdatedAt         *time.Time                  `json:"updated_at,omitempty"`
-	Items        []DispatchItem              `json:"items,omitempty"`
-	TripEvents   []TripEvent                 `json:"trip_events,omitempty"`
-	Lifecycle    *lifecycle.DispatchDisplays `json:"lifecycle,omitempty"`
-	Capabilities *DispatchCapabilities       `json:"capabilities,omitempty"`
+	Items             []DispatchItem              `json:"items,omitempty"`
+	TripEvents        []TripEvent                 `json:"trip_events,omitempty"`
+	Lifecycle         *lifecycle.DispatchDisplays `json:"lifecycle,omitempty"`
+	Capabilities      *DispatchCapabilities       `json:"capabilities,omitempty"`
 }
 
 type TripEvent struct {

@@ -5,7 +5,7 @@ import (
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
-var ErrForbidden    = apperrs.ErrForbidden
+var ErrForbidden = apperrs.ErrForbidden
 
 type Service struct{ repository Repository }
 
@@ -25,9 +25,15 @@ func (s *Service) ListSecurity(ctx context.Context, actor ActorContext, in ListS
 	if !actor.HasRole("ADMIN") {
 		return nil, Pagination{}, ErrForbidden
 	}
-	if in.Page <= 0 { in.Page = 1 }
-	if in.PerPage <= 0 { in.PerPage = 20 }
-	if in.PerPage > 100 { in.PerPage = 100 }
+	if in.Page <= 0 {
+		in.Page = 1
+	}
+	if in.PerPage <= 0 {
+		in.PerPage = 20
+	}
+	if in.PerPage > 100 {
+		in.PerPage = 100
+	}
 	rows, total, err := s.repository.ListSecurity(ctx, in)
 	if err != nil {
 		return nil, Pagination{}, err

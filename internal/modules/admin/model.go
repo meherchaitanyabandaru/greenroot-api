@@ -6,7 +6,6 @@ import (
 
 type ActorContext = authctx.ActorContext
 
-
 type Summary struct {
 	Users              int64   `json:"users"`
 	Nurseries          int64   `json:"nurseries"`

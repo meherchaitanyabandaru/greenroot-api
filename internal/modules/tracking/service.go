@@ -6,12 +6,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisgeo"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisgeo"
 )
 
 var ErrInvalidInput = apperrs.ErrInvalidInput
-var ErrForbidden    = apperrs.ErrForbidden
+var ErrForbidden = apperrs.ErrForbidden
 
 type Service struct {
 	repository Repository

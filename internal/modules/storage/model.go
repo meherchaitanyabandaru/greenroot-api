@@ -7,9 +7,9 @@ type PresignRequest struct {
 }
 
 type PresignResponse struct {
-	UploadURL   string `json:"upload_url"`   // PUT to this URL to upload the file (expires in 15 min)
-	FileURL     string `json:"file_url"`     // permanent URL — store this in attachments table
-	Key         string `json:"key"`          // object key inside the bucket
-	Bucket      string `json:"bucket"`
-	ExpiresInSec int   `json:"expires_in_sec"`
+	UploadURL    string `json:"upload_url"` // PUT to this URL to upload the file (expires in 15 min)
+	FileURL      string `json:"file_url"`   // permanent URL — store this in attachments table
+	Key          string `json:"key"`        // object key inside the bucket
+	Bucket       string `json:"bucket"`
+	ExpiresInSec int    `json:"expires_in_sec"`
 }

@@ -8,13 +8,13 @@ import (
 	"strings"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 )
 
 var (
-	ErrForbidden    = apperrs.ErrForbidden
-	ErrInvalidInput = apperrs.ErrInvalidInput
+	ErrForbidden       = apperrs.ErrForbidden
+	ErrInvalidInput    = apperrs.ErrInvalidInput
 	ErrDuplicate       = errors.New("duplicate vehicle")
 	ErrVehicleAssigned = errors.New("vehicle assigned to active driver")
 )

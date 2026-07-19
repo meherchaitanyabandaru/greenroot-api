@@ -370,7 +370,6 @@ func parseBrandColor(s *string) pdfColor {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-
 func validUntilText(q Quotation) string {
 	if q.ValidUntil != nil {
 		return q.ValidUntil.In(istZone).Format("02 Jan 2006")
@@ -387,15 +386,15 @@ func escapePDFText(text string) string {
 
 func toPDFASCII(text string) string {
 	replacer := strings.NewReplacer(
-		"₹", "Rs.",  // ₹ INDIAN RUPEE SIGN
-		"—", "-",   // — EM DASH
-		"–", "-",   // – EN DASH
-		"·", "-",   // · MIDDLE DOT
-		"•", "-",   // • BULLET
-		"“", "\"",  // " LEFT DOUBLE QUOTATION MARK
-		"”", "\"",  // " RIGHT DOUBLE QUOTATION MARK
-		"‘", "'",   // ' LEFT SINGLE QUOTATION MARK
-		"’", "'",   // ' RIGHT SINGLE QUOTATION MARK
+		"₹", "Rs.", // ₹ INDIAN RUPEE SIGN
+		"—", "-", // — EM DASH
+		"–", "-", // – EN DASH
+		"·", "-", // · MIDDLE DOT
+		"•", "-", // • BULLET
+		"“", "\"", // " LEFT DOUBLE QUOTATION MARK
+		"”", "\"", // " RIGHT DOUBLE QUOTATION MARK
+		"‘", "'", // ' LEFT SINGLE QUOTATION MARK
+		"’", "'", // ' RIGHT SINGLE QUOTATION MARK
 	)
 	text = replacer.Replace(text)
 	var b strings.Builder

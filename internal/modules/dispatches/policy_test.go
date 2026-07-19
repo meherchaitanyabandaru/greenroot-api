@@ -48,7 +48,7 @@ func TestCanTransition(t *testing.T) {
 		{"IN_TRANSIT", "DELIVERED"},
 	}
 	denied := [][2]string{
-		{"PENDING", "ACCEPTED"},  // only via AcceptDispatch
+		{"PENDING", "ACCEPTED"}, // only via AcceptDispatch
 		{"PENDING", "IN_TRANSIT"},
 		{"DELIVERED", "CANCELLED"},
 		{"CANCELLED", "PENDING"},
@@ -68,8 +68,8 @@ func TestCanTransition(t *testing.T) {
 
 func TestBuildCapabilities(t *testing.T) {
 	driver := ActorContext{UserID: 1, Roles: []string{"DRIVER"}}
-	owner  := ActorContext{UserID: 2, Roles: []string{"NURSERY_OWNER"}}
-	mgr    := ActorContext{UserID: 3, Roles: []string{"MANAGER"}}
+	owner := ActorContext{UserID: 2, Roles: []string{"NURSERY_OWNER"}}
+	mgr := ActorContext{UserID: 3, Roles: []string{"MANAGER"}}
 
 	t.Run("driver_pending", func(t *testing.T) {
 		caps := BuildCapabilities(driver, "PENDING")

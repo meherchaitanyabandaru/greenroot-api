@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"time"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
+	"time"
 )
 
-var ErrNotFound     = apperrs.ErrNotFound
+var ErrNotFound = apperrs.ErrNotFound
 
 type Repository interface {
 	FindUserByID(ctx context.Context, userID int64) (*User, error)

@@ -1,12 +1,11 @@
 package attachments
 
 import (
-	"time"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+	"time"
 )
 
 type ActorContext = authctx.ActorContext
-
 
 type Attachment struct {
 	ID             int64     `json:"id"`

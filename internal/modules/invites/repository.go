@@ -7,7 +7,7 @@ import (
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
-var ErrNotFound     = apperrs.ErrNotFound
+var ErrNotFound = apperrs.ErrNotFound
 
 type Repository interface {
 	Create(ctx context.Context, actorID int64, req CreateInviteRequest) (*Invite, error)
@@ -136,7 +136,6 @@ func (r *PostgresRepository) findByID(ctx context.Context, id int64) (*Invite, e
 	}
 	return &invite, err
 }
-
 
 func (r *PostgresRepository) UserOwnsNursery(ctx context.Context, userID int64) (bool, error) {
 	var exists bool

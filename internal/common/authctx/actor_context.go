@@ -5,7 +5,7 @@ package authctx
 // Convert from the full JWT-backed Actor using actor.AsActorContext().
 type ActorContext struct {
 	UserID    int64
-	Mobile    string   // needed by invites module
+	Mobile    string // needed by invites module
 	Roles     []string
 	IPAddress string
 	UserAgent string

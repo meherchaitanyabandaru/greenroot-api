@@ -1,31 +1,30 @@
 package ratings
 
 import (
-	"time"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+	"time"
 )
 
 type ActorContext = authctx.ActorContext
 
-
 type Rating struct {
-	ID               int64     `json:"id"`
-	RatingType       string    `json:"rating_type"`
-	RatedByUserID    int64     `json:"rated_by_user_id"`
-	OrderID          *int64    `json:"order_id,omitempty"`
-	DispatchID       *int64    `json:"dispatch_id,omitempty"`
-	OverallRating    *int      `json:"overall_rating,omitempty"`
-	WouldRecommend   *bool     `json:"would_recommend,omitempty"`
-	DriverBehaviour  *int      `json:"driver_behaviour_rating,omitempty"`
-	OnTimeDelivery   *int      `json:"on_time_delivery_rating,omitempty"`
-	PlantCondition   *int      `json:"plant_condition_rating,omitempty"`
-	PlantQuality     *int      `json:"plant_quality_rating,omitempty"`
-	Communication    *int      `json:"communication_rating,omitempty"`
-	OverallExperience *int     `json:"overall_experience_rating,omitempty"`
-	WouldBuyAgain    *bool     `json:"would_buy_again,omitempty"`
-	Comment          *string   `json:"comment,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID                int64     `json:"id"`
+	RatingType        string    `json:"rating_type"`
+	RatedByUserID     int64     `json:"rated_by_user_id"`
+	OrderID           *int64    `json:"order_id,omitempty"`
+	DispatchID        *int64    `json:"dispatch_id,omitempty"`
+	OverallRating     *int      `json:"overall_rating,omitempty"`
+	WouldRecommend    *bool     `json:"would_recommend,omitempty"`
+	DriverBehaviour   *int      `json:"driver_behaviour_rating,omitempty"`
+	OnTimeDelivery    *int      `json:"on_time_delivery_rating,omitempty"`
+	PlantCondition    *int      `json:"plant_condition_rating,omitempty"`
+	PlantQuality      *int      `json:"plant_quality_rating,omitempty"`
+	Communication     *int      `json:"communication_rating,omitempty"`
+	OverallExperience *int      `json:"overall_experience_rating,omitempty"`
+	WouldBuyAgain     *bool     `json:"would_buy_again,omitempty"`
+	Comment           *string   `json:"comment,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // SubmitAppRatingRequest is the payload for POST /ratings/app.

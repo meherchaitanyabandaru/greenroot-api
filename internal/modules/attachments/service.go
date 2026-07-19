@@ -2,9 +2,9 @@ package attachments
 
 import (
 	"context"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"math"
 	"strings"
-	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (

@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 	"github.com/redis/go-redis/v9"
-	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 // issueTokenPair fetches fresh token context from DB and signs both tokens.
@@ -46,7 +46,7 @@ var (
 	ErrUserNotFound        = errors.New("user not found")
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 	ErrInvalidToken        = errors.New("invalid token")
-	ErrForbidden    = apperrs.ErrForbidden
+	ErrForbidden           = apperrs.ErrForbidden
 )
 
 type Service struct {

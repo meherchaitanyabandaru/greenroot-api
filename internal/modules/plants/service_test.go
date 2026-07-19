@@ -22,10 +22,10 @@ type mockRepo struct {
 
 func newMock() *mockRepo {
 	return &mockRepo{
-		plants:     make(map[int64]*Plant),
-		categories: make(map[int64]Category),
-		images:     make(map[int64]*Image),
-		careGuides: make(map[int64]*CareGuide),
+		plants:         make(map[int64]*Plant),
+		categories:     make(map[int64]Category),
+		images:         make(map[int64]*Image),
+		careGuides:     make(map[int64]*CareGuide),
 		nextPlantID:    100,
 		nextCategoryID: 200,
 		nextImageID:    300,
@@ -137,7 +137,9 @@ func (m *mockRepo) GetNamesByLanguage(_ context.Context, _ []int64, _ string) (m
 // ─── actors ──────────────────────────────────────────────────────────────────
 
 func adminActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
-func ownerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}} }
+func ownerActor(id int64) ActorContext {
+	return ActorContext{UserID: id, Roles: []string{"NURSERY_OWNER"}}
+}
 func buyerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
 
 func svc(repo *mockRepo) *Service { return NewService(repo, nil) }

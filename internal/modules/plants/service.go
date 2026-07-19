@@ -236,4 +236,3 @@ func upperOptional(value *string) {
 	}
 	*value = strings.ToUpper(strings.TrimSpace(*value))
 }
-

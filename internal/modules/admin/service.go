@@ -7,13 +7,13 @@ import (
 	"strings"
 	"time"
 
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/revocation"
 	"github.com/redis/go-redis/v9"
-	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
-var ErrForbidden    = apperrs.ErrForbidden
+var ErrForbidden = apperrs.ErrForbidden
 
 type Service struct {
 	repository Repository

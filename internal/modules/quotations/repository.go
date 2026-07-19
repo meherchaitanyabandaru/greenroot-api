@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
 )
 
 var (
-	ErrNotFound     = apperrs.ErrNotFound
+	ErrNotFound      = apperrs.ErrNotFound
 	ErrPlantNotFound = errors.New("plant not found")
 )
 

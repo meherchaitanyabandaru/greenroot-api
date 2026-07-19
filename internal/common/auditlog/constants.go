@@ -68,10 +68,10 @@ const (
 	ActionLogin    Action = "LOGIN"
 	ActionLogout   Action = "LOGOUT"
 	ActionAccept   Action = "ACCEPT"
-	ActionRecall    Action = "RECALL"
-	ActionDownload  Action = "DOWNLOAD"
-	ActionUpload    Action = "UPLOAD"
-	ActionRenew     Action = "RENEW"
+	ActionRecall   Action = "RECALL"
+	ActionDownload Action = "DOWNLOAD"
+	ActionUpload   Action = "UPLOAD"
+	ActionRenew    Action = "RENEW"
 	ActionBlock    Action = "BLOCK"
 	ActionUnblock  Action = "UNBLOCK"
 )
@@ -80,14 +80,14 @@ const (
 type SecurityEvent = string
 
 const (
-	SecurityEventLogin              SecurityEvent = "LOGIN"
-	SecurityEventLogout             SecurityEvent = "LOGOUT"
-	SecurityEventLoginFailed        SecurityEvent = "LOGIN_FAILED"
-	SecurityEventTokenRevoked       SecurityEvent = "TOKEN_REVOKED"
-	SecurityEventPermissionDenied   SecurityEvent = "PERMISSION_DENIED"
-	SecurityEventAccountSuspended   SecurityEvent = "ACCOUNT_SUSPENDED"
-	SecurityEventNurserySuspended   SecurityEvent = "NURSERY_SUSPENDED"
+	SecurityEventLogin               SecurityEvent = "LOGIN"
+	SecurityEventLogout              SecurityEvent = "LOGOUT"
+	SecurityEventLoginFailed         SecurityEvent = "LOGIN_FAILED"
+	SecurityEventTokenRevoked        SecurityEvent = "TOKEN_REVOKED"
+	SecurityEventPermissionDenied    SecurityEvent = "PERMISSION_DENIED"
+	SecurityEventAccountSuspended    SecurityEvent = "ACCOUNT_SUSPENDED"
+	SecurityEventNurserySuspended    SecurityEvent = "NURSERY_SUSPENDED"
 	SecurityEventSubscriptionBlocked SecurityEvent = "SUBSCRIPTION_BLOCKED"
-	SecurityEventJWTFailure         SecurityEvent = "JWT_VALIDATION_FAILURE"
-	SecurityEventAdminOverride      SecurityEvent = "ADMIN_OVERRIDE"
+	SecurityEventJWTFailure          SecurityEvent = "JWT_VALIDATION_FAILURE"
+	SecurityEventAdminOverride       SecurityEvent = "ADMIN_OVERRIDE"
 )

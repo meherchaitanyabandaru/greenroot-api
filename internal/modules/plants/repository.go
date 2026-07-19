@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
 )
 
-var ErrNotFound     = apperrs.ErrNotFound
+var ErrNotFound = apperrs.ErrNotFound
 
 type Repository interface {
 	List(ctx context.Context, input ListPlantsRequest) ([]Plant, int64, error)
@@ -340,7 +340,6 @@ func (r *PostgresRepository) GetCareGuide(ctx context.Context, plantID int64) (*
 	}
 	return guide, err
 }
-
 
 func buildPlantWhere(input ListPlantsRequest) (string, []any) {
 	clauses := []string{"p.is_active = true"}

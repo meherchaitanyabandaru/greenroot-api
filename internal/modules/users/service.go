@@ -11,20 +11,19 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/revocation"
 	platformstorage "github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
-	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 type ActorContext = authctx.ActorContext
 
-
 var (
-	ErrForbidden    = apperrs.ErrForbidden
-	ErrInvalidInput = apperrs.ErrInvalidInput
+	ErrForbidden              = apperrs.ErrForbidden
+	ErrInvalidInput           = apperrs.ErrInvalidInput
 	ErrInvalidAddress         = errors.New("invalid address")
 	ErrAccountDeleted         = errors.New("account has already been deleted")
 	ErrAccountDeletionBlocked = errors.New("account deletion blocked by active business records")

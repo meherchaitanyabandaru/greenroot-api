@@ -7,13 +7,13 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 )
 
 var (
-	ErrForbidden    = apperrs.ErrForbidden
-	ErrInvalidInput = apperrs.ErrInvalidInput
+	ErrForbidden             = apperrs.ErrForbidden
+	ErrInvalidInput          = apperrs.ErrInvalidInput
 	ErrInsufficientInventory = errors.New("insufficient inventory")
 	ErrInvalidTransition     = errors.New("invalid status transition")
 )
