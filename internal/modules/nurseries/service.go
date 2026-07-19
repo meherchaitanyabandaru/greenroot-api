@@ -202,6 +202,31 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateNu
 	if err != nil {
 		return Nursery{}, err
 	}
+	// Auto-create PRIMARY nursery address from registration data when provided.
+	if input.AddressLine1 != nil || input.City != nil {
+		country := "India"
+		if input.Country != nil && *input.Country != "" {
+			country = *input.Country
+		}
+		addrType := "PRIMARY"
+		_, addrErr := s.repository.CreateAddress(ctx, nursery.ID, AddressRequest{
+			AddressType:  &addrType,
+			AddressLine1: input.AddressLine1,
+			AddressLine2: input.AddressLine2,
+			City:         input.City,
+			State:        input.State,
+			Country:      &country,
+			PostalCode:   input.PostalCode,
+			Landmark:     input.Landmark,
+			IsPrimary:    true,
+		})
+		if addrErr != nil {
+			s.audit(ctx, actor, auditlog.EntityNurseryAddr, nursery.ID, auditlog.ActionCreate,
+				"address auto-create failed on nursery registration", nil, addrErr.Error())
+		} else if refreshed, rErr := s.repository.FindByID(ctx, nursery.ID); rErr == nil {
+			nursery = refreshed
+		}
+	}
 	s.audit(ctx, actor, auditlog.EntityNursery, nursery.ID, auditlog.ActionCreate,
 		fmt.Sprintf("Nursery %q registered", nursery.Name), nil, input)
 	s.invalidateWorkspaceUsers(ctx, actor.UserID)

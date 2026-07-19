@@ -260,10 +260,30 @@ func (r *PostgresRepository) Update(ctx context.Context, actorID int64, nurseryI
 }
 
 func (r *PostgresRepository) UpdateStatusOnly(ctx context.Context, actorID int64, nurseryID int64, status string) (*Nursery, error) {
-	result, err := r.db.ExecContext(ctx,
-		`UPDATE public.nurseries SET status = $2, updated_at = CURRENT_TIMESTAMP, updated_by = $3 WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'`,
-		nurseryID, status, actorID,
-	)
+	var result sql.Result
+	var err error
+	switch status {
+	case "APPROVED":
+		result, err = r.db.ExecContext(ctx,
+			`UPDATE public.nurseries SET status = $2, approved_by = $3, approved_at = CURRENT_TIMESTAMP,
+			 updated_at = CURRENT_TIMESTAMP, updated_by = $3
+			 WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'`,
+			nurseryID, status, actorID,
+		)
+	case "REJECTED":
+		result, err = r.db.ExecContext(ctx,
+			`UPDATE public.nurseries SET status = $2, rejected_by = $3, rejected_at = CURRENT_TIMESTAMP,
+			 updated_at = CURRENT_TIMESTAMP, updated_by = $3
+			 WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'`,
+			nurseryID, status, actorID,
+		)
+	default:
+		result, err = r.db.ExecContext(ctx,
+			`UPDATE public.nurseries SET status = $2, updated_at = CURRENT_TIMESTAMP, updated_by = $3
+			 WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'`,
+			nurseryID, status, actorID,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
