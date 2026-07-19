@@ -13,6 +13,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisgeo"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -54,6 +55,7 @@ func (s *Service) List(ctx context.Context, actor ActorContext, input ListDispat
 	if err != nil {
 		return nil, Pagination{}, err
 	}
+	enrichDispatches(dispatches)
 	return dispatches, Pagination{Page: input.Page, PerPage: input.PerPage, Total: total, TotalPages: totalPages(total, input.PerPage)}, nil
 }
 
@@ -65,7 +67,8 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, dispatchID int64)
 	if err := s.canAccess(ctx, actor, *dispatch); err != nil {
 		return Dispatch{}, err
 	}
-	return *dispatch, nil
+	enrichDispatch(dispatch)
+	return withLifecycle(*dispatch), nil
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateDispatchRequest) (Dispatch, error) {
@@ -110,7 +113,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateDisp
 		return Dispatch{}, err
 	}
 	s.audit(ctx, actor, "dispatches", dispatch.ID, actionInsert, req)
-	return *dispatch, nil
+	return withLifecycle(*dispatch), nil
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatchID int64, req UpdateStatusRequest) (Dispatch, error) {
@@ -163,7 +166,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 		s.removeLiveDriverLocation(ctx, *dispatch)
 	}
 	s.audit(ctx, actor, "dispatches", dispatch.ID, actionUpdate, req)
-	return *dispatch, nil
+	return withLifecycle(*dispatch), nil
 }
 
 func (s *Service) AcknowledgeDeliveryUpdate(ctx context.Context, actor ActorContext, dispatchID int64) (Dispatch, error) {
@@ -182,7 +185,7 @@ func (s *Service) AcknowledgeDeliveryUpdate(ctx context.Context, actor ActorCont
 		return Dispatch{}, err
 	}
 	s.audit(ctx, actor, "dispatches", dispatchID, actionUpdate, map[string]any{"delivery_update_acknowledged": true})
-	return *updated, nil
+	return withLifecycle(*updated), nil
 }
 
 func (s *Service) CreateItem(ctx context.Context, actor ActorContext, dispatchID int64, req DispatchItemRequest) (DispatchItem, error) {
@@ -253,7 +256,7 @@ func (s *Service) GetByCode(ctx context.Context, code string) (Dispatch, error) 
 	if err != nil {
 		return Dispatch{}, err
 	}
-	return *dispatch, nil
+	return withLifecycle(*dispatch), nil
 }
 
 func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispatchID int64) (Dispatch, error) {
@@ -273,7 +276,7 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 	}
 	// If already accepted by this same driver, return the dispatch (idempotent).
 	if dispatch.Status == "ACCEPTED" && dispatch.DriverUserID != nil && *dispatch.DriverUserID == actor.UserID {
-		return *dispatch, nil
+		return withLifecycle(*dispatch), nil
 	}
 	if dispatch.Status != "PENDING" {
 		return Dispatch{}, ErrForbidden
@@ -298,7 +301,7 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 			"Dispatch Accepted",
 			fmt.Sprintf("Dispatch %s was accepted by the driver.", updated.DispatchCode))
 	}
-	return *updated, nil
+	return withLifecycle(*updated), nil
 }
 
 func (s *Service) enqueueNotification(ctx context.Context, userID int64, notifType, title, message string) {
@@ -318,7 +321,7 @@ func (s *Service) GetPublicTracking(ctx context.Context, uuid string) (Dispatch,
 	if err != nil {
 		return Dispatch{}, err
 	}
-	return *dispatch, nil
+	return withLifecycle(*dispatch), nil
 }
 
 func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *ListDispatchesRequest) error {
@@ -590,6 +593,25 @@ func totalPages(total int64, perPage int) int {
 		return 0
 	}
 	return int(math.Ceil(float64(total) / float64(perPage)))
+}
+
+func enrichDispatches(dispatches []Dispatch) {
+	for i := range dispatches {
+		dispatches[i] = withLifecycle(dispatches[i])
+	}
+}
+
+func enrichDispatch(dispatch *Dispatch) {
+	if dispatch == nil {
+		return
+	}
+	*dispatch = withLifecycle(*dispatch)
+}
+
+func withLifecycle(dispatch Dispatch) Dispatch {
+	lc := lifecycle.Dispatch(dispatch.Status)
+	dispatch.Lifecycle = &lc
+	return dispatch
 }
 
 func (s *Service) audit(ctx context.Context, actor ActorContext, entityType string, entityID int64, action auditlog.Action, newValue any) {

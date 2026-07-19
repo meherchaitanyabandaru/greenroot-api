@@ -11,6 +11,7 @@ import (
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -43,6 +44,7 @@ func (s *Service) List(ctx context.Context, actor ActorContext, input ListOrders
 	if err != nil {
 		return nil, Pagination{}, err
 	}
+	enrichOrders(orders)
 	return orders, Pagination{Page: input.Page, PerPage: input.PerPage, Total: total, TotalPages: totalPages(total, input.PerPage)}, nil
 }
 
@@ -54,7 +56,8 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, orderID int64) (O
 	if err := s.canView(ctx, actor, *order); err != nil {
 		return Order{}, err
 	}
-	return *order, nil
+	enrichOrder(order)
+	return withLifecycle(*order), nil
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateOrderRequest) (Order, error) {
@@ -85,7 +88,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateOr
 	}
 	s.audit(ctx, actor, auditlog.EntityOrder, order.ID, auditlog.ActionCreate,
 		fmt.Sprintf("Order %s created", order.OrderNumber), nil, input)
-	return *order, nil
+	return withLifecycle(*order), nil
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID int64, input UpdateStatusRequest) (Order, error) {
@@ -129,7 +132,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID 
 		fmt.Sprintf("Order #%d status %s → %s", orderID, current.Status, status),
 		map[string]any{"status": current.Status},
 		map[string]any{"status": status})
-	return *order, nil
+	return withLifecycle(*order), nil
 }
 
 func (s *Service) UpdateDeliverySnapshot(ctx context.Context, actor ActorContext, orderID int64, input DeliverySnapshotRequest) (Order, error) {
@@ -170,7 +173,7 @@ func (s *Service) UpdateDeliverySnapshot(ctx context.Context, actor ActorContext
 		fmt.Sprintf("Order #%d delivery snapshot updated", orderID),
 		current.DeliverySnapshot,
 		updated.DeliverySnapshot)
-	return *updated, nil
+	return withLifecycle(*updated), nil
 }
 
 // StartLoading marks an order as LOADING (nursery owner or assigned manager only).
@@ -202,7 +205,7 @@ func (s *Service) StartLoading(ctx context.Context, actor ActorContext, orderID 
 		fmt.Sprintf("Order #%d status %s → LOADING", orderID, order.Status),
 		map[string]any{"status": order.Status},
 		map[string]any{"status": "LOADING"})
-	return *updated, nil
+	return withLifecycle(*updated), nil
 }
 
 // CompleteLoading marks an order as LOADED or PARTIALLY_FULFILLED based on
@@ -244,7 +247,7 @@ func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, order
 		fmt.Sprintf("Order #%d status LOADING → %s", orderID, finalStatus),
 		map[string]any{"status": "LOADING"},
 		map[string]any{"status": finalStatus})
-	return *updated, nil
+	return withLifecycle(*updated), nil
 }
 
 // SetLoadedQuantity records how many units were physically loaded for an item.
@@ -311,7 +314,7 @@ func (s *Service) Cancel(ctx context.Context, actor ActorContext, orderID int64,
 		fmt.Sprintf("Order #%d cancelled: %s", orderID, reason),
 		map[string]any{"status": order.Status},
 		map[string]any{"status": "CANCELLED", "reason": reason})
-	return *updated, nil
+	return withLifecycle(*updated), nil
 }
 
 // AssignManager assigns a manager to an order (owner or admin only).
@@ -341,7 +344,7 @@ func (s *Service) AssignManager(ctx context.Context, actor ActorContext, orderID
 		fmt.Sprintf("Order #%d manager assigned", orderID),
 		map[string]any{"assigned_manager_user_id": order.AssignedManagerUserID},
 		map[string]any{"assigned_manager_user_id": managerUserID})
-	return *updated, nil
+	return withLifecycle(*updated), nil
 }
 
 func (s *Service) Delete(ctx context.Context, actor ActorContext, orderID int64) error {
@@ -665,6 +668,25 @@ func isAllowedLocationSource(value string) bool {
 
 func stringPtr(value string) *string {
 	return &value
+}
+
+func enrichOrders(orders []Order) {
+	for i := range orders {
+		orders[i] = withLifecycle(orders[i])
+	}
+}
+
+func enrichOrder(order *Order) {
+	if order == nil {
+		return
+	}
+	*order = withLifecycle(*order)
+}
+
+func withLifecycle(order Order) Order {
+	lc := lifecycle.Order(order.Status)
+	order.Lifecycle = &lc
+	return order
 }
 
 func validateItem(input OrderItemRequest) error {

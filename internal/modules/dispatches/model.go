@@ -1,6 +1,10 @@
 package dispatches
 
-import "time"
+import (
+	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+)
 
 const (
 	actionInsert = "INSERT"
@@ -44,14 +48,15 @@ type Dispatch struct {
 	// Delivery coordinates from the order's delivery snapshot.
 	// Always reflects the latest confirmed delivery location — drivers use
 	// these to open navigation rather than relying on the address text.
-	DeliveryLatitude  *float64       `json:"delivery_latitude,omitempty"`
-	DeliveryLongitude *float64       `json:"delivery_longitude,omitempty"`
-	RequiresDriverAck *bool          `json:"requires_driver_ack,omitempty"`
-	Notes             *string        `json:"notes,omitempty"`
-	CreatedAt         time.Time      `json:"created_at"`
-	UpdatedAt         *time.Time     `json:"updated_at,omitempty"`
-	Items             []DispatchItem `json:"items,omitempty"`
-	TripEvents        []TripEvent    `json:"trip_events,omitempty"`
+	DeliveryLatitude  *float64                    `json:"delivery_latitude,omitempty"`
+	DeliveryLongitude *float64                    `json:"delivery_longitude,omitempty"`
+	RequiresDriverAck *bool                       `json:"requires_driver_ack,omitempty"`
+	Notes             *string                     `json:"notes,omitempty"`
+	CreatedAt         time.Time                   `json:"created_at"`
+	UpdatedAt         *time.Time                  `json:"updated_at,omitempty"`
+	Items             []DispatchItem              `json:"items,omitempty"`
+	TripEvents        []TripEvent                 `json:"trip_events,omitempty"`
+	Lifecycle         *lifecycle.DispatchDisplays `json:"lifecycle,omitempty"`
 }
 
 type TripEvent struct {

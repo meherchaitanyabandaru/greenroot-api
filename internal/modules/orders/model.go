@@ -1,6 +1,10 @@
 package orders
 
-import "time"
+import (
+	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+)
 
 type Order struct {
 	ID          int64  `json:"id"`
@@ -27,16 +31,17 @@ type Order struct {
 	BuyerNurseryID *int64  `json:"buyer_nursery_id,omitempty"`
 	BuyerName      *string `json:"buyer_name,omitempty"`
 	// Seller fields
-	SellerNurseryID  *int64            `json:"seller_nursery_id,omitempty"`
-	SellerNursery    *string           `json:"seller_nursery,omitempty"`
-	Status           string            `json:"order_status"`
-	TotalAmount      float64           `json:"total_amount"`
-	Notes            *string           `json:"notes,omitempty"`
-	OrderDate        time.Time         `json:"order_date"`
-	CreatedAt        time.Time         `json:"created_at"`
-	UpdatedAt        time.Time         `json:"updated_at"`
-	Items            []OrderItem       `json:"items,omitempty"`
-	DeliverySnapshot *DeliverySnapshot `json:"delivery_snapshot,omitempty"`
+	SellerNurseryID  *int64                   `json:"seller_nursery_id,omitempty"`
+	SellerNursery    *string                  `json:"seller_nursery,omitempty"`
+	Status           string                   `json:"order_status"`
+	TotalAmount      float64                  `json:"total_amount"`
+	Notes            *string                  `json:"notes,omitempty"`
+	OrderDate        time.Time                `json:"order_date"`
+	CreatedAt        time.Time                `json:"created_at"`
+	UpdatedAt        time.Time                `json:"updated_at"`
+	Items            []OrderItem              `json:"items,omitempty"`
+	DeliverySnapshot *DeliverySnapshot        `json:"delivery_snapshot,omitempty"`
+	Lifecycle        *lifecycle.OrderDisplays `json:"lifecycle,omitempty"`
 }
 
 type DeliverySnapshot struct {
