@@ -32,6 +32,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.With(appmiddleware.VerifyRateLimit(m.rdb)).Post("/verify-otp", m.handler.VerifyOTP)
 		r.Post("/refresh-token", m.handler.RefreshToken)
 		r.Post("/logout", m.handler.Logout)
+		r.Get("/me", m.handler.Me)
 	})
 
 	// Workspace endpoint lives under /me for cleaner mobile routing
