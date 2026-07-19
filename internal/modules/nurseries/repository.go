@@ -25,6 +25,7 @@ type Repository interface {
 	Create(ctx context.Context, actorID int64, input CreateNurseryRequest) (*Nursery, error)
 	Update(ctx context.Context, actorID int64, nurseryID int64, input UpdateNurseryRequest) (*Nursery, error)
 	UpdateStatusOnly(ctx context.Context, actorID int64, nurseryID int64, status string) (*Nursery, error)
+	ResubmitByOwner(ctx context.Context, actorID int64, ownerUserID int64, input CreateNurseryRequest) (*Nursery, error)
 	Delete(ctx context.Context, actorID int64, nurseryID int64) error
 	ListAddresses(ctx context.Context, nurseryID int64) ([]Address, error)
 	CreateAddress(ctx context.Context, nurseryID int64, input AddressRequest) (*Address, error)
@@ -295,6 +296,40 @@ func (r *PostgresRepository) UpdateStatusOnly(ctx context.Context, actorID int64
 		return nil, ErrNotFound
 	}
 	return r.FindByID(ctx, nurseryID)
+}
+
+// ResubmitByOwner resets a REJECTED nursery to PENDING with fresh details.
+// Only rows matching owner_user_id AND status=REJECTED are updated; returns
+// ErrNotFound if no matching row exists (already approved / deleted / wrong owner).
+func (r *PostgresRepository) ResubmitByOwner(ctx context.Context, actorID int64, ownerUserID int64, input CreateNurseryRequest) (*Nursery, error) {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE public.nurseries
+		 SET name             = $3,
+		     mobile           = $4,
+		     email            = $5,
+		     description      = $6,
+		     status           = 'PENDING',
+		     rejected_by      = NULL,
+		     rejected_at      = NULL,
+		     rejection_reason = NULL,
+		     updated_at       = CURRENT_TIMESTAMP,
+		     updated_by       = $2
+		 WHERE owner_user_id = $1
+		   AND status::text   = 'REJECTED'`,
+		ownerUserID, actorID,
+		input.Name, input.Mobile, input.Email, input.Description,
+	)
+	if err != nil {
+		return nil, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if affected == 0 {
+		return nil, ErrNotFound
+	}
+	return r.FindOwnedByUser(ctx, ownerUserID)
 }
 
 // GrantOwnerRole upserts the Nursery Owner system role (role_id=3) for the user.

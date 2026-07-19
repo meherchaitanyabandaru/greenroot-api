@@ -280,6 +280,25 @@ func (h *Handler) OwnedNursery(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, NurseryResponse{Nursery: nursery})
 }
 
+// Resubmit accepts fresh nursery details from the owner, resets a REJECTED
+// nursery back to PENDING, and returns the updated nursery.
+func (h *Handler) Resubmit(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	var req CreateNurseryRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	nursery, err := h.service.Resubmit(r.Context(), actor, req)
+	if err != nil {
+		writeNurseriesError(w, err)
+		return
+	}
+	response.OK(w, NurseryResponse{Nursery: nursery})
+}
+
 func (h *Handler) ListManagers(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {
@@ -497,6 +516,8 @@ func writeNurseriesError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusForbidden, "not_owner", "only the nursery owner can perform this action")
 	case errors.Is(err, ErrAlreadyOwner):
 		response.Error(w, http.StatusConflict, "already_owner", "user already owns a nursery; create a new account to own another nursery")
+	case errors.Is(err, ErrNotRejected):
+		response.Error(w, http.StatusConflict, "not_rejected", "only REJECTED nurseries can be resubmitted")
 	case errors.Is(err, ErrManagerCannotOwnNursery):
 		response.Error(w, http.StatusConflict, "manager_conflict", "managers cannot register a nursery; remove your manager role first")
 	case errors.Is(err, ErrDriverCannotOwnNursery):

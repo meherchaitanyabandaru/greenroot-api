@@ -25,6 +25,7 @@ var (
 	ErrDriverCannotOwnNursery  = errors.New("approved drivers cannot register a nursery")
 	ErrNotMember               = errors.New("user is not an active member of this nursery")
 	ErrOwnerCannotLeave        = errors.New("nursery owner cannot leave their own nursery")
+	ErrNotRejected             = errors.New("nursery is not in REJECTED status; only rejected applications can be resubmitted")
 )
 
 // TrialCreator is satisfied by the subscriptions.Service to avoid a circular import.
@@ -231,6 +232,70 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateNu
 	}
 	s.audit(ctx, actor, auditlog.EntityNursery, nursery.ID, auditlog.ActionCreate,
 		fmt.Sprintf("Nursery %q registered", nursery.Name), nil, input)
+	s.invalidateWorkspaceUsers(ctx, actor.UserID)
+	return enrichNursery(actorFromContext(actor), *nursery), nil
+}
+
+// Resubmit updates a REJECTED nursery with new details and resets its status
+// to PENDING so the admin queue receives it again. Only the nursery owner can call this.
+func (s *Service) Resubmit(ctx context.Context, actor ActorContext, input CreateNurseryRequest) (Nursery, error) {
+	existing, err := s.repository.FindOwnedByUser(ctx, actor.UserID)
+	if err != nil {
+		return Nursery{}, ErrNotFound
+	}
+	if existing.Status != "REJECTED" {
+		return Nursery{}, ErrNotRejected
+	}
+
+	input = normalizeNursery(input)
+	if err := validateNursery(input); err != nil {
+		return Nursery{}, err
+	}
+
+	nursery, err := s.repository.ResubmitByOwner(ctx, actor.UserID, actor.UserID, input)
+	if err != nil {
+		return Nursery{}, err
+	}
+
+	// Update or create the primary address if address data was supplied.
+	if input.AddressLine1 != nil || input.City != nil {
+		country := "India"
+		if input.Country != nil && *input.Country != "" {
+			country = *input.Country
+		}
+		addrType := "PRIMARY"
+		addrInput := AddressRequest{
+			AddressType:  &addrType,
+			AddressLine1: input.AddressLine1,
+			AddressLine2: input.AddressLine2,
+			City:         input.City,
+			State:        input.State,
+			Country:      &country,
+			PostalCode:   input.PostalCode,
+			Landmark:     input.Landmark,
+			Latitude:     input.Latitude,
+			Longitude:    input.Longitude,
+			IsPrimary:    true,
+		}
+		var primaryID int64
+		for _, a := range existing.Addresses {
+			if a.IsPrimary {
+				primaryID = a.ID
+				break
+			}
+		}
+		if primaryID != 0 {
+			_, _ = s.repository.UpdateAddress(ctx, primaryID, addrInput)
+		} else {
+			_, _ = s.repository.CreateAddress(ctx, nursery.ID, addrInput)
+		}
+		if refreshed, rErr := s.repository.FindOwnedByUser(ctx, actor.UserID); rErr == nil {
+			nursery = refreshed
+		}
+	}
+
+	s.audit(ctx, actor, auditlog.EntityNursery, nursery.ID, auditlog.ActionUpdate,
+		fmt.Sprintf("Nursery %q resubmitted for approval", nursery.Name), existing, input)
 	s.invalidateWorkspaceUsers(ctx, actor.UserID)
 	return enrichNursery(actorFromContext(actor), *nursery), nil
 }
