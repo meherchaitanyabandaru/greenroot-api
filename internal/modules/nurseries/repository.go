@@ -304,7 +304,7 @@ func (r *PostgresRepository) UpdateStatusOnly(ctx context.Context, actorID int64
 func (r *PostgresRepository) ResubmitByOwner(ctx context.Context, actorID int64, ownerUserID int64, input CreateNurseryRequest) (*Nursery, error) {
 	result, err := r.db.ExecContext(ctx,
 		`UPDATE public.nurseries
-		 SET name             = $3,
+		 SET nursery_name     = $3,
 		     mobile           = $4,
 		     email            = $5,
 		     description      = $6,
