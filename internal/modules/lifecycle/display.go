@@ -10,21 +10,32 @@ type Display struct {
 }
 
 type OrderDisplays struct {
-	Customer Display `json:"customer"`
-	Operator Display `json:"operator"`
+	Customer    Display `json:"customer"`
+	Operator    Display `json:"operator"`
+	Driver      Display `json:"driver"`
+	NextActions Actions `json:"next_actions"`
 }
 
 type DispatchDisplays struct {
-	Customer Display `json:"customer"`
-	Operator Display `json:"operator"`
-	Driver   Display `json:"driver"`
+	Customer    Display `json:"customer"`
+	Operator    Display `json:"operator"`
+	Driver      Display `json:"driver"`
+	NextActions Actions `json:"next_actions"`
+}
+
+type Actions struct {
+	Customer []string `json:"customer,omitempty"`
+	Operator []string `json:"operator,omitempty"`
+	Driver   []string `json:"driver,omitempty"`
 }
 
 func Order(status string) OrderDisplays {
 	status = strings.ToUpper(strings.TrimSpace(status))
 	return OrderDisplays{
-		Customer: orderDisplay(status, true),
-		Operator: orderDisplay(status, false),
+		Customer:    orderDisplay(status, true),
+		Operator:    orderDisplay(status, false),
+		Driver:      orderDisplay(status, false),
+		NextActions: orderActions(status, ""),
 	}
 }
 
@@ -43,6 +54,7 @@ func OrderWithDispatch(orderStatus string, dispatchStatus string) OrderDisplays 
 			Variant:  "success",
 		}
 	}
+	displays.NextActions = orderActions(orderStatus, dispatchStatus)
 	return displays
 }
 
@@ -50,9 +62,59 @@ func Dispatch(status string) DispatchDisplays {
 	status = strings.ToUpper(strings.TrimSpace(status))
 	driver := dispatchDisplay(status)
 	return DispatchDisplays{
-		Customer: buyerDispatchDisplay(status),
-		Operator: driver,
-		Driver:   driver,
+		Customer:    buyerDispatchDisplay(status),
+		Operator:    driver,
+		Driver:      driver,
+		NextActions: dispatchActions(status),
+	}
+}
+
+func orderActions(orderStatus string, dispatchStatus string) Actions {
+	switch orderStatus {
+	case "PENDING":
+		return Actions{Customer: []string{"View Order"}, Operator: []string{"Confirm Order", "Cancel Order"}}
+	case "CONFIRMED":
+		return Actions{Customer: []string{"View Order"}, Operator: []string{"Start Loading"}}
+	case "LOADING":
+		return Actions{Customer: []string{"View Order"}, Operator: []string{"Complete Loading", "Adjust Loaded Quantities"}}
+	case "LOADED", "PARTIALLY_FULFILLED":
+		switch dispatchStatus {
+		case "DELIVERED":
+			return Actions{Customer: []string{"View Delivery"}, Operator: []string{"Complete Order", "View Dispatch"}, Driver: []string{"View Completed Trip"}}
+		case "IN_TRANSIT", "DISPATCHED":
+			return Actions{Customer: []string{"Track Delivery"}, Operator: []string{"View Dispatch"}, Driver: []string{"Update Trip"}}
+		case "ACCEPTED":
+			return Actions{Customer: []string{"View Delivery"}, Operator: []string{"View Dispatch"}, Driver: []string{"Start Trip"}}
+		case "PENDING":
+			return Actions{Customer: []string{"View Order"}, Operator: []string{"Assign Driver", "View Dispatch"}, Driver: []string{"Accept Trip"}}
+		default:
+			return Actions{Customer: []string{"View Order"}, Operator: []string{"Create Dispatch"}}
+		}
+	case "COMPLETED":
+		return Actions{Customer: []string{"View Receipt", "Rate Order"}, Operator: []string{"View Order"}}
+	case "CANCELLED":
+		return Actions{Customer: []string{"View Order"}, Operator: []string{"View Order"}}
+	default:
+		return Actions{Customer: []string{"View Order"}, Operator: []string{"View Order"}}
+	}
+}
+
+func dispatchActions(status string) Actions {
+	switch status {
+	case "PENDING":
+		return Actions{Customer: []string{"View Delivery"}, Operator: []string{"Assign Driver"}, Driver: []string{"Accept Trip"}}
+	case "ACCEPTED":
+		return Actions{Customer: []string{"View Delivery"}, Operator: []string{"View Dispatch"}, Driver: []string{"Start Trip"}}
+	case "DISPATCHED":
+		return Actions{Customer: []string{"Track Delivery"}, Operator: []string{"View Dispatch"}, Driver: []string{"Start Navigation"}}
+	case "IN_TRANSIT":
+		return Actions{Customer: []string{"Track Delivery"}, Operator: []string{"View Dispatch"}, Driver: []string{"Mark Delivered"}}
+	case "DELIVERED":
+		return Actions{Customer: []string{"View Delivery"}, Operator: []string{"Complete Order"}, Driver: []string{"View Completed Trip"}}
+	case "CANCELLED":
+		return Actions{Customer: []string{"View Delivery"}, Operator: []string{"View Dispatch"}, Driver: []string{"View Trip"}}
+	default:
+		return Actions{Customer: []string{"View Delivery"}, Operator: []string{"View Dispatch"}, Driver: []string{"View Trip"}}
 	}
 }
 

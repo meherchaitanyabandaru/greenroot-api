@@ -17,6 +17,7 @@ type mockRepo struct {
 	userNurseries  map[int64][]int64 // user_id → []nursery_id (all memberships)
 	ownedNurseries map[int64]int64   // user_id → nursery_id (owners only)
 	driverUserIDs  map[int64]int64   // order_id → driver user_id
+	activeDispatch map[int64]ActiveDispatchSummary
 	startedOrders  map[int64]bool
 	undelivered    map[int64]bool
 	notifications  []int64
@@ -34,6 +35,7 @@ func newMock() *mockRepo {
 		userNurseries:  make(map[int64][]int64),
 		ownedNurseries: make(map[int64]int64),
 		driverUserIDs:  make(map[int64]int64),
+		activeDispatch: make(map[int64]ActiveDispatchSummary),
 		startedOrders:  make(map[int64]bool),
 		undelivered:    make(map[int64]bool),
 	}
@@ -151,6 +153,14 @@ func (m *mockRepo) OrderHasStartedDispatch(_ context.Context, orderID int64) (bo
 
 func (m *mockRepo) OrderHasUndeliveredDispatch(_ context.Context, orderID int64) (bool, error) {
 	return m.undelivered[orderID], nil
+}
+
+func (m *mockRepo) ActiveDispatchForOrder(_ context.Context, orderID int64) (*ActiveDispatchSummary, error) {
+	summary, ok := m.activeDispatch[orderID]
+	if !ok {
+		return nil, nil
+	}
+	return &summary, nil
 }
 
 func (m *mockRepo) StartedDispatchDriverUserID(_ context.Context, orderID int64) (*int64, error) {
@@ -1112,6 +1122,29 @@ func TestGet_NotFound(t *testing.T) {
 	_, err := svc(repo).Get(context.Background(), adminActor(1), 9999)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("Get not found: want ErrNotFound, got %v", err)
+	}
+}
+
+func TestGet_EnrichesActiveDispatchLifecycle(t *testing.T) {
+	repo := newMock()
+	repo.seedOrder(Order{ID: 10, Status: "LOADED", OrderNumber: "GR-ORD-10"})
+	repo.activeDispatch[10] = ActiveDispatchSummary{ID: 20, Status: "IN_TRANSIT"}
+
+	order, err := svc(repo).Get(context.Background(), adminActor(1), 10)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if order.ActiveDispatchID == nil || *order.ActiveDispatchID != 20 {
+		t.Fatalf("active dispatch id = %v, want 20", order.ActiveDispatchID)
+	}
+	if order.ActiveDispatchStatus == nil || *order.ActiveDispatchStatus != "IN_TRANSIT" {
+		t.Fatalf("active dispatch status = %v, want IN_TRANSIT", order.ActiveDispatchStatus)
+	}
+	if order.Lifecycle == nil || order.Lifecycle.Customer.Label != "On the Way" {
+		t.Fatalf("customer lifecycle = %#v, want On the Way", order.Lifecycle)
+	}
+	if got := order.Lifecycle.NextActions.Customer; len(got) != 1 || got[0] != "Track Delivery" {
+		t.Fatalf("customer next actions = %#v, want Track Delivery", got)
 	}
 }
 

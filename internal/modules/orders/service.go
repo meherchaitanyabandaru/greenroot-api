@@ -44,7 +44,7 @@ func (s *Service) List(ctx context.Context, actor ActorContext, input ListOrders
 	if err != nil {
 		return nil, Pagination{}, err
 	}
-	enrichOrders(orders)
+	s.enrichOrders(ctx, orders)
 	return orders, Pagination{Page: input.Page, PerPage: input.PerPage, Total: total, TotalPages: totalPages(total, input.PerPage)}, nil
 }
 
@@ -56,8 +56,8 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, orderID int64) (O
 	if err := s.canView(ctx, actor, *order); err != nil {
 		return Order{}, err
 	}
-	enrichOrder(order)
-	return withLifecycle(*order), nil
+	s.enrichOrder(ctx, order)
+	return *order, nil
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateOrderRequest) (Order, error) {
@@ -88,7 +88,8 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateOr
 	}
 	s.audit(ctx, actor, auditlog.EntityOrder, order.ID, auditlog.ActionCreate,
 		fmt.Sprintf("Order %s created", order.OrderNumber), nil, input)
-	return withLifecycle(*order), nil
+	s.enrichOrder(ctx, order)
+	return *order, nil
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID int64, input UpdateStatusRequest) (Order, error) {
@@ -132,7 +133,8 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID 
 		fmt.Sprintf("Order #%d status %s → %s", orderID, current.Status, status),
 		map[string]any{"status": current.Status},
 		map[string]any{"status": status})
-	return withLifecycle(*order), nil
+	s.enrichOrder(ctx, order)
+	return *order, nil
 }
 
 func (s *Service) UpdateDeliverySnapshot(ctx context.Context, actor ActorContext, orderID int64, input DeliverySnapshotRequest) (Order, error) {
@@ -173,7 +175,8 @@ func (s *Service) UpdateDeliverySnapshot(ctx context.Context, actor ActorContext
 		fmt.Sprintf("Order #%d delivery snapshot updated", orderID),
 		current.DeliverySnapshot,
 		updated.DeliverySnapshot)
-	return withLifecycle(*updated), nil
+	s.enrichOrder(ctx, updated)
+	return *updated, nil
 }
 
 // StartLoading marks an order as LOADING (nursery owner or assigned manager only).
@@ -205,7 +208,8 @@ func (s *Service) StartLoading(ctx context.Context, actor ActorContext, orderID 
 		fmt.Sprintf("Order #%d status %s → LOADING", orderID, order.Status),
 		map[string]any{"status": order.Status},
 		map[string]any{"status": "LOADING"})
-	return withLifecycle(*updated), nil
+	s.enrichOrder(ctx, updated)
+	return *updated, nil
 }
 
 // CompleteLoading marks an order as LOADED or PARTIALLY_FULFILLED based on
@@ -247,7 +251,8 @@ func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, order
 		fmt.Sprintf("Order #%d status LOADING → %s", orderID, finalStatus),
 		map[string]any{"status": "LOADING"},
 		map[string]any{"status": finalStatus})
-	return withLifecycle(*updated), nil
+	s.enrichOrder(ctx, updated)
+	return *updated, nil
 }
 
 // SetLoadedQuantity records how many units were physically loaded for an item.
@@ -314,7 +319,8 @@ func (s *Service) Cancel(ctx context.Context, actor ActorContext, orderID int64,
 		fmt.Sprintf("Order #%d cancelled: %s", orderID, reason),
 		map[string]any{"status": order.Status},
 		map[string]any{"status": "CANCELLED", "reason": reason})
-	return withLifecycle(*updated), nil
+	s.enrichOrder(ctx, updated)
+	return *updated, nil
 }
 
 // AssignManager assigns a manager to an order (owner or admin only).
@@ -344,7 +350,8 @@ func (s *Service) AssignManager(ctx context.Context, actor ActorContext, orderID
 		fmt.Sprintf("Order #%d manager assigned", orderID),
 		map[string]any{"assigned_manager_user_id": order.AssignedManagerUserID},
 		map[string]any{"assigned_manager_user_id": managerUserID})
-	return withLifecycle(*updated), nil
+	s.enrichOrder(ctx, updated)
+	return *updated, nil
 }
 
 func (s *Service) Delete(ctx context.Context, actor ActorContext, orderID int64) error {
@@ -670,21 +677,29 @@ func stringPtr(value string) *string {
 	return &value
 }
 
-func enrichOrders(orders []Order) {
+func (s *Service) enrichOrders(ctx context.Context, orders []Order) {
 	for i := range orders {
-		orders[i] = withLifecycle(orders[i])
+		s.enrichOrder(ctx, &orders[i])
 	}
 }
 
-func enrichOrder(order *Order) {
+func (s *Service) enrichOrder(ctx context.Context, order *Order) {
 	if order == nil {
 		return
+	}
+	if active, err := s.repository.ActiveDispatchForOrder(ctx, order.ID); err == nil && active != nil {
+		order.ActiveDispatch = active
+		order.ActiveDispatchID = &active.ID
+		order.ActiveDispatchStatus = &active.Status
 	}
 	*order = withLifecycle(*order)
 }
 
 func withLifecycle(order Order) Order {
 	lc := lifecycle.Order(order.Status)
+	if order.ActiveDispatchStatus != nil {
+		lc = lifecycle.OrderWithDispatch(order.Status, *order.ActiveDispatchStatus)
+	}
 	order.Lifecycle = &lc
 	return order
 }

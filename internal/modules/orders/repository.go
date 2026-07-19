@@ -21,6 +21,7 @@ type Repository interface {
 	UpdateDeliverySnapshot(ctx context.Context, orderID int64, actorID int64, input DeliverySnapshotRequest) (*DeliverySnapshot, error)
 	OrderHasStartedDispatch(ctx context.Context, orderID int64) (bool, error)
 	OrderHasUndeliveredDispatch(ctx context.Context, orderID int64) (bool, error)
+	ActiveDispatchForOrder(ctx context.Context, orderID int64) (*ActiveDispatchSummary, error)
 	StartedDispatchDriverUserID(ctx context.Context, orderID int64) (*int64, error)
 	UpdateStatus(ctx context.Context, actorID int64, orderID int64, status string) (*Order, error)
 	UpdateStatusWithLoading(ctx context.Context, actorID int64, orderID int64, status string, phase string) (*Order, error)
@@ -300,6 +301,38 @@ func (r *PostgresRepository) OrderHasUndeliveredDispatch(ctx context.Context, or
 		)
 	`, orderID).Scan(&exists)
 	return exists, err
+}
+
+func (r *PostgresRepository) ActiveDispatchForOrder(ctx context.Context, orderID int64) (*ActiveDispatchSummary, error) {
+	var summary ActiveDispatchSummary
+	err := r.db.QueryRowContext(ctx, `
+		SELECT dispatch_id, dispatch_status::text
+		FROM public.dispatches
+		WHERE order_id = $1
+		  AND COALESCE(dispatch_status::text, '') <> 'CANCELLED'
+		ORDER BY
+		  CASE COALESCE(dispatch_status::text, '')
+			WHEN 'DELIVERED' THEN 5
+			WHEN 'IN_TRANSIT' THEN 4
+			WHEN 'DISPATCHED' THEN 3
+			WHEN 'ACCEPTED' THEN 2
+			WHEN 'PENDING' THEN 1
+			ELSE 0
+		  END DESC,
+		  updated_at DESC NULLS LAST,
+		  delivery_date DESC NULLS LAST,
+		  dispatch_date DESC NULLS LAST,
+		  created_at DESC,
+		  dispatch_id DESC
+		LIMIT 1
+	`, orderID).Scan(&summary.ID, &summary.Status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &summary, nil
 }
 
 func (r *PostgresRepository) StartedDispatchDriverUserID(ctx context.Context, orderID int64) (*int64, error) {
