@@ -110,6 +110,22 @@ func (s *Service) Accept(ctx context.Context, actor ActorContext, uuid string) (
 		if actor.HasRole("DRIVER") {
 			return Invite{}, ErrConflictingRole
 		}
+	case "DRIVER_INVITE":
+		// Managers and nursery owners cannot become drivers — roles are mutually exclusive.
+		isManager, err := s.repository.UserIsManager(ctx, actor.UserID)
+		if err != nil {
+			return Invite{}, err
+		}
+		if isManager {
+			return Invite{}, ErrConflictingRole
+		}
+		owns, err := s.repository.UserOwnsNursery(ctx, actor.UserID)
+		if err != nil {
+			return Invite{}, err
+		}
+		if owns {
+			return Invite{}, ErrConflictingRole
+		}
 	case "MANAGER_INVITE":
 		// Drivers cannot become managers — roles are mutually exclusive.
 		if actor.HasRole("DRIVER") {
