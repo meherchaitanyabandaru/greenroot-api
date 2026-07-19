@@ -41,11 +41,25 @@ type SubscriptionDisplays struct {
 	NextActions Actions `json:"next_actions"`
 }
 
+type MarketAdDisplays struct {
+	Buyer       Display `json:"buyer"`
+	Seller      Display `json:"seller"`
+	NextActions Actions `json:"next_actions"`
+}
+
+type MarketEnquiryDisplays struct {
+	Buyer       Display `json:"buyer"`
+	Seller      Display `json:"seller"`
+	NextActions Actions `json:"next_actions"`
+}
+
 type Actions struct {
 	Customer []string `json:"customer,omitempty"`
 	Operator []string `json:"operator,omitempty"`
 	Driver   []string `json:"driver,omitempty"`
 	Supplier []string `json:"supplier,omitempty"`
+	Buyer    []string `json:"buyer,omitempty"`
+	Seller   []string `json:"seller,omitempty"`
 }
 
 func Order(status string) OrderDisplays {
@@ -112,6 +126,24 @@ func Subscription(status string, daysRemaining *int) SubscriptionDisplays {
 		Customer:    subscriptionDisplay(status, daysRemaining, true),
 		Operator:    subscriptionDisplay(status, daysRemaining, false),
 		NextActions: subscriptionActions(status, daysRemaining),
+	}
+}
+
+func MarketAd(status string) MarketAdDisplays {
+	status = strings.ToUpper(strings.TrimSpace(status))
+	return MarketAdDisplays{
+		Buyer:       marketAdBuyerDisplay(status),
+		Seller:      marketAdSellerDisplay(status),
+		NextActions: marketAdActions(status),
+	}
+}
+
+func MarketEnquiry(status string) MarketEnquiryDisplays {
+	status = strings.ToUpper(strings.TrimSpace(status))
+	return MarketEnquiryDisplays{
+		Buyer:       marketEnquiryBuyerDisplay(status),
+		Seller:      marketEnquirySellerDisplay(status),
+		NextActions: marketEnquiryActions(status),
 	}
 }
 
@@ -219,6 +251,40 @@ func subscriptionActions(status string, daysRemaining *int) Actions {
 		return Actions{Customer: []string{"Renew Subscription"}, Operator: []string{"Renew Subscription"}}
 	default:
 		return Actions{Customer: []string{"View Subscription"}, Operator: []string{"View Subscription"}}
+	}
+}
+
+func marketAdActions(status string) Actions {
+	switch status {
+	case "DRAFT":
+		return Actions{Seller: []string{"Edit Ad", "Publish Ad"}}
+	case "PUBLISHED":
+		return Actions{Buyer: []string{"Send Enquiry", "Save Ad"}, Seller: []string{"Pause Ad", "Review Enquiries"}}
+	case "PAUSED":
+		return Actions{Seller: []string{"Resume Ad", "Edit Ad", "Archive Ad"}}
+	case "EXPIRED":
+		return Actions{Seller: []string{"Renew Ad", "Archive Ad"}}
+	case "ARCHIVED":
+		return Actions{Seller: []string{"View Ad"}}
+	default:
+		return Actions{Buyer: []string{"View Ad"}, Seller: []string{"View Ad"}}
+	}
+}
+
+func marketEnquiryActions(status string) Actions {
+	switch status {
+	case "NEW":
+		return Actions{Buyer: []string{"View Enquiry", "Cancel Enquiry"}, Seller: []string{"Reply", "Create Quotation", "Close Enquiry"}}
+	case "IN_PROGRESS":
+		return Actions{Buyer: []string{"Reply", "Cancel Enquiry"}, Seller: []string{"Reply", "Create Quotation", "Close Enquiry"}}
+	case "QUOTATION_CREATED":
+		return Actions{Buyer: []string{"View Quotation"}, Seller: []string{"View Quotation", "Close Enquiry"}}
+	case "CLOSED":
+		return Actions{Buyer: []string{"View Enquiry"}, Seller: []string{"View Enquiry"}}
+	case "CANCELLED":
+		return Actions{Buyer: []string{"View Enquiry"}, Seller: []string{"View Enquiry"}}
+	default:
+		return Actions{Buyer: []string{"View Enquiry"}, Seller: []string{"View Enquiry"}}
 	}
 }
 
@@ -377,6 +443,78 @@ func subscriptionDisplay(status string, daysRemaining *int, customer bool) Displ
 		return Display{"Cancelled", "Subscription Cancelled", "Renew to activate again.", "error"}
 	case "EXPIRED":
 		return Display{"Expired", "Subscription Expired", "Renew to continue using paid features.", "error"}
+	default:
+		label := pretty(status)
+		return Display{label, label, "", "neutral"}
+	}
+}
+
+func marketAdBuyerDisplay(status string) Display {
+	switch status {
+	case "PUBLISHED":
+		return Display{"Available", "Market Ad Available", "Send an enquiry if this stock matches your need.", "success"}
+	case "PAUSED":
+		return Display{"Unavailable", "Ad Paused", "This ad is temporarily unavailable.", "warning"}
+	case "EXPIRED":
+		return Display{"Expired", "Ad Expired", "This ad is no longer active.", "error"}
+	case "ARCHIVED":
+		return Display{"Archived", "Ad Archived", "This ad is no longer available.", "neutral"}
+	case "DRAFT":
+		return Display{"Draft", "Ad Draft", "This ad is not visible to buyers yet.", "neutral"}
+	default:
+		label := pretty(status)
+		return Display{label, label, "", "neutral"}
+	}
+}
+
+func marketAdSellerDisplay(status string) Display {
+	switch status {
+	case "DRAFT":
+		return Display{"Draft", "Draft Ad", "Publish this ad when ready.", "neutral"}
+	case "PUBLISHED":
+		return Display{"Published", "Live on Market", "Buyers can view and enquire.", "success"}
+	case "PAUSED":
+		return Display{"Paused", "Ad Paused", "Resume when this stock is available again.", "warning"}
+	case "EXPIRED":
+		return Display{"Expired", "Ad Expired", "Renew this ad to make it live again.", "error"}
+	case "ARCHIVED":
+		return Display{"Archived", "Ad Archived", "This ad is closed.", "neutral"}
+	default:
+		label := pretty(status)
+		return Display{label, label, "", "neutral"}
+	}
+}
+
+func marketEnquiryBuyerDisplay(status string) Display {
+	switch status {
+	case "NEW":
+		return Display{"Sent", "Enquiry Sent", "Waiting for the seller to respond.", "warning"}
+	case "IN_PROGRESS":
+		return Display{"In Progress", "Seller Responded", "Continue the discussion.", "info"}
+	case "QUOTATION_CREATED":
+		return Display{"Quotation Created", "Quotation Ready", "Review the linked quotation.", "success"}
+	case "CLOSED":
+		return Display{"Closed", "Enquiry Closed", "This enquiry is closed.", "neutral"}
+	case "CANCELLED":
+		return Display{"Cancelled", "Enquiry Cancelled", "This enquiry was cancelled.", "error"}
+	default:
+		label := pretty(status)
+		return Display{label, label, "", "neutral"}
+	}
+}
+
+func marketEnquirySellerDisplay(status string) Display {
+	switch status {
+	case "NEW":
+		return Display{"New", "New Enquiry", "Reply or create a quotation.", "warning"}
+	case "IN_PROGRESS":
+		return Display{"In Progress", "Conversation Active", "Continue the discussion or create a quotation.", "info"}
+	case "QUOTATION_CREATED":
+		return Display{"Quotation Created", "Quotation Linked", "A quotation has been created for this enquiry.", "success"}
+	case "CLOSED":
+		return Display{"Closed", "Enquiry Closed", "This enquiry is closed.", "neutral"}
+	case "CANCELLED":
+		return Display{"Cancelled", "Enquiry Cancelled", "The buyer cancelled this enquiry.", "error"}
 	default:
 		label := pretty(status)
 		return Display{label, label, "", "neutral"}

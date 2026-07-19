@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -69,7 +70,11 @@ func (s *Service) CreateAd(ctx context.Context, actor ActorContext, req CreateAd
 	if err != nil || !active {
 		return Ad{}, fmt.Errorf("%w: nursery must be ACTIVE to post ads", ErrForbidden)
 	}
-	return s.repo.CreateAd(ctx, nurseryID, actor.UserID, req)
+	ad, err := s.repo.CreateAd(ctx, nurseryID, actor.UserID, req)
+	if err != nil {
+		return Ad{}, err
+	}
+	return enrichAd(ad, nurseryID), nil
 }
 
 func (s *Service) GetAd(ctx context.Context, actor ActorContext, id int64) (Ad, error) {
@@ -94,7 +99,7 @@ func (s *Service) GetAd(ctx context.Context, actor ActorContext, id int64) (Ad, 
 		ad.IsSavedByMe, _ = s.repo.IsSaved(ctx, id, nurseryID)
 	}
 	s.applyAdCounterDeltas(ctx, []Ad{ad}, func(updated Ad) { ad = updated })
-	return ad, nil
+	return enrichAd(ad, nurseryID), nil
 }
 
 func (s *Service) BrowseAds(ctx context.Context, actor ActorContext, q AdsQuery) ([]Ad, int, error) {
@@ -125,6 +130,9 @@ func (s *Service) BrowseAds(ctx context.Context, actor ActorContext, q AdsQuery)
 			}
 		}
 	})
+	for i := range ads {
+		ads[i] = enrichAd(ads[i], nurseryID)
+	}
 	return ads, total, nil
 }
 
@@ -154,6 +162,9 @@ func (s *Service) MyAds(ctx context.Context, actor ActorContext, q AdsQuery) ([]
 			}
 		}
 	})
+	for i := range ads {
+		ads[i] = enrichAd(ads[i], nurseryID)
+	}
 	return ads, total, nil
 }
 
@@ -178,7 +189,12 @@ func (s *Service) UpdateAd(ctx context.Context, actor ActorContext, id int64, re
 	if err := validatePickup(req.PickupLatitude, req.PickupLongitude, req.PickupGPSAccuracyM, req.PickupLocationSource); err != nil {
 		return Ad{}, err
 	}
-	return s.repo.UpdateAd(ctx, id, actor.UserID, req)
+	updated, err := s.repo.UpdateAd(ctx, id, actor.UserID, req)
+	if err != nil {
+		return Ad{}, err
+	}
+	nurseryID, _ := s.actorNurseryID(ctx, actor)
+	return enrichAd(updated, nurseryID), nil
 }
 
 func (s *Service) PublishAd(ctx context.Context, actor ActorContext, id int64) (Ad, error) {
@@ -243,7 +259,12 @@ func (s *Service) adTransition(ctx context.Context, actor ActorContext, id int64
 	if err := fn(ctx); err != nil {
 		return Ad{}, err
 	}
-	return s.repo.GetAd(ctx, id)
+	updated, err := s.repo.GetAd(ctx, id)
+	if err != nil {
+		return Ad{}, err
+	}
+	nurseryID, _ := s.actorNurseryID(ctx, actor)
+	return enrichAd(updated, nurseryID), nil
 }
 
 // ── Save / Bookmark ───────────────────────────────────────────
@@ -369,6 +390,9 @@ func (s *Service) SavedAds(ctx context.Context, actor ActorContext, q AdsQuery) 
 			}
 		}
 	})
+	for i := range ads {
+		ads[i] = enrichAd(ads[i], nurseryID)
+	}
 	return ads, total, nil
 }
 
@@ -429,7 +453,11 @@ func (s *Service) SendEnquiry(ctx context.Context, actor ActorContext, adID int6
 	if already {
 		return Enquiry{}, fmt.Errorf("%w: you have already sent an enquiry for this ad", ErrInvalidInput)
 	}
-	return s.repo.CreateEnquiry(ctx, adID, ad.NurseryID, nurseryID, actor.UserID, req)
+	enquiry, err := s.repo.CreateEnquiry(ctx, adID, ad.NurseryID, nurseryID, actor.UserID, req)
+	if err != nil {
+		return Enquiry{}, err
+	}
+	return enrichEnquiry(enquiry, nurseryID), nil
 }
 
 func (s *Service) GetEnquiry(ctx context.Context, actor ActorContext, id int64) (Enquiry, error) {
@@ -449,7 +477,7 @@ func (s *Service) GetEnquiry(ctx context.Context, actor ActorContext, id int64) 
 	}
 	msgs, _ := s.repo.GetMessages(ctx, id)
 	e.Messages = msgs
-	return e, nil
+	return enrichEnquiry(e, nurseryID), nil
 }
 
 func (s *Service) ListEnquiries(ctx context.Context, actor ActorContext, q EnquiriesQuery) ([]Enquiry, int, error) {
@@ -466,7 +494,14 @@ func (s *Service) ListEnquiries(ctx context.Context, actor ActorContext, q Enqui
 	if q.PerPage < 1 || q.PerPage > 50 {
 		q.PerPage = 20
 	}
-	return s.repo.ListEnquiries(ctx, nurseryID, q)
+	enquiries, total, err := s.repo.ListEnquiries(ctx, nurseryID, q)
+	if err != nil {
+		return nil, 0, err
+	}
+	for i := range enquiries {
+		enquiries[i] = enrichEnquiry(enquiries[i], nurseryID)
+	}
+	return enquiries, total, nil
 }
 
 func (s *Service) ReplyToEnquiry(ctx context.Context, actor ActorContext, id int64, req ReplyEnquiryRequest) (Message, error) {
@@ -524,7 +559,11 @@ func (s *Service) LinkQuotation(ctx context.Context, actor ActorContext, id int6
 	if err := s.repo.LinkQuotation(ctx, id, req.QuotationID); err != nil {
 		return Enquiry{}, err
 	}
-	return s.repo.GetEnquiry(ctx, id)
+	updated, err := s.repo.GetEnquiry(ctx, id)
+	if err != nil {
+		return Enquiry{}, err
+	}
+	return enrichEnquiry(updated, nurseryID), nil
 }
 
 func (s *Service) updateEnquiryStatus(ctx context.Context, actor ActorContext, id int64, newStatus string) (Enquiry, error) {
@@ -542,7 +581,11 @@ func (s *Service) updateEnquiryStatus(ctx context.Context, actor ActorContext, i
 	if err := s.repo.SetEnquiryStatus(ctx, id, newStatus); err != nil {
 		return Enquiry{}, err
 	}
-	return s.repo.GetEnquiry(ctx, id)
+	updated, err := s.repo.GetEnquiry(ctx, id)
+	if err != nil {
+		return Enquiry{}, err
+	}
+	return enrichEnquiry(updated, nurseryID), nil
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -566,6 +609,70 @@ func (s *Service) canAccessEnquiry(actor ActorContext, e Enquiry, nurseryID int6
 		return true
 	}
 	return nurseryID == e.AdNurseryID || nurseryID == e.EnquiringNurseryID
+}
+
+func enrichAd(ad Ad, actorNurseryID int64) Ad {
+	status := strings.ToUpper(strings.TrimSpace(ad.Status))
+	isOwner := actorNurseryID > 0 && ad.NurseryID == actorNurseryID
+	isLive := status == StatusPublished
+	isExpired := status == StatusExpired || (ad.ExpiresAt != nil && time.Now().After(*ad.ExpiresAt))
+
+	ad.Lifecycle = marketPtr(lifecycle.MarketAd(status))
+	ad.Summary = &AdSummary{
+		IsOwner:       isOwner,
+		IsLive:        isLive,
+		IsExpired:     isExpired,
+		DaysRemaining: daysRemaining(ad.ExpiresAt),
+	}
+	ad.Capabilities = &AdCapabilities{
+		CanEdit:    isOwner && status != StatusArchived,
+		CanPublish: isOwner && (status == StatusDraft || status == StatusPaused),
+		CanPause:   isOwner && status == StatusPublished,
+		CanResume:  isOwner && status == StatusPaused,
+		CanRenew:   isOwner && status == StatusExpired,
+		CanArchive: isOwner && status != StatusArchived,
+		CanSave:    !isOwner && status == StatusPublished,
+		CanEnquire: !isOwner && status == StatusPublished,
+		CanReport:  !isOwner && status == StatusPublished,
+	}
+	return ad
+}
+
+func enrichEnquiry(enquiry Enquiry, actorNurseryID int64) Enquiry {
+	status := strings.ToUpper(strings.TrimSpace(enquiry.Status))
+	isBuyer := actorNurseryID > 0 && enquiry.EnquiringNurseryID == actorNurseryID
+	isSeller := actorNurseryID > 0 && enquiry.AdNurseryID == actorNurseryID
+	isOpen := status != EnquiryClosed && status != EnquiryCancelled
+
+	enquiry.Lifecycle = marketPtr(lifecycle.MarketEnquiry(status))
+	enquiry.Summary = &EnquirySummary{
+		IsBuyer:  isBuyer,
+		IsSeller: isSeller,
+		IsOpen:   isOpen,
+	}
+	enquiry.Capabilities = &EnquiryCapabilities{
+		CanReply:           isOpen && (isBuyer || isSeller),
+		CanClose:           isOpen && isSeller,
+		CanCancel:          isOpen && isBuyer,
+		CanCreateQuotation: isOpen && isSeller && enquiry.QuotationID == nil,
+		CanViewQuotation:   enquiry.QuotationID != nil,
+	}
+	return enquiry
+}
+
+func daysRemaining(expiresAt *time.Time) *int {
+	if expiresAt == nil {
+		return nil
+	}
+	days := int(expiresAt.Sub(time.Now()).Hours() / 24)
+	if expiresAt.After(time.Now()) && days == 0 {
+		days = 1
+	}
+	return &days
+}
+
+func marketPtr[T any](value T) *T {
+	return &value
 }
 
 func markConfirmedPickup(actor ActorContext, req CreateAdRequest) CreateAdRequest {

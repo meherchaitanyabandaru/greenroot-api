@@ -43,6 +43,9 @@ func (s *Service) List(ctx context.Context, actor ActorContext, input ListDriver
 	if err != nil {
 		return nil, Pagination{}, err
 	}
+	for i := range drivers {
+		drivers[i] = enrichDriver(actor, drivers[i])
+	}
 	return drivers, Pagination{Page: input.Page, PerPage: input.PerPage, Total: total, TotalPages: totalPages(total, input.PerPage)}, nil
 }
 
@@ -54,7 +57,7 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, driverID int64) (
 	if !hasRole(actor, "ADMIN") && (driver.UserID == nil || *driver.UserID != actor.UserID) {
 		return Driver{}, ErrForbidden
 	}
-	return *driver, nil
+	return enrichDriver(actor, *driver), nil
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, req DriverRequest) (Driver, error) {
@@ -77,7 +80,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, req DriverRequ
 		return Driver{}, err
 	}
 	s.audit(ctx, actor, driver.ID, actionInsert, req)
-	return *driver, nil
+	return enrichDriver(actor, *driver), nil
 }
 
 func (s *Service) Update(ctx context.Context, actor ActorContext, driverID int64, req DriverRequest) (Driver, error) {
@@ -100,7 +103,7 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, driverID int64
 		return Driver{}, err
 	}
 	s.audit(ctx, actor, driver.ID, actionUpdate, req)
-	return *driver, nil
+	return enrichDriver(actor, *driver), nil
 }
 
 func (s *Service) Delete(ctx context.Context, actor ActorContext, driverID int64) error {
@@ -131,7 +134,7 @@ func (s *Service) Apply(ctx context.Context, actor ActorContext, req ApplyDriver
 		return Driver{}, err
 	}
 	s.audit(ctx, actor, driver.ID, actionInsert, req)
-	return *driver, nil
+	return enrichDriver(actor, *driver), nil
 }
 
 // GetMine returns the driver profile for the current user.
@@ -140,7 +143,7 @@ func (s *Service) GetMine(ctx context.Context, actor ActorContext) (Driver, erro
 	if err != nil {
 		return Driver{}, err
 	}
-	return *driver, nil
+	return enrichDriver(actor, *driver), nil
 }
 
 // Approve approves a driver profile (admin only).
@@ -154,7 +157,7 @@ func (s *Service) Approve(ctx context.Context, actor ActorContext, driverUserID 
 	}
 	redisutil.InvalidateWorkspaces(ctx, s.redis, slog.Default(), driverUserID)
 	s.audit(ctx, actor, driver.ID, actionUpdate, map[string]any{"approval_status": "APPROVED"})
-	return *driver, nil
+	return enrichDriver(actor, *driver), nil
 }
 
 func (s *Service) CreateLocation(ctx context.Context, actor ActorContext, driverID int64, input LocationRequest) (DriverLocation, error) {
@@ -219,6 +222,28 @@ func isAllowedStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+func enrichDriver(actor ActorContext, driver Driver) Driver {
+	status := strings.ToUpper(strings.TrimSpace(driver.Status))
+	approvalStatus := strings.ToUpper(strings.TrimSpace(driver.ApprovalStatus))
+	profileStatus := strings.ToUpper(strings.TrimSpace(driver.ProfileStatus))
+	isAdmin := hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN")
+	isSelf := driver.UserID != nil && *driver.UserID == actor.UserID
+
+	driver.Summary = &DriverSummary{
+		IsApproved:        approvalStatus == "APPROVED",
+		IsProfileComplete: profileStatus == "COMPLETE",
+		IsActive:          status == "ACTIVE",
+		IsSuspended:       status == "SUSPENDED",
+	}
+	driver.Capabilities = &DriverCapabilities{
+		CanEdit:           isAdmin,
+		CanDelete:         isAdmin,
+		CanApprove:        isAdmin && approvalStatus != "APPROVED" && status != "DELETED",
+		CanUpdateLocation: (isSelf || isAdmin) && approvalStatus == "APPROVED" && status == "ACTIVE",
+	}
+	return driver
 }
 
 func hasRole(actor ActorContext, role string) bool {
