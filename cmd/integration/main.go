@@ -160,7 +160,10 @@ func main() {
 	}
 	record("orders/list-buyer", c.expect(ctx, http.MethodGet, "/api/v1/orders?page=1&per_page=5", nil, buyer.AccessToken, http.StatusOK))
 	if orderID > 0 {
-		record("orders/status-nursery", c.expect(ctx, http.MethodPut, fmt.Sprintf("/api/v1/orders/%d/status", orderID), map[string]any{"order_status": "CONFIRMED"}, nursery.AccessToken, http.StatusOK))
+		record("orders/delivery-snapshot", c.expect(ctx, http.MethodPut, fmt.Sprintf("/api/v1/orders/%d/delivery", orderID), map[string]any{"address_line1": "Integration Street", "city": "Hyderabad", "state": "Telangana", "contact_name": "Integration Buyer", "contact_mobile": "9300000000"}, nursery.AccessToken, http.StatusOK))
+		record("orders/confirm", c.expect(ctx, http.MethodPut, fmt.Sprintf("/api/v1/orders/%d/status", orderID), map[string]any{"order_status": "CONFIRMED"}, nursery.AccessToken, http.StatusOK))
+		record("orders/start-loading", c.expect(ctx, http.MethodPost, fmt.Sprintf("/api/v1/orders/%d/start-loading", orderID), nil, nursery.AccessToken, http.StatusOK))
+		record("orders/complete-loading", c.expect(ctx, http.MethodPost, fmt.Sprintf("/api/v1/orders/%d/complete-loading", orderID), nil, nursery.AccessToken, http.StatusOK))
 		record("payments/manual-order", c.expect(ctx, http.MethodPost, "/api/v1/payments/manual", map[string]any{"payment_for": "ORDER", "order_id": orderID, "amount": 200, "payment_method": "UPI", "payment_status": "SUCCESS", "transaction_reference": unique("UPI")}, buyer.AccessToken, http.StatusCreated))
 	}
 
@@ -188,32 +191,34 @@ func main() {
 		driverID = nestedInt(data, "driver", "id")
 		record("drivers/create-admin", nil)
 	} else {
-		record("drivers/create-admin", err)
+		// seed driver already has a record — look it up via /drivers/me
+		if mineData, mineErr := c.expectJSON(ctx, http.MethodGet, "/api/v1/drivers/me", nil, driver.AccessToken, http.StatusOK); mineErr == nil {
+			driverID = nestedInt(mineData, "driver", "id")
+			record("drivers/create-admin", nil)
+		} else {
+			record("drivers/create-admin", err)
+		}
 	}
 	if driverID > 0 {
 		record("drivers/location-driver", c.expect(ctx, http.MethodPost, fmt.Sprintf("/api/v1/drivers/%d/location", driverID), map[string]any{"latitude": 17.385, "longitude": 78.4867}, driver.AccessToken, http.StatusCreated))
 	}
 
-	dispatchID := int64(0)
 	if orderID > 0 {
 		body := map[string]any{"order_id": orderID, "vehicle_id": nullableID(vehicleID), "driver_id": nullableID(driverID), "destination_address": "Integration destination", "items": []map[string]any{}}
-		if data, err := c.expectJSON(ctx, http.MethodPost, "/api/v1/dispatches", body, nursery.AccessToken, http.StatusCreated); err == nil {
-			dispatchID = nestedInt(data, "dispatch", "id")
+		if _, err := c.expectJSON(ctx, http.MethodPost, "/api/v1/dispatches", body, nursery.AccessToken, http.StatusCreated); err == nil {
 			record("dispatches/create-nursery", nil)
 		} else {
 			record("dispatches/create-nursery", err)
 		}
 	}
 	record("dispatches/list-admin", c.expect(ctx, http.MethodGet, "/api/v1/dispatches?page=1&per_page=5", nil, admin.AccessToken, http.StatusOK))
+	// dispatch_id intentionally omitted: dispatch is PENDING (not IN_TRANSIT), tracking requires IN_TRANSIT
 	trackingBody := map[string]any{"latitude": 17.385, "longitude": 78.4867, "notes": "integration"}
 	if vehicleID > 0 {
 		trackingBody["vehicle_id"] = vehicleID
 	}
 	if driverID > 0 {
 		trackingBody["driver_id"] = driverID
-	}
-	if dispatchID > 0 {
-		trackingBody["dispatch_id"] = dispatchID
 	}
 	record("tracking/create-driver", c.expect(ctx, http.MethodPost, "/api/v1/tracking", trackingBody, driver.AccessToken, http.StatusCreated))
 	if vehicleID > 0 {

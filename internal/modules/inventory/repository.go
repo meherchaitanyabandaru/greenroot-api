@@ -83,6 +83,11 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Up
 			last_updated_by, last_updated_at, created_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT (nursery_id, plant_id, size_id) DO UPDATE SET
+			available_quantity = EXCLUDED.available_quantity,
+			inventory_status   = EXCLUDED.inventory_status,
+			last_updated_by    = EXCLUDED.last_updated_by,
+			last_updated_at    = CURRENT_TIMESTAMP
 		RETURNING inventory_id
 	`
 	var inventoryID int64
