@@ -133,7 +133,7 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid invite input")
 	case errors.Is(err, ErrConflictingRole):
-		response.Error(w, http.StatusConflict, "conflicting_role", "nursery owners cannot join as managers and managers cannot become nursery owners")
+		response.Error(w, http.StatusConflict, "conflicting_role", "your current role doesn't allow you to accept this invite")
 	case errors.Is(err, ErrAlreadyMember):
 		response.Error(w, http.StatusConflict, "already_member", "this member is already working at another nursery")
 	case errors.Is(err, ErrWrongTarget):

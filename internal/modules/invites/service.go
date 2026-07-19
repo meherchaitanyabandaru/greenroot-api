@@ -105,7 +105,16 @@ func (s *Service) Accept(ctx context.Context, actor ActorContext, uuid string) (
 	}
 
 	switch pending.InviteType {
+	case "CUSTOMER_INVITE":
+		// Drivers cannot become customers — roles are mutually exclusive.
+		if actor.HasRole("DRIVER") {
+			return Invite{}, ErrConflictingRole
+		}
 	case "MANAGER_INVITE":
+		// Drivers cannot become managers — roles are mutually exclusive.
+		if actor.HasRole("DRIVER") {
+			return Invite{}, ErrConflictingRole
+		}
 		// Nursery owners cannot accept a manager invite (conflicting roles).
 		owns, err := s.repository.UserOwnsNursery(ctx, actor.UserID)
 		if err != nil {
