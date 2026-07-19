@@ -254,7 +254,17 @@ func clientContext(r *http.Request) ClientContext {
 }
 
 func writeAuthError(w http.ResponseWriter, err error) {
+	var suspended *SuspendedError
 	switch {
+	case errors.As(err, &suspended):
+		response.JSON(w, http.StatusForbidden, map[string]any{
+			"error": map[string]any{
+				"code":         "USER_SUSPENDED",
+				"message":      "your account has been suspended — contact support",
+				"reason":       suspended.Reason,
+				"suspended_at": suspended.SuspendedAt,
+			},
+		})
 	case errors.Is(err, ErrInvalidOTP):
 		response.Error(w, http.StatusUnauthorized, "invalid_otp", "invalid OTP")
 	case errors.Is(err, ErrInvalidRefreshToken):

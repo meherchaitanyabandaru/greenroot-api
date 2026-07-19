@@ -26,11 +26,21 @@ type User struct {
 	InitialActivity       *string    `json:"initial_activity,omitempty"`
 	OnboardingCompletedAt *time.Time `json:"onboarding_completed_at,omitempty"`
 	Status                string     `json:"status"`
+	SuspensionReason      *string    `json:"suspension_reason,omitempty"`
+	SuspendedAt           *time.Time `json:"suspended_at,omitempty"`
 	LastLoginAt           *time.Time `json:"last_login_at,omitempty"`
 	CreatedAt             time.Time  `json:"created_at"`
 	UpdatedAt             time.Time  `json:"updated_at"`
 	Roles                 []string   `json:"roles"`
 }
+
+// SuspendedError carries suspension details from the auth service to the handler.
+type SuspendedError struct {
+	Reason      string
+	SuspendedAt *time.Time
+}
+
+func (e *SuspendedError) Error() string { return "account suspended: " + e.Reason }
 
 type Session struct {
 	ID             int64     `json:"id"`

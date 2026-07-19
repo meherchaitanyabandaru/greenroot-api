@@ -99,6 +99,13 @@ func (s *Service) VerifyOTP(ctx context.Context, req VerifyOTPRequest, client Cl
 		return AuthResponse{}, err
 	}
 
+	if user.Status == "SUSPENDED" {
+		return AuthResponse{}, &SuspendedError{
+			Reason:      func() string { if user.SuspensionReason != nil { return *user.SuspensionReason }; return "" }(),
+			SuspendedAt: user.SuspendedAt,
+		}
+	}
+
 	if err := s.repository.UpdateLastLogin(ctx, user.ID, now); err != nil {
 		return AuthResponse{}, err
 	}

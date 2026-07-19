@@ -62,14 +62,17 @@ func (s *Service) UpdateUserStatus(ctx context.Context, a ActorContext, userID i
 	if status != "ACTIVE" && status != "SUSPENDED" && status != "DELETED" {
 		return errors.New("invalid status: use ACTIVE, SUSPENDED, or DELETED")
 	}
-	if err := s.repository.UpdateUserStatus(ctx, userID, status); err != nil {
+	if status == "SUSPENDED" && strings.TrimSpace(req.Reason) == "" {
+		return errors.New("reason is required when suspending a user")
+	}
+	if err := s.repository.UpdateUserStatus(ctx, a.UserID, userID, status, strings.TrimSpace(req.Reason)); err != nil {
 		return err
 	}
 	switch status {
 	case "SUSPENDED", "DELETED":
 		revocation.Revoke(userID, 20*time.Minute)
 	case "ACTIVE":
-		revocation.Remove(userID) // lift revocation immediately on reinstatement
+		revocation.Remove(userID)
 	}
 	redisutil.InvalidateWorkspaces(ctx, s.redis, slog.Default(), userID)
 	return nil
@@ -83,7 +86,10 @@ func (s *Service) UpdateNurseryStatus(ctx context.Context, a ActorContext, nurse
 	if status != "ACTIVE" && status != "SUSPENDED" {
 		return errors.New("invalid status: use ACTIVE or SUSPENDED")
 	}
-	if err := s.repository.UpdateNurseryStatus(ctx, nurseryID, status); err != nil {
+	if status == "SUSPENDED" && strings.TrimSpace(req.Reason) == "" {
+		return errors.New("reason is required when suspending a nursery")
+	}
+	if err := s.repository.UpdateNurseryStatus(ctx, a.UserID, nurseryID, status, strings.TrimSpace(req.Reason)); err != nil {
 		return err
 	}
 	userIDs, err := s.repository.WorkspaceUserIDs(ctx, nurseryID)

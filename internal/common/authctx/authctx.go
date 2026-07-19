@@ -186,7 +186,7 @@ func EnrichActorMiddleware(jwt *jwtplatform.Service, redisClients ...redis.Cmdab
 
 			// Revocation check — catches immediate suspend/block after token issue.
 			if revocation.IsRevoked(userID) {
-				response.Error(w, http.StatusForbidden, "account_suspended",
+				response.Error(w, http.StatusForbidden, "USER_SUSPENDED",
 					"your account has been suspended — contact support")
 				return
 			}
@@ -197,7 +197,7 @@ func EnrichActorMiddleware(jwt *jwtplatform.Service, redisClients ...redis.Cmdab
 				status = "ACTIVE"
 			}
 			if status == "SUSPENDED" || status == "DELETED" {
-				response.Error(w, http.StatusForbidden, "account_suspended",
+				response.Error(w, http.StatusForbidden, "USER_SUSPENDED",
 					"your account has been suspended — contact support")
 				return
 			}

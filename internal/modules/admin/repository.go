@@ -10,8 +10,8 @@ import (
 type Repository interface {
 	Summary(context.Context) (Summary, error)
 	ListUsers(context.Context, ListUsersRequest) ([]User, int64, error)
-	UpdateUserStatus(ctx context.Context, userID int64, status string) error
-	UpdateNurseryStatus(ctx context.Context, nurseryID int64, status string) error
+	UpdateUserStatus(ctx context.Context, actorID int64, userID int64, status string, reason string) error
+	UpdateNurseryStatus(ctx context.Context, actorID int64, nurseryID int64, status string, reason string) error
 	WorkspaceUserIDs(ctx context.Context, nurseryID int64) ([]int64, error)
 }
 type PostgresRepository struct{ db *sql.DB }
@@ -178,19 +178,73 @@ func nullableTime(value sql.NullTime) *string {
 	return &formatted
 }
 
-func (r *PostgresRepository) UpdateUserStatus(ctx context.Context, userID int64, status string) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE public.users SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1`,
-		userID, status,
-	)
+func (r *PostgresRepository) UpdateUserStatus(ctx context.Context, actorID int64, userID int64, status string, reason string) error {
+	var err error
+	switch status {
+	case "SUSPENDED":
+		_, err = r.db.ExecContext(ctx, `
+			UPDATE public.users SET
+				status            = $2,
+				suspension_reason = $3,
+				suspended_by      = $4,
+				suspended_at      = CURRENT_TIMESTAMP,
+				unsuspended_by    = NULL,
+				unsuspended_at    = NULL,
+				updated_at        = CURRENT_TIMESTAMP
+			WHERE user_id = $1`,
+			userID, status, reason, actorID)
+	case "ACTIVE":
+		_, err = r.db.ExecContext(ctx, `
+			UPDATE public.users SET
+				status            = $2,
+				suspension_reason = NULL,
+				suspended_by      = NULL,
+				suspended_at      = NULL,
+				unsuspended_by    = $3,
+				unsuspended_at    = CURRENT_TIMESTAMP,
+				updated_at        = CURRENT_TIMESTAMP
+			WHERE user_id = $1`,
+			userID, status, actorID)
+	default:
+		_, err = r.db.ExecContext(ctx, `
+			UPDATE public.users SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1`,
+			userID, status)
+	}
 	return err
 }
 
-func (r *PostgresRepository) UpdateNurseryStatus(ctx context.Context, nurseryID int64, status string) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE public.nurseries SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE nursery_id = $1`,
-		nurseryID, status,
-	)
+func (r *PostgresRepository) UpdateNurseryStatus(ctx context.Context, actorID int64, nurseryID int64, status string, reason string) error {
+	var err error
+	switch status {
+	case "SUSPENDED":
+		_, err = r.db.ExecContext(ctx, `
+			UPDATE public.nurseries SET
+				status            = $2,
+				suspension_reason = $3,
+				suspended_by      = $4,
+				suspended_at      = CURRENT_TIMESTAMP,
+				unsuspended_by    = NULL,
+				unsuspended_at    = NULL,
+				updated_at        = CURRENT_TIMESTAMP
+			WHERE nursery_id = $1`,
+			nurseryID, status, reason, actorID)
+	case "ACTIVE":
+		_, err = r.db.ExecContext(ctx, `
+			UPDATE public.nurseries SET
+				status            = $2,
+				suspension_reason = NULL,
+				suspended_by      = NULL,
+				suspended_at      = NULL,
+				unsuspended_by    = $3,
+				unsuspended_at    = CURRENT_TIMESTAMP,
+				updated_at        = CURRENT_TIMESTAMP
+			WHERE nursery_id = $1`,
+			nurseryID, status, actorID)
+	default:
+		_, err = r.db.ExecContext(ctx, `
+			UPDATE public.nurseries SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE nursery_id = $1`,
+			nurseryID, status)
+	}
 	return err
 }
 

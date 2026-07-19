@@ -250,7 +250,7 @@ func (r *PostgresRepository) scanUser(ctx context.Context, where string, args ..
 	query := fmt.Sprintf(`
 		SELECT user_id, user_code, first_name, last_name, mobile, email, profile_image_url,
 			mobile_verified, email_verified, onboarding_completed, initial_activity,
-			onboarding_completed_at, status::text, last_login_at, created_at, updated_at
+			onboarding_completed_at, status::text, suspension_reason, suspended_at, last_login_at, created_at, updated_at
 		FROM public.users
 		%s
 	`, where)
@@ -281,6 +281,8 @@ func scanUserRow(row interface {
 	var profileImageURL sql.NullString
 	var initialActivity sql.NullString
 	var onboardingCompletedAt sql.NullTime
+	var suspensionReason sql.NullString
+	var suspendedAt sql.NullTime
 	var lastLoginAt sql.NullTime
 
 	err := row.Scan(
@@ -297,6 +299,8 @@ func scanUserRow(row interface {
 		&initialActivity,
 		&onboardingCompletedAt,
 		&user.Status,
+		&suspensionReason,
+		&suspendedAt,
 		&lastLoginAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,
@@ -319,6 +323,12 @@ func scanUserRow(row interface {
 	}
 	if onboardingCompletedAt.Valid {
 		user.OnboardingCompletedAt = &onboardingCompletedAt.Time
+	}
+	if suspensionReason.Valid {
+		user.SuspensionReason = &suspensionReason.String
+	}
+	if suspendedAt.Valid {
+		user.SuspendedAt = &suspendedAt.Time
 	}
 	if lastLoginAt.Valid {
 		user.LastLoginAt = &lastLoginAt.Time
