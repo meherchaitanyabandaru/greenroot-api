@@ -529,6 +529,17 @@ func TestUpdateStatus_LoadingNotAllowedViaGeneric(t *testing.T) {
 	}
 }
 
+func TestUpdateStatus_ConfirmedToCompletedBlocked(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, 100)
+	nid := int64(1)
+	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", NurseryID: &nid})
+	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "COMPLETED"})
+	if !errors.Is(err, ErrInvalidStatus) {
+		t.Errorf("CONFIRMED→COMPLETED: want ErrInvalidStatus, got %v", err)
+	}
+}
+
 func TestUpdateStatus_LoadedToCompleted(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
@@ -1060,7 +1071,7 @@ func TestValidOrderTransitions(t *testing.T) {
 		{"PENDING", "LOADING", false},
 		{"PENDING", "LOADED", false},
 		{"PENDING", "COMPLETED", false},
-		{"CONFIRMED", "COMPLETED", true},
+		{"CONFIRMED", "COMPLETED", false},
 		{"CONFIRMED", "LOADED", false},
 		{"LOADING", "LOADED", false}, // only via CompleteLoading
 		{"LOADING", "COMPLETED", false},

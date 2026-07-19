@@ -78,9 +78,10 @@ type DispatchItem struct {
 }
 
 type OrderAccess struct {
-	OrderID   int64
-	BuyerID   *int64
-	NurseryID *int64
+	OrderID     int64
+	BuyerID     *int64
+	NurseryID   *int64
+	OrderStatus string
 }
 
 type PublicTrackingInfo struct {

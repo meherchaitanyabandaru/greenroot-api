@@ -683,7 +683,6 @@ func validateItem(input OrderItemRequest) error {
 // cancel) enforce their own transitions and bypass this function.
 //
 // PENDING   → CONFIRMED              (cancel via POST /cancel only)
-// CONFIRMED → COMPLETED              (cancel via POST /cancel only)
 // LOADING   → (no generic transition; cancel via POST /cancel only)
 // LOADED    → COMPLETED              (no cancel — truck dispatched)
 // PARTIALLY_FULFILLED → COMPLETED    (no cancel — truck dispatched)
@@ -693,7 +692,7 @@ func validOrderTransition(from, to string) bool {
 	case "PENDING", "DRAFT":
 		return to == "CONFIRMED"
 	case "CONFIRMED":
-		return to == "COMPLETED"
+		return false
 	case "LOADED":
 		return to == "COMPLETED"
 	case "PARTIALLY_FULFILLED":

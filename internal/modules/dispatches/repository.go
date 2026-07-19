@@ -23,6 +23,7 @@ type Repository interface {
 	DriverHasActiveTrip(ctx context.Context, userID int64, excludeDispatchID int64) (bool, error)
 	Create(ctx context.Context, actorID int64, input CreateDispatchInput) (*Dispatch, error)
 	UpdateStatus(ctx context.Context, dispatchID int64, input UpdateStatusInput) (*Dispatch, error)
+	CompleteOrderIfReady(ctx context.Context, orderID int64) error
 	AcknowledgeDeliveryUpdate(ctx context.Context, dispatchID int64, driverUserID int64) error
 	SetDriverUser(ctx context.Context, dispatchID int64, userID int64) (*Dispatch, error)
 	CreateItem(ctx context.Context, dispatchID int64, input DispatchItemRequest) (*DispatchItem, error)
@@ -310,6 +311,23 @@ func (r *PostgresRepository) UpdateStatus(ctx context.Context, dispatchID int64,
 	return r.FindByID(ctx, dispatchID)
 }
 
+func (r *PostgresRepository) CompleteOrderIfReady(ctx context.Context, orderID int64) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE public.orders o
+		SET order_status = 'COMPLETED',
+			updated_at = CURRENT_TIMESTAMP
+		WHERE o.order_id = $1
+		  AND o.order_status IN ('LOADED', 'PARTIALLY_FULFILLED')
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM public.dispatches d
+			WHERE d.order_id = o.order_id
+			  AND COALESCE(d.dispatch_status::text, '') NOT IN ('CANCELLED', 'DELIVERED')
+		  )
+	`, orderID)
+	return err
+}
+
 func (r *PostgresRepository) AcknowledgeDeliveryUpdate(ctx context.Context, dispatchID int64, driverUserID int64) error {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE public.order_delivery_snapshots ods
@@ -387,7 +405,7 @@ func (r *PostgresRepository) ListItems(ctx context.Context, dispatchID int64) ([
 func (r *PostgresRepository) OrderAccess(ctx context.Context, orderID int64) (*OrderAccess, error) {
 	var access OrderAccess
 	var buyerID, nurseryID sql.NullInt64
-	err := r.db.QueryRowContext(ctx, `SELECT order_id, buyer_user_id, seller_nursery_id FROM public.orders WHERE order_id = $1`, orderID).Scan(&access.OrderID, &buyerID, &nurseryID)
+	err := r.db.QueryRowContext(ctx, `SELECT order_id, buyer_user_id, seller_nursery_id, order_status::text FROM public.orders WHERE order_id = $1`, orderID).Scan(&access.OrderID, &buyerID, &nurseryID, &access.OrderStatus)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

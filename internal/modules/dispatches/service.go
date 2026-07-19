@@ -69,10 +69,10 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, dispatchID int64)
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateDispatchRequest) (Dispatch, error) {
-	// Business rule: only nursery owners and drivers can create dispatches.
+	// Business rule: only nursery operators can create dispatches.
 	// Owner accounts may still carry the legacy BUYER role after approval, so
 	// authorize by positive capability instead of deny-listing role labels.
-	if !hasRole(actor, "NURSERY_OWNER") && !hasRole(actor, "DRIVER") {
+	if !hasRole(actor, "NURSERY_OWNER") && !hasRole(actor, "MANAGER") {
 		return Dispatch{}, ErrForbidden
 	}
 	input, err := normalizeCreate(req)
@@ -85,6 +85,9 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateDisp
 	}
 	if err := s.canAccessOrder(ctx, actor, access); err != nil {
 		return Dispatch{}, err
+	}
+	if !isDispatchableOrderStatus(access.OrderStatus) {
+		return Dispatch{}, ErrInvalidStatus
 	}
 	exists, err := s.repository.HasActiveForOrder(ctx, input.OrderID)
 	if err != nil {
@@ -142,6 +145,14 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 	if err != nil {
 		return Dispatch{}, err
 	}
+	if status == "DELIVERED" {
+		if err := s.repository.CompleteOrderIfReady(ctx, dispatch.OrderID); err != nil {
+			return Dispatch{}, err
+		}
+		if refreshed, err := s.repository.FindByID(ctx, dispatchID); err == nil {
+			dispatch = refreshed
+		}
+	}
 	if status == "DISPATCHED" && dispatch.CustomerUserID != nil {
 		s.enqueueNotification(ctx, *dispatch.CustomerUserID,
 			notifyqueue.EventOrderDispatched,
@@ -182,6 +193,9 @@ func (s *Service) CreateItem(ctx context.Context, actor ActorContext, dispatchID
 	if err := s.canAccess(ctx, actor, *dispatch); err != nil {
 		return DispatchItem{}, err
 	}
+	if isTerminalDispatchStatus(dispatch.Status) {
+		return DispatchItem{}, ErrInvalidStatus
+	}
 	if req.Quantity <= 0 {
 		return DispatchItem{}, ErrInvalidInput
 	}
@@ -213,6 +227,9 @@ func (s *Service) CreateTripEvent(ctx context.Context, actor ActorContext, dispa
 		if !isDriver {
 			return TripEvent{}, ErrForbidden
 		}
+	}
+	if isTerminalDispatchStatus(dispatch.Status) || dispatch.Status == "PENDING" {
+		return TripEvent{}, ErrInvalidStatus
 	}
 	event, err := s.repository.CreateTripEvent(ctx, CreateTripEventInput{
 		DispatchID:      dispatchID,
@@ -517,6 +534,24 @@ func isActiveDriverTripStatus(status string) bool {
 func isTerminalLiveTrackingStatus(status string) bool {
 	switch strings.ToUpper(strings.TrimSpace(status)) {
 	case "DELIVERED", "CANCELLED", "EXPIRED":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTerminalDispatchStatus(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "DELIVERED", "CANCELLED":
+		return true
+	default:
+		return false
+	}
+}
+
+func isDispatchableOrderStatus(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "LOADED", "PARTIALLY_FULFILLED":
 		return true
 	default:
 		return false

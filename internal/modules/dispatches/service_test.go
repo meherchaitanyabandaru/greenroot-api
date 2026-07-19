@@ -55,7 +55,11 @@ func (m *mockRepo) seedDispatch(d Dispatch) {
 }
 
 func (m *mockRepo) seedOrderAccess(orderID int64, nurseryID *int64) {
-	m.orderAccess[orderID] = &OrderAccess{OrderID: orderID, NurseryID: nurseryID}
+	m.seedOrderAccessWithStatus(orderID, nurseryID, "LOADED")
+}
+
+func (m *mockRepo) seedOrderAccessWithStatus(orderID int64, nurseryID *int64, status string) {
+	m.orderAccess[orderID] = &OrderAccess{OrderID: orderID, NurseryID: nurseryID, OrderStatus: status}
 }
 
 // Repository interface implementation
@@ -142,6 +146,13 @@ func (m *mockRepo) UpdateStatus(_ context.Context, dispatchID int64, input Updat
 	}
 	d.Status = input.Status
 	return d, nil
+}
+
+func (m *mockRepo) CompleteOrderIfReady(_ context.Context, orderID int64) error {
+	if access, ok := m.orderAccess[orderID]; ok && (access.OrderStatus == "LOADED" || access.OrderStatus == "PARTIALLY_FULFILLED") {
+		access.OrderStatus = "COMPLETED"
+	}
+	return nil
 }
 
 func (m *mockRepo) SetDriverUser(_ context.Context, dispatchID int64, userID int64) (*Dispatch, error) {
@@ -294,15 +305,25 @@ func TestCreate_OwnerWithLegacyBuyerRoleSuccess(t *testing.T) {
 	}
 }
 
-func TestCreate_ManagerForbidden(t *testing.T) {
-	// canAccessOrder only permits NURSERY_OWNER — managers cannot create dispatches.
+func TestCreate_ManagerSuccess(t *testing.T) {
 	repo := newMock()
 	nurseryID := int64(1)
 	repo.seedNursery(1, 100, 200)
 	repo.seedOrderAccess(10, &nurseryID)
 	_, err := svc(repo).Create(context.Background(), managerActor(200), CreateDispatchRequest{OrderID: 10})
-	if !errors.Is(err, ErrForbidden) {
-		t.Errorf("manager create dispatch: want ErrForbidden, got %v", err)
+	if err != nil {
+		t.Errorf("manager create dispatch: %v", err)
+	}
+}
+
+func TestCreate_BlocksOrderBeforeLoadingComplete(t *testing.T) {
+	repo := newMock()
+	nurseryID := int64(1)
+	repo.seedNursery(1, 100)
+	repo.seedOrderAccessWithStatus(10, &nurseryID, "CONFIRMED")
+	_, err := svc(repo).Create(context.Background(), ownerActor(100), CreateDispatchRequest{OrderID: 10})
+	if !errors.Is(err, ErrInvalidStatus) {
+		t.Errorf("dispatch before loaded: want ErrInvalidStatus, got %v", err)
 	}
 }
 
@@ -375,10 +396,14 @@ func TestUpdateStatus_InTransitToDelivered(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedDispatch(Dispatch{ID: 10, Status: "IN_TRANSIT", SellerNurseryID: &nid})
+	repo.seedOrderAccess(20, &nid)
+	repo.seedDispatch(Dispatch{ID: 10, OrderID: 20, Status: "IN_TRANSIT", SellerNurseryID: &nid})
 	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "DELIVERED"})
 	if err != nil {
 		t.Errorf("IN_TRANSIT→DELIVERED: %v", err)
+	}
+	if got := repo.orderAccess[20].OrderStatus; got != "COMPLETED" {
+		t.Errorf("linked order status: want COMPLETED, got %s", got)
 	}
 }
 
