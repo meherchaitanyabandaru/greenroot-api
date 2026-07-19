@@ -53,6 +53,22 @@ type MarketEnquiryDisplays struct {
 	NextActions Actions `json:"next_actions"`
 }
 
+type NurseryDisplays struct {
+	Owner       Display `json:"owner"`
+	Operator    Display `json:"operator"`
+	NextActions Actions `json:"next_actions"`
+}
+
+type VehicleDisplays struct {
+	Operator    Display `json:"operator"`
+	NextActions Actions `json:"next_actions"`
+}
+
+type InventoryDisplays struct {
+	Operator    Display `json:"operator"`
+	NextActions Actions `json:"next_actions"`
+}
+
 type Actions struct {
 	Customer []string `json:"customer,omitempty"`
 	Operator []string `json:"operator,omitempty"`
@@ -60,6 +76,7 @@ type Actions struct {
 	Supplier []string `json:"supplier,omitempty"`
 	Buyer    []string `json:"buyer,omitempty"`
 	Seller   []string `json:"seller,omitempty"`
+	Owner    []string `json:"owner,omitempty"`
 }
 
 func Order(status string) OrderDisplays {
@@ -144,6 +161,31 @@ func MarketEnquiry(status string) MarketEnquiryDisplays {
 		Buyer:       marketEnquiryBuyerDisplay(status),
 		Seller:      marketEnquirySellerDisplay(status),
 		NextActions: marketEnquiryActions(status),
+	}
+}
+
+func Nursery(status string) NurseryDisplays {
+	status = strings.ToUpper(strings.TrimSpace(status))
+	return NurseryDisplays{
+		Owner:       nurseryOwnerDisplay(status),
+		Operator:    nurseryOperatorDisplay(status),
+		NextActions: nurseryActions(status),
+	}
+}
+
+func Vehicle(status string) VehicleDisplays {
+	status = strings.ToUpper(strings.TrimSpace(status))
+	return VehicleDisplays{
+		Operator:    vehicleDisplay(status),
+		NextActions: vehicleActions(status),
+	}
+}
+
+func Inventory(status string) InventoryDisplays {
+	status = strings.ToUpper(strings.TrimSpace(status))
+	return InventoryDisplays{
+		Operator:    inventoryDisplay(status),
+		NextActions: inventoryActions(status),
 	}
 }
 
@@ -285,6 +327,55 @@ func marketEnquiryActions(status string) Actions {
 		return Actions{Buyer: []string{"View Enquiry"}, Seller: []string{"View Enquiry"}}
 	default:
 		return Actions{Buyer: []string{"View Enquiry"}, Seller: []string{"View Enquiry"}}
+	}
+}
+
+func nurseryActions(status string) Actions {
+	switch status {
+	case "PENDING":
+		return Actions{Owner: []string{"View Application"}, Operator: []string{"Approve Nursery", "Reject Nursery"}}
+	case "APPROVED", "ACTIVE":
+		return Actions{Owner: []string{"Manage Nursery", "Manage Inventory"}, Operator: []string{"Edit Nursery", "Suspend Nursery"}}
+	case "SUSPENDED":
+		return Actions{Owner: []string{"View Nursery"}, Operator: []string{"Reactivate Nursery", "Edit Nursery"}}
+	case "REJECTED":
+		return Actions{Owner: []string{"View Rejection"}, Operator: []string{"Review Nursery"}}
+	case "DELETED":
+		return Actions{Operator: []string{"View Nursery"}}
+	default:
+		return Actions{Owner: []string{"View Nursery"}, Operator: []string{"View Nursery"}}
+	}
+}
+
+func vehicleActions(status string) Actions {
+	switch status {
+	case "ACTIVE":
+		return Actions{Operator: []string{"Edit Vehicle", "Track Vehicle", "Retire Vehicle"}}
+	case "INACTIVE":
+		return Actions{Operator: []string{"Edit Vehicle", "Activate Vehicle", "Retire Vehicle"}}
+	case "MAINTENANCE":
+		return Actions{Operator: []string{"Edit Vehicle", "Mark Active", "Retire Vehicle"}}
+	case "RETIRED":
+		return Actions{Operator: []string{"View Vehicle"}}
+	default:
+		return Actions{Operator: []string{"View Vehicle"}}
+	}
+}
+
+func inventoryActions(status string) Actions {
+	switch status {
+	case "AVAILABLE":
+		return Actions{Operator: []string{"Edit Stock", "Reserve Stock", "Discontinue Stock"}}
+	case "LOW_STOCK":
+		return Actions{Operator: []string{"Restock", "Edit Stock"}}
+	case "OUT_OF_STOCK":
+		return Actions{Operator: []string{"Restock", "Discontinue Stock"}}
+	case "RESERVED":
+		return Actions{Operator: []string{"Edit Reservation", "Release Stock"}}
+	case "DISCONTINUED":
+		return Actions{Operator: []string{"View Stock"}}
+	default:
+		return Actions{Operator: []string{"View Stock"}}
 	}
 }
 
@@ -515,6 +606,76 @@ func marketEnquirySellerDisplay(status string) Display {
 		return Display{"Closed", "Enquiry Closed", "This enquiry is closed.", "neutral"}
 	case "CANCELLED":
 		return Display{"Cancelled", "Enquiry Cancelled", "The buyer cancelled this enquiry.", "error"}
+	default:
+		label := pretty(status)
+		return Display{label, label, "", "neutral"}
+	}
+}
+
+func nurseryOwnerDisplay(status string) Display {
+	switch status {
+	case "PENDING":
+		return Display{"Pending", "Nursery Under Review", "Admin approval is required before selling.", "warning"}
+	case "APPROVED", "ACTIVE":
+		return Display{"Approved", "Nursery Active", "Your nursery is active.", "success"}
+	case "SUSPENDED":
+		return Display{"Suspended", "Nursery Suspended", "Contact support before accepting new business.", "error"}
+	case "REJECTED":
+		return Display{"Rejected", "Application Rejected", "Review the rejection reason.", "error"}
+	case "DELETED":
+		return Display{"Deleted", "Nursery Deleted", "This nursery is no longer active.", "neutral"}
+	default:
+		label := pretty(status)
+		return Display{label, label, "", "neutral"}
+	}
+}
+
+func nurseryOperatorDisplay(status string) Display {
+	switch status {
+	case "PENDING":
+		return Display{"Pending", "Approval Needed", "Review this nursery application.", "warning"}
+	case "APPROVED", "ACTIVE":
+		return Display{"Approved", "Nursery Approved", "This nursery can operate.", "success"}
+	case "SUSPENDED":
+		return Display{"Suspended", "Nursery Suspended", "Reactivate only after review.", "error"}
+	case "REJECTED":
+		return Display{"Rejected", "Nursery Rejected", "Application was rejected.", "error"}
+	case "DELETED":
+		return Display{"Deleted", "Nursery Deleted", "This nursery is deleted.", "neutral"}
+	default:
+		label := pretty(status)
+		return Display{label, label, "", "neutral"}
+	}
+}
+
+func vehicleDisplay(status string) Display {
+	switch status {
+	case "ACTIVE":
+		return Display{"Active", "Vehicle Active", "Vehicle is available for assignment.", "success"}
+	case "INACTIVE":
+		return Display{"Inactive", "Vehicle Inactive", "Vehicle is not currently assignable.", "warning"}
+	case "MAINTENANCE":
+		return Display{"Maintenance", "Vehicle In Maintenance", "Avoid assigning this vehicle.", "warning"}
+	case "RETIRED":
+		return Display{"Retired", "Vehicle Retired", "Vehicle is no longer in service.", "neutral"}
+	default:
+		label := pretty(status)
+		return Display{label, label, "", "neutral"}
+	}
+}
+
+func inventoryDisplay(status string) Display {
+	switch status {
+	case "AVAILABLE":
+		return Display{"Available", "Stock Available", "This item can be sold.", "success"}
+	case "LOW_STOCK":
+		return Display{"Low Stock", "Low Stock", "Restock soon.", "warning"}
+	case "OUT_OF_STOCK":
+		return Display{"Out of Stock", "Out of Stock", "This item needs restocking.", "error"}
+	case "RESERVED":
+		return Display{"Reserved", "Stock Reserved", "Quantity is held for an order or request.", "info"}
+	case "DISCONTINUED":
+		return Display{"Discontinued", "Stock Discontinued", "This item is no longer sold.", "neutral"}
 	default:
 		label := pretty(status)
 		return Display{label, label, "", "neutral"}

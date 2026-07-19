@@ -10,6 +10,7 @@ import (
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -55,6 +56,9 @@ func (s *Service) List(ctx context.Context, input ListNurseriesRequest) ([]Nurse
 	if err != nil {
 		return nil, Pagination{}, err
 	}
+	for i := range nurseries {
+		nurseries[i] = enrichNursery(NurseryActor{}, nurseries[i])
+	}
 	return nurseries, Pagination{
 		Page:       input.Page,
 		PerPage:    input.PerPage,
@@ -65,7 +69,14 @@ func (s *Service) List(ctx context.Context, input ListNurseriesRequest) ([]Nurse
 
 // ListMine returns nurseries where the user is a manager.
 func (s *Service) ListMine(ctx context.Context, userID int64) ([]Nursery, error) {
-	return s.repository.ListByUserID(ctx, userID)
+	nurseries, err := s.repository.ListByUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range nurseries {
+		nurseries[i] = enrichNursery(NurseryActor{UserID: userID}, nurseries[i])
+	}
+	return nurseries, nil
 }
 
 // GetOwned returns the nursery owned by the user.
@@ -74,7 +85,7 @@ func (s *Service) GetOwned(ctx context.Context, userID int64) (Nursery, error) {
 	if err != nil {
 		return Nursery{}, err
 	}
-	return *nursery, nil
+	return enrichNursery(NurseryActor{UserID: userID}, *nursery), nil
 }
 
 // ListManagers returns all managers for a nursery. Owner or admin only.
@@ -146,7 +157,7 @@ func (s *Service) Get(ctx context.Context, nurseryID int64) (Nursery, error) {
 	if err != nil {
 		return Nursery{}, err
 	}
-	return *nursery, nil
+	return enrichNursery(NurseryActor{}, *nursery), nil
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateNurseryRequest) (Nursery, error) {
@@ -193,7 +204,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateNu
 	s.audit(ctx, actor, auditlog.EntityNursery, nursery.ID, auditlog.ActionCreate,
 		fmt.Sprintf("Nursery %q registered", nursery.Name), nil, input)
 	s.invalidateWorkspaceUsers(ctx, actor.UserID)
-	return *nursery, nil
+	return enrichNursery(actorFromContext(actor), *nursery), nil
 }
 
 func (s *Service) Update(ctx context.Context, actor ActorContext, nurseryID int64, input UpdateNurseryRequest) (Nursery, error) {
@@ -215,7 +226,7 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, nurseryID int6
 	s.audit(ctx, actor, auditlog.EntityNursery, nursery.ID, auditlog.ActionUpdate,
 		fmt.Sprintf("Nursery %q updated", nursery.Name), old, input)
 	s.invalidateNurseryWorkspaceUsers(ctx, nurseryID, actor.UserID)
-	return *nursery, nil
+	return enrichNursery(actorFromContext(actor), *nursery), nil
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, nurseryID int64, status string) (Nursery, error) {
@@ -251,7 +262,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, nurseryI
 	}
 
 	s.invalidateNurseryWorkspaceUsers(ctx, nurseryID, actor.UserID)
-	return *nursery, nil
+	return enrichNursery(actorFromContext(actor), *nursery), nil
 }
 
 func (s *Service) Delete(ctx context.Context, actor ActorContext, nurseryID int64) error {
@@ -630,6 +641,57 @@ func isAllowedLocationSource(value string) bool {
 
 func canManageNurseries(actor ActorContext) bool {
 	return hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") || hasRole(actor, "NURSERY_OWNER")
+}
+
+type NurseryActor struct {
+	UserID int64
+	Roles  []string
+}
+
+func actorFromContext(actor ActorContext) NurseryActor {
+	return NurseryActor{UserID: actor.UserID, Roles: actor.Roles}
+}
+
+func enrichNursery(actor NurseryActor, nursery Nursery) Nursery {
+	status := strings.ToUpper(strings.TrimSpace(nursery.Status))
+	isAdmin := hasNurseryRole(actor.Roles, "ADMIN") || hasNurseryRole(actor.Roles, "SUPER_ADMIN")
+	isOwner := nursery.OwnerUserID != nil && actor.UserID > 0 && *nursery.OwnerUserID == actor.UserID
+	active := status == "APPROVED" || status == "ACTIVE"
+	deleted := status == "DELETED"
+
+	nursery.Lifecycle = nurseryPtr(lifecycle.Nursery(status))
+	nursery.Summary = &NurserySummary{
+		IsOwner:     isOwner,
+		IsApproved:  active,
+		IsPending:   status == "PENDING",
+		IsSuspended: status == "SUSPENDED",
+		IsDeleted:   deleted,
+	}
+	nursery.Capabilities = &NurseryCapabilities{
+		CanEdit:            (isAdmin || isOwner) && !deleted,
+		CanDelete:          isAdmin && !deleted,
+		CanApprove:         isAdmin && status == "PENDING",
+		CanReject:          isAdmin && status == "PENDING",
+		CanSuspend:         isAdmin && active,
+		CanReactivate:      isAdmin && status == "SUSPENDED",
+		CanManageInventory: (isAdmin || isOwner) && active,
+		CanManageUsers:     (isAdmin || isOwner) && !deleted,
+		CanManageAddresses: (isAdmin || isOwner) && !deleted,
+	}
+	return nursery
+}
+
+func hasNurseryRole(roles []string, role string) bool {
+	for _, item := range roles {
+		if strings.EqualFold(item, role) {
+			return true
+		}
+	}
+	return false
+}
+
+func nurseryPtr[T any](value T) *T {
+	return &value
 }
 
 func hasRole(actor ActorContext, role string) bool {

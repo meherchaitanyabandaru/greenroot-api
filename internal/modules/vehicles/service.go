@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 )
 
 var (
@@ -35,6 +36,9 @@ func (s *Service) List(ctx context.Context, actor ActorContext, input ListVehicl
 	if err != nil {
 		return nil, Pagination{}, err
 	}
+	for i := range vehicles {
+		vehicles[i] = enrichVehicle(actor, vehicles[i])
+	}
 	return vehicles, Pagination{Page: input.Page, PerPage: input.PerPage, Total: total, TotalPages: totalPages(total, input.PerPage)}, nil
 }
 
@@ -46,7 +50,7 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, vehicleID int64) 
 	if err != nil {
 		return Vehicle{}, err
 	}
-	return *vehicle, nil
+	return enrichVehicle(actor, *vehicle), nil
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, input VehicleRequest) (Vehicle, error) {
@@ -69,7 +73,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input VehicleR
 	}
 	s.audit(ctx, actor, vehicle.ID, auditlog.ActionCreate,
 		fmt.Sprintf("Vehicle %s registered", vehicle.VehicleNumber), nil, input)
-	return *vehicle, nil
+	return enrichVehicle(actor, *vehicle), nil
 }
 
 func (s *Service) Update(ctx context.Context, actor ActorContext, vehicleID int64, input VehicleRequest) (Vehicle, error) {
@@ -93,7 +97,7 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, vehicleID int6
 	}
 	s.audit(ctx, actor, vehicle.ID, auditlog.ActionUpdate,
 		fmt.Sprintf("Vehicle %s updated", vehicle.VehicleNumber), old, input)
-	return *vehicle, nil
+	return enrichVehicle(actor, *vehicle), nil
 }
 
 func (s *Service) Delete(ctx context.Context, actor ActorContext, vehicleID int64) error {
@@ -156,6 +160,33 @@ func hasRole(actor ActorContext, role string) bool {
 		}
 	}
 	return false
+}
+
+func enrichVehicle(actor ActorContext, vehicle Vehicle) Vehicle {
+	status := strings.ToUpper(strings.TrimSpace(vehicle.Status))
+	isAdmin := hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN")
+	isRetired := status == "RETIRED"
+	isAssigned := vehicle.DriverID != nil
+
+	vehicle.Lifecycle = vehiclePtr(lifecycle.Vehicle(status))
+	vehicle.Summary = &VehicleSummary{
+		IsActive:      status == "ACTIVE",
+		IsInactive:    status == "INACTIVE",
+		IsMaintenance: status == "MAINTENANCE",
+		IsRetired:     isRetired,
+		IsAssigned:    isAssigned,
+	}
+	vehicle.Capabilities = &VehicleCapabilities{
+		CanEdit:   isAdmin && !isRetired,
+		CanDelete: isAdmin && !isRetired && !isAssigned,
+		CanRetire: isAdmin && !isRetired && !isAssigned,
+		CanTrack:  isAdmin && !isRetired,
+	}
+	return vehicle
+}
+
+func vehiclePtr[T any](value T) *T {
+	return &value
 }
 
 func totalPages(total int64, perPage int) int {

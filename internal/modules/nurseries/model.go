@@ -1,6 +1,10 @@
 package nurseries
 
-import "time"
+import (
+	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+)
 
 type Nursery struct {
 	ID              int64      `json:"id"`
@@ -16,15 +20,38 @@ type Nursery struct {
 	RejectedAt      *time.Time `json:"rejected_at,omitempty"`
 	OwnerUserID     *int64     `json:"owner_user_id,omitempty"`
 	// Branding — set after nursery approval via PUT /nurseries/:id
-	LogoURL      *string    `json:"logo_url,omitempty"`
-	BrandIconKey *string    `json:"brand_icon_key,omitempty"`
-	BrandColor   *string    `json:"brand_color,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	CreatedBy    *int64     `json:"created_by,omitempty"`
-	UpdatedBy    *int64     `json:"updated_by,omitempty"`
-	Addresses    []Address  `json:"addresses,omitempty"`
-	Users        []UserLink `json:"users,omitempty"`
+	LogoURL      *string                    `json:"logo_url,omitempty"`
+	BrandIconKey *string                    `json:"brand_icon_key,omitempty"`
+	BrandColor   *string                    `json:"brand_color,omitempty"`
+	CreatedAt    time.Time                  `json:"created_at"`
+	UpdatedAt    time.Time                  `json:"updated_at"`
+	CreatedBy    *int64                     `json:"created_by,omitempty"`
+	UpdatedBy    *int64                     `json:"updated_by,omitempty"`
+	Addresses    []Address                  `json:"addresses,omitempty"`
+	Users        []UserLink                 `json:"users,omitempty"`
+	Lifecycle    *lifecycle.NurseryDisplays `json:"lifecycle,omitempty"`
+	Capabilities *NurseryCapabilities       `json:"capabilities,omitempty"`
+	Summary      *NurserySummary            `json:"summary,omitempty"`
+}
+
+type NurseryCapabilities struct {
+	CanEdit            bool `json:"can_edit"`
+	CanDelete          bool `json:"can_delete"`
+	CanApprove         bool `json:"can_approve"`
+	CanReject          bool `json:"can_reject"`
+	CanSuspend         bool `json:"can_suspend"`
+	CanReactivate      bool `json:"can_reactivate"`
+	CanManageInventory bool `json:"can_manage_inventory"`
+	CanManageUsers     bool `json:"can_manage_users"`
+	CanManageAddresses bool `json:"can_manage_addresses"`
+}
+
+type NurserySummary struct {
+	IsOwner     bool `json:"is_owner"`
+	IsApproved  bool `json:"is_approved"`
+	IsPending   bool `json:"is_pending"`
+	IsSuspended bool `json:"is_suspended"`
+	IsDeleted   bool `json:"is_deleted"`
 }
 
 // NurseryDriver represents a driver connected to a nursery.
