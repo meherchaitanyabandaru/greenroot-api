@@ -218,6 +218,8 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateNu
 			Country:      &country,
 			PostalCode:   input.PostalCode,
 			Landmark:     input.Landmark,
+			Latitude:     input.Latitude,
+			Longitude:    input.Longitude,
 			IsPrimary:    true,
 		})
 		if addrErr != nil {

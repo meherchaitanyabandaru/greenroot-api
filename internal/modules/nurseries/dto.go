@@ -23,13 +23,15 @@ type CreateNurseryRequest struct {
 	OwnerUserID *int64  `json:"owner_user_id"`
 
 	// Optional address — if provided, a PRIMARY nursery_address row is created atomically.
-	AddressLine1 *string `json:"address_line1,omitempty"`
-	AddressLine2 *string `json:"address_line2,omitempty"`
-	City         *string `json:"city,omitempty"`
-	State        *string `json:"state,omitempty"`
-	Country      *string `json:"country,omitempty"`
-	PostalCode   *string `json:"postal_code,omitempty"`
-	Landmark     *string `json:"landmark,omitempty"`
+	AddressLine1 *string  `json:"address_line1,omitempty"`
+	AddressLine2 *string  `json:"address_line2,omitempty"`
+	City         *string  `json:"city,omitempty"`
+	State        *string  `json:"state,omitempty"`
+	Country      *string  `json:"country,omitempty"`
+	PostalCode   *string  `json:"postal_code,omitempty"`
+	Landmark     *string  `json:"landmark,omitempty"`
+	Latitude     *float64 `json:"latitude,omitempty"`
+	Longitude    *float64 `json:"longitude,omitempty"`
 }
 
 // UpdateNurseryRequest extends create fields with branding.
