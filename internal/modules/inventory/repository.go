@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
-var ErrNotFound = errors.New("not found")
+var ErrNotFound     = apperrs.ErrNotFound
 
 type Repository interface {
 	List(ctx context.Context, input ListInventoryRequest) ([]InventoryItem, int64, error)

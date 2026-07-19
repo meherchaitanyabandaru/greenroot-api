@@ -4,7 +4,11 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 )
+
+type ActorContext = authctx.ActorContext
+
 
 const (
 	actionInsert = "INSERT"
@@ -70,11 +74,4 @@ type Response struct {
 	Remarks           *string   `json:"remarks,omitempty"`
 	Status            string    `json:"status"`
 	CreatedAt         time.Time `json:"created_at"`
-}
-
-type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
 }

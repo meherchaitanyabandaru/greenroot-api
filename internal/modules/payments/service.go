@@ -3,15 +3,15 @@ package payments
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden    = errors.New("forbidden")
-	ErrInvalidInput = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 )
 
 type Service struct {
@@ -150,14 +150,14 @@ func (s *Service) canCreate(ctx context.Context, actor ActorContext, input *Crea
 	if input.PayerUserID == nil {
 		input.PayerUserID = &access.UserID
 	}
-	if hasRole(actor, "ADMIN") || access.UserID == actor.UserID {
+	if actor.HasRole("ADMIN") || access.UserID == actor.UserID {
 		return nil
 	}
 	return ErrForbidden
 }
 
 func (s *Service) canViewPayment(ctx context.Context, actor ActorContext, payment Payment) error {
-	if hasRole(actor, "ADMIN") {
+	if actor.HasRole("ADMIN") {
 		return nil
 	}
 	if payment.PayerUserID != nil && *payment.PayerUserID == actor.UserID {
@@ -174,7 +174,7 @@ func (s *Service) canViewPayment(ctx context.Context, actor ActorContext, paymen
 }
 
 func (s *Service) canManagePayment(ctx context.Context, actor ActorContext, payment Payment) error {
-	if hasRole(actor, "ADMIN") {
+	if actor.HasRole("ADMIN") {
 		return nil
 	}
 	if payment.PaymentFor == paymentForOrder && payment.OrderID != nil {
@@ -191,10 +191,10 @@ func (s *Service) canManagePayment(ctx context.Context, actor ActorContext, paym
 }
 
 func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *ListPaymentsRequest) error {
-	if hasRole(actor, "ADMIN") {
+	if actor.HasRole("ADMIN") {
 		return nil
 	}
-	if hasRole(actor, "NURSERY_OWNER") {
+	if actor.HasRole("NURSERY_OWNER") {
 		if input.OrderID > 0 {
 			access, err := s.repository.OrderAccess(ctx, input.OrderID)
 			if err != nil {
@@ -212,13 +212,13 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 }
 
 func (s *Service) canAccessOrder(ctx context.Context, actor ActorContext, access *OrderAccess) error {
-	if hasRole(actor, "ADMIN") {
+	if actor.HasRole("ADMIN") {
 		return nil
 	}
 	if access.BuyerID != nil && *access.BuyerID == actor.UserID {
 		return nil
 	}
-	if hasRole(actor, "NURSERY_OWNER") && access.NurseryID != nil {
+	if actor.HasRole("NURSERY_OWNER") && access.NurseryID != nil {
 		member, err := s.repository.IsNurseryMember(ctx, *access.NurseryID, actor.UserID)
 		if err != nil {
 			return err
@@ -272,15 +272,6 @@ func isAllowedMethod(value string) bool {
 	default:
 		return false
 	}
-}
-
-func hasRole(actor ActorContext, role string) bool {
-	for _, item := range actor.Roles {
-		if item == role {
-			return true
-		}
-	}
-	return false
 }
 
 func totalPages(total int64, perPage int) int {

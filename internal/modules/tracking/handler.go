@@ -154,7 +154,7 @@ func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, b
 	if !ok {
 		return ActorContext{}, false
 	}
-	return ActorContext{UserID: actor.UserID, Roles: actor.Roles, IPAddress: actor.IPAddress, UserAgent: actor.UserAgent}, true
+	return actor.AsActorContext(), true
 }
 func decode(w http.ResponseWriter, r *http.Request, d any) bool {
 	defer r.Body.Close()

@@ -1,6 +1,12 @@
 package plants
 
-import "time"
+import (
+	"time"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+)
+
+type ActorContext = authctx.ActorContext
+
 
 
 type Plant struct {
@@ -58,11 +64,4 @@ type CareGuide struct {
 	Notes       *string    `json:"notes,omitempty"`
 	CreatedAt   *time.Time `json:"created_at,omitempty"`
 	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
-}
-
-type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
 }

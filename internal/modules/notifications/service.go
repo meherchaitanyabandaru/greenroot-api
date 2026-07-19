@@ -3,16 +3,16 @@ package notifications
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"math"
 	"strings"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden    = errors.New("forbidden")
-	ErrInvalidInput = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 )
 
 type Sender interface {
@@ -35,7 +35,7 @@ func NewService(repository Repository, sender Sender, auditSvc *auditlog.Service
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListNotificationsRequest) ([]Notification, Pagination, error) {
 	input = normalizeList(input)
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		input.UserID = actor.UserID
 	}
 	items, total, err := s.repository.List(ctx, input)
@@ -57,7 +57,7 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, id int64) (Notifi
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateNotificationRequest) (Notification, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return Notification{}, ErrForbidden
 	}
 	input, err := normalizeCreate(req)
@@ -129,7 +129,7 @@ func (s *Service) UpsertDevice(ctx context.Context, actor ActorContext, req Devi
 }
 
 func (s *Service) DeleteDevice(ctx context.Context, actor ActorContext, id int64) error {
-	if err := s.repository.DeleteDevice(ctx, id, actor.UserID, hasRole(actor, "ADMIN")); err != nil {
+	if err := s.repository.DeleteDevice(ctx, id, actor.UserID, actor.HasRole("ADMIN")); err != nil {
 		return err
 	}
 	s.audit(ctx, actor, "user_notification_devices", id, actionDelete, map[string]any{"deleted": true})
@@ -137,14 +137,14 @@ func (s *Service) DeleteDevice(ctx context.Context, actor ActorContext, id int64
 }
 
 func (s *Service) ListTemplates(ctx context.Context, actor ActorContext) ([]Template, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return nil, ErrForbidden
 	}
 	return s.repository.ListTemplates(ctx)
 }
 
 func (s *Service) CreateTemplate(ctx context.Context, actor ActorContext, req TemplateRequest) (Template, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return Template{}, ErrForbidden
 	}
 	if err := validateTemplate(req); err != nil {
@@ -159,7 +159,7 @@ func (s *Service) CreateTemplate(ctx context.Context, actor ActorContext, req Te
 }
 
 func (s *Service) UpdateTemplate(ctx context.Context, actor ActorContext, id int64, req TemplateRequest) (Template, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return Template{}, ErrForbidden
 	}
 	if err := validateTemplate(req); err != nil {
@@ -174,7 +174,7 @@ func (s *Service) UpdateTemplate(ctx context.Context, actor ActorContext, id int
 }
 
 func (s *Service) DeleteTemplate(ctx context.Context, actor ActorContext, id int64) error {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return ErrForbidden
 	}
 	if err := s.repository.DeleteTemplate(ctx, id); err != nil {
@@ -185,7 +185,7 @@ func (s *Service) DeleteTemplate(ctx context.Context, actor ActorContext, id int
 }
 
 func (s *Service) canAccess(actor ActorContext, item Notification) error {
-	if hasRole(actor, "ADMIN") {
+	if actor.HasRole("ADMIN") {
 		return nil
 	}
 	if item.UserID != nil && *item.UserID == actor.UserID {
@@ -249,15 +249,6 @@ func isAllowedChannel(value string) bool {
 	default:
 		return false
 	}
-}
-
-func hasRole(actor ActorContext, role string) bool {
-	for _, current := range actor.Roles {
-		if strings.EqualFold(current, role) {
-			return true
-		}
-	}
-	return false
 }
 
 func totalPages(total int64, perPage int) int {

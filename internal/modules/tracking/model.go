@@ -1,6 +1,12 @@
 package tracking
 
-import "time"
+import (
+	"time"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+)
+
+type ActorContext = authctx.ActorContext
+
 
 type TrackingPoint struct {
 	ID         int64     `json:"id"`
@@ -11,10 +17,4 @@ type TrackingPoint struct {
 	Longitude  float64   `json:"longitude"`
 	TrackedAt  time.Time `json:"tracked_at"`
 	Notes      *string   `json:"notes,omitempty"`
-}
-type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
 }

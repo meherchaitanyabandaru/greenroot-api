@@ -4,7 +4,11 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 )
+
+type ActorContext = authctx.ActorContext
+
 
 type Order struct {
 	ID          int64  `json:"id"`
@@ -96,11 +100,4 @@ type OrderItem struct {
 	TotalPrice     float64   `json:"total_price"`
 	Remarks        *string   `json:"remarks,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
-}
-
-type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
 }

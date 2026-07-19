@@ -11,9 +11,10 @@ import (
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/location"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
-var ErrNotFound = errors.New("not found")
+var ErrNotFound     = apperrs.ErrNotFound
 
 type Repository interface {
 	// Network membership

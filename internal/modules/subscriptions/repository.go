@@ -10,9 +10,10 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
-var ErrNotFound = errors.New("not found")
+var ErrNotFound     = apperrs.ErrNotFound
 
 type Repository interface {
 	ListPlans(ctx context.Context, activeOnly bool) ([]SubscriptionPlan, error)

@@ -2,15 +2,15 @@ package sourcing
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden    = errors.New("forbidden")
-	ErrInvalidInput = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 )
 
 type Service struct {
@@ -26,13 +26,13 @@ func NewService(r Repository, auditSvc *auditlog.Service) *Service {
 // Per business rules: NURSERY_OWNER and MANAGER have full sourcing access.
 // ADMIN/SUPER_ADMIN can monitor. DRIVER and BUYER have no access.
 func canSource(actor ActorContext) bool {
-	return hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") ||
-		hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER")
+	return actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") ||
+		actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER")
 }
 
 // canManageNursery returns nil if the actor may write to the given nursery.
 func (s *Service) canManageNursery(ctx context.Context, actor ActorContext, nurseryID int64) error {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
 		return nil
 	}
 	ok, err := s.repository.IsNurseryMember(ctx, nurseryID, actor.UserID)
@@ -330,15 +330,6 @@ func validatePostRequest(req CreatePostRequest) error {
 
 func isAllowedPostStatus(s string) bool {
 	return s == "OPEN" || s == "CLOSED" || s == "EXPIRED"
-}
-
-func hasRole(actor ActorContext, role string) bool {
-	for _, r := range actor.Roles {
-		if strings.EqualFold(r, role) {
-			return true
-		}
-	}
-	return false
 }
 
 func pagination(total int64, page, perPage int) Pagination {

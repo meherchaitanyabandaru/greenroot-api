@@ -13,11 +13,12 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/redis/go-redis/v9"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden     = errors.New("forbidden")
-	ErrInvalidInput  = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 	ErrInvalidStatus = errors.New("invalid status transition")
 )
 
@@ -61,7 +62,7 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, orderID int64) (O
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateOrderRequest) (Order, error) {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") || hasRole(actor, "DRIVER") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") || actor.HasRole("DRIVER") {
 		return Order{}, ErrForbidden
 	}
 	if input.BuyerMobile != nil && *input.BuyerMobile != "" {
@@ -329,7 +330,7 @@ func (s *Service) AssignManager(ctx context.Context, actor ActorContext, orderID
 	if err != nil {
 		return Order{}, err
 	}
-	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		nurseryID := order.NurseryID
 		if nurseryID == nil {
 			nurseryID = order.SellerNurseryID
@@ -462,13 +463,13 @@ func (s *Service) DeleteItem(ctx context.Context, actor ActorContext, itemID int
 }
 
 func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *ListOrdersRequest) error {
-	if hasRole(actor, "ADMIN") {
+	if actor.HasRole("ADMIN") {
 		return nil
 	}
 	if input.Buying {
 		// Buyer perspective: filter by buyer_user_id OR buyer_nursery_id
 		input.BuyerID = actor.UserID
-		if hasRole(actor, "NURSERY_OWNER") {
+		if actor.HasRole("NURSERY_OWNER") {
 			nurseryID, _ := s.repository.GetOwnedNurseryID(ctx, actor.UserID)
 			if nurseryID != nil {
 				input.NurseryID = *nurseryID
@@ -476,7 +477,7 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 		}
 		return nil
 	}
-	if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
+	if actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER") {
 		if input.NurseryID > 0 {
 			return s.mustBeNurseryMember(ctx, actor, input.NurseryID)
 		}
@@ -490,7 +491,7 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 		input.NurseryID = nurseryIDs[0]
 		return nil
 	}
-	if hasRole(actor, "DRIVER") {
+	if actor.HasRole("DRIVER") {
 		return ErrForbidden
 	}
 	input.BuyerID = actor.UserID
@@ -498,7 +499,7 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 }
 
 func (s *Service) canView(ctx context.Context, actor ActorContext, order Order) error {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
 		return nil
 	}
 	if order.CustomerUserID != nil && *order.CustomerUserID == actor.UserID {
@@ -533,10 +534,10 @@ func (s *Service) canView(ctx context.Context, actor ActorContext, order Order) 
 }
 
 func (s *Service) canCreate(ctx context.Context, actor ActorContext, input CreateOrderRequest) error {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
 		return ErrForbidden
 	}
-	if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
+	if actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER") {
 		if input.SellerNurseryID == nil {
 			return ErrInvalidInput
 		}
@@ -550,7 +551,7 @@ func (s *Service) canCreate(ctx context.Context, actor ActorContext, input Creat
 }
 
 func (s *Service) canManage(ctx context.Context, actor ActorContext, order Order) error {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
 		return nil
 	}
 	if order.AssignedManagerUserID != nil && *order.AssignedManagerUserID == actor.UserID {
@@ -609,7 +610,7 @@ func normalizeCreate(actor ActorContext, input CreateOrderRequest) CreateOrderRe
 		input.Status = "PENDING"
 	}
 	// Only default buyer to self when a BUYER is creating their own order
-	if input.BuyerUserID == nil && hasRole(actor, "BUYER") {
+	if input.BuyerUserID == nil && actor.HasRole("BUYER") {
 		input.BuyerUserID = &actor.UserID
 	}
 	return input
@@ -678,8 +679,23 @@ func stringPtr(value string) *string {
 }
 
 func (s *Service) enrichOrders(ctx context.Context, actor ActorContext, orders []Order) {
+	if len(orders) == 0 {
+		return
+	}
+	ids := make([]int64, len(orders))
+	for i, o := range orders {
+		ids[i] = o.ID
+	}
+	dispatches, _ := s.repository.BatchActiveDispatchForOrders(ctx, ids)
 	for i := range orders {
-		s.enrichOrder(ctx, actor, &orders[i])
+		if dispatches != nil {
+			if d := dispatches[orders[i].ID]; d != nil {
+				orders[i].ActiveDispatch = d
+				orders[i].ActiveDispatchID = &d.ID
+				orders[i].ActiveDispatchStatus = &d.Status
+			}
+		}
+		orders[i] = withLifecycle(actor, orders[i])
 	}
 }
 
@@ -718,15 +734,6 @@ func validateItem(input OrderItemRequest) error {
 }
 
 // Status predicates and CanTransition are defined in policy.go.
-
-func hasRole(actor ActorContext, role string) bool {
-	for _, item := range actor.Roles {
-		if item == role {
-			return true
-		}
-	}
-	return false
-}
 
 func totalPages(total int64, perPage int) int {
 	if total == 0 {

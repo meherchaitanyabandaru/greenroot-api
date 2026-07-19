@@ -4,7 +4,11 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 )
+
+type ActorContext = authctx.ActorContext
+
 
 const (
 	actionInsert = "INSERT"
@@ -83,13 +87,6 @@ type Payment struct {
 	ProviderPaymentID    *string    `json:"provider_payment_id,omitempty"`
 	ProviderOrderID      *string    `json:"provider_order_id,omitempty"`
 	CreatedAt            time.Time  `json:"created_at"`
-}
-
-type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
 }
 
 type SubscriptionPromo struct {

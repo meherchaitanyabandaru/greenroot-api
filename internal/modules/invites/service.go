@@ -9,11 +9,12 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/redis/go-redis/v9"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden       = errors.New("forbidden")
-	ErrInvalidInput    = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 	ErrConflictingRole = errors.New("conflicting role")
 	ErrAlreadyMember   = errors.New("already member of another nursery")
 	ErrWrongTarget     = errors.New("invite addressed to a different person")
@@ -60,7 +61,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateInvi
 	// Enforce role-based invite creation: only allowed roles may create each type
 	allowed := false
 	for _, role := range inviteTypeAllowedRoles[inviteType] {
-		if hasRole(actor, role) {
+		if actor.HasRole(role) {
 			allowed = true
 			break
 		}
@@ -165,7 +166,7 @@ func (s *Service) Cancel(ctx context.Context, actor ActorContext, uuid string) (
 	if err != nil {
 		return Invite{}, err
 	}
-	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") && invite.InvitedByUserID != actor.UserID {
+	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") && invite.InvitedByUserID != actor.UserID {
 		return Invite{}, ErrForbidden
 	}
 	updated, err := s.repository.Cancel(ctx, uuid, actor.UserID)
@@ -177,7 +178,7 @@ func (s *Service) Cancel(ctx context.Context, actor ActorContext, uuid string) (
 }
 
 func (s *Service) ListByNursery(ctx context.Context, actor ActorContext, nurseryID int64) ([]Invite, error) {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
 		return s.repository.ListByNursery(ctx, nurseryID)
 	}
 	// Nursery owner can list invites for their own nursery.
@@ -197,15 +198,6 @@ func (s *Service) ListMyConnections(ctx context.Context, actor ActorContext) ([]
 
 func (s *Service) invalidateWorkspaces(ctx context.Context, userIDs ...int64) {
 	redisutil.InvalidateWorkspaces(ctx, s.redis, slog.Default(), userIDs...)
-}
-
-func hasRole(actor ActorContext, role string) bool {
-	for _, r := range actor.Roles {
-		if strings.EqualFold(r, role) {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *Service) audit(ctx context.Context, actor ActorContext, entityID int64, action auditlog.Action, newValue any) {

@@ -11,11 +11,12 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/redis/go-redis/v9"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden           = errors.New("forbidden")
-	ErrInvalidInput        = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 	ErrDuplicate           = errors.New("duplicate driver")
 	ErrOwnerCannotBeDriver = errors.New("nursery owners cannot register as a driver")
 )
@@ -35,7 +36,7 @@ func NewService(repository Repository, auditSvc *auditlog.Service, redisClients 
 }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListDriversRequest) ([]Driver, Pagination, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return nil, Pagination{}, ErrForbidden
 	}
 	input = normalizeList(input)
@@ -54,14 +55,14 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, driverID int64) (
 	if err != nil {
 		return Driver{}, err
 	}
-	if !hasRole(actor, "ADMIN") && (driver.UserID == nil || *driver.UserID != actor.UserID) {
+	if !actor.HasRole("ADMIN") && (driver.UserID == nil || *driver.UserID != actor.UserID) {
 		return Driver{}, ErrForbidden
 	}
 	return enrichDriver(actor, *driver), nil
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, req DriverRequest) (Driver, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return Driver{}, ErrForbidden
 	}
 	input, err := normalizeDriver(req)
@@ -84,7 +85,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, req DriverRequ
 }
 
 func (s *Service) Update(ctx context.Context, actor ActorContext, driverID int64, req DriverRequest) (Driver, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return Driver{}, ErrForbidden
 	}
 	input, err := normalizeDriver(req)
@@ -107,7 +108,7 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, driverID int64
 }
 
 func (s *Service) Delete(ctx context.Context, actor ActorContext, driverID int64) error {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return ErrForbidden
 	}
 	if err := s.repository.Delete(ctx, driverID); err != nil {
@@ -148,7 +149,7 @@ func (s *Service) GetMine(ctx context.Context, actor ActorContext) (Driver, erro
 
 // Approve approves a driver profile (admin only).
 func (s *Service) Approve(ctx context.Context, actor ActorContext, driverUserID int64) (Driver, error) {
-	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		return Driver{}, ErrForbidden
 	}
 	driver, err := s.repository.Approve(ctx, driverUserID, actor.UserID)
@@ -165,7 +166,7 @@ func (s *Service) CreateLocation(ctx context.Context, actor ActorContext, driver
 	if err != nil {
 		return DriverLocation{}, err
 	}
-	if !hasRole(actor, "ADMIN") && (driver.UserID == nil || *driver.UserID != actor.UserID) {
+	if !actor.HasRole("ADMIN") && (driver.UserID == nil || *driver.UserID != actor.UserID) {
 		return DriverLocation{}, ErrForbidden
 	}
 	if input.Latitude < -90 || input.Latitude > 90 || input.Longitude < -180 || input.Longitude > 180 {
@@ -228,7 +229,7 @@ func enrichDriver(actor ActorContext, driver Driver) Driver {
 	status := strings.ToUpper(strings.TrimSpace(driver.Status))
 	approvalStatus := strings.ToUpper(strings.TrimSpace(driver.ApprovalStatus))
 	profileStatus := strings.ToUpper(strings.TrimSpace(driver.ProfileStatus))
-	isAdmin := hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN")
+	isAdmin := actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
 	isSelf := driver.UserID != nil && *driver.UserID == actor.UserID
 
 	driver.Summary = &DriverSummary{
@@ -244,15 +245,6 @@ func enrichDriver(actor ActorContext, driver Driver) Driver {
 		CanUpdateLocation: (isSelf || isAdmin) && approvalStatus == "APPROVED" && status == "ACTIVE",
 	}
 	return driver
-}
-
-func hasRole(actor ActorContext, role string) bool {
-	for _, current := range actor.Roles {
-		if strings.EqualFold(current, role) {
-			return true
-		}
-	}
-	return false
 }
 
 func totalPages(total int64, perPage int) int {

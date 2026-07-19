@@ -1,6 +1,12 @@
 package sourcing
 
-import "time"
+import (
+	"time"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+)
+
+type ActorContext = authctx.ActorContext
+
 
 const (
 	actionInsert = "INSERT"
@@ -108,13 +114,6 @@ type Pagination struct {
 	PerPage    int   `json:"per_page"`
 	Total      int64 `json:"total"`
 	TotalPages int   `json:"total_pages"`
-}
-
-type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
 }
 
 // ---- Request DTOs ----

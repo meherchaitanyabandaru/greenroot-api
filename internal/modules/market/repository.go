@@ -10,9 +10,10 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/location"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
-var ErrNotFound = errors.New("not found")
+var ErrNotFound     = apperrs.ErrNotFound
 
 type Repository interface {
 	// Nursery helpers

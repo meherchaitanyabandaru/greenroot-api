@@ -1,6 +1,12 @@
 package attachments
 
-import "time"
+import (
+	"time"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+)
+
+type ActorContext = authctx.ActorContext
+
 
 type Attachment struct {
 	ID             int64     `json:"id"`
@@ -13,11 +19,4 @@ type Attachment struct {
 	FileSize       *int64    `json:"file_size,omitempty"`
 	UploadedBy     *int64    `json:"uploaded_by,omitempty"`
 	UploadedAt     time.Time `json:"uploaded_at"`
-}
-
-type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
 }

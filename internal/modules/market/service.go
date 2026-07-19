@@ -2,7 +2,6 @@ package market
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -12,11 +11,12 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/redis/go-redis/v9"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden    = errors.New("forbidden")
-	ErrInvalidInput = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 )
 
 type Service struct {
@@ -35,12 +35,12 @@ func NewService(repo Repository, redisClients ...redis.Cmdable) *Service {
 // ── Access guards ─────────────────────────────────────────────
 
 func canAccessMarket(actor ActorContext) bool {
-	return hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") ||
-		hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN")
+	return actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER") ||
+		actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
 }
 
 func (s *Service) actorNurseryID(ctx context.Context, actor ActorContext) (int64, error) {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
 		return 0, fmt.Errorf("admin has no nursery context")
 	}
 	return s.repo.NurseryIDForUser(ctx, actor.UserID)
@@ -591,7 +591,7 @@ func (s *Service) updateEnquiryStatus(ctx context.Context, actor ActorContext, i
 // ── Helpers ───────────────────────────────────────────────────
 
 func (s *Service) requireOwner(ctx context.Context, actor ActorContext, nurseryID int64) error {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
 		return nil
 	}
 	ok, err := s.repo.IsNurseryMember(ctx, nurseryID, actor.UserID)
@@ -605,7 +605,7 @@ func (s *Service) requireOwner(ctx context.Context, actor ActorContext, nurseryI
 }
 
 func (s *Service) canAccessEnquiry(actor ActorContext, e Enquiry, nurseryID int64) bool {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
 		return true
 	}
 	return nurseryID == e.AdNurseryID || nurseryID == e.EnquiringNurseryID
@@ -719,15 +719,6 @@ func isAllowedLocationSource(value string) bool {
 	default:
 		return false
 	}
-}
-
-func hasRole(actor ActorContext, role string) bool {
-	for _, r := range actor.Roles {
-		if r == role {
-			return true
-		}
-	}
-	return false
 }
 
 func contains(slice []string, s string) bool {

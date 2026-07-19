@@ -4,7 +4,11 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 )
+
+type ActorContext = authctx.ActorContext
+
 
 const (
 	actionInsert = "INSERT"
@@ -104,11 +108,4 @@ type QuotationDocument struct {
 	GeneratedByName *string   `json:"generated_by_name,omitempty"`
 	IsCurrent       bool      `json:"is_current"`
 	CreatedAt       time.Time `json:"created_at"`
-}
-
-type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
 }

@@ -1,5 +1,12 @@
 package admin
 
+import (
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+)
+
+type ActorContext = authctx.ActorContext
+
+
 type Summary struct {
 	Users              int64   `json:"users"`
 	Nurseries          int64   `json:"nurseries"`
@@ -32,13 +39,6 @@ type User struct {
 	CreatedAt      *string  `json:"created_at,omitempty"`
 	Roles          []string `json:"roles"`
 	SessionCount   int64    `json:"session_count"`
-}
-
-type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
 }
 
 type UpdateUserStatusRequest struct {

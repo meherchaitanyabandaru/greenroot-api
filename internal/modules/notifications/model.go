@@ -1,6 +1,12 @@
 package notifications
 
-import "time"
+import (
+	"time"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+)
+
+type ActorContext = authctx.ActorContext
+
 
 const (
 	actionInsert = "INSERT"
@@ -49,11 +55,4 @@ type Template struct {
 	IsActive        bool       `json:"is_active"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       *time.Time `json:"updated_at,omitempty"`
-}
-
-type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
 }

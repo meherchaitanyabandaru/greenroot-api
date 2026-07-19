@@ -163,6 +163,17 @@ func (m *mockRepo) ActiveDispatchForOrder(_ context.Context, orderID int64) (*Ac
 	return &summary, nil
 }
 
+func (m *mockRepo) BatchActiveDispatchForOrders(_ context.Context, orderIDs []int64) (map[int64]*ActiveDispatchSummary, error) {
+	result := make(map[int64]*ActiveDispatchSummary)
+	for _, id := range orderIDs {
+		if s, ok := m.activeDispatch[id]; ok {
+			s2 := s
+			result[id] = &s2
+		}
+	}
+	return result, nil
+}
+
 func (m *mockRepo) StartedDispatchDriverUserID(_ context.Context, orderID int64) (*int64, error) {
 	userID, ok := m.driverUserIDs[orderID]
 	if !ok {

@@ -9,11 +9,12 @@ import (
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden       = errors.New("forbidden")
-	ErrInvalidInput    = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 	ErrDuplicate       = errors.New("duplicate vehicle")
 	ErrVehicleAssigned = errors.New("vehicle assigned to active driver")
 )
@@ -28,7 +29,7 @@ func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
 }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListVehiclesRequest) ([]Vehicle, Pagination, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return nil, Pagination{}, ErrForbidden
 	}
 	input = normalizeList(input)
@@ -43,7 +44,7 @@ func (s *Service) List(ctx context.Context, actor ActorContext, input ListVehicl
 }
 
 func (s *Service) Get(ctx context.Context, actor ActorContext, vehicleID int64) (Vehicle, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return Vehicle{}, ErrForbidden
 	}
 	vehicle, err := s.repository.FindByID(ctx, vehicleID)
@@ -54,7 +55,7 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, vehicleID int64) 
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, input VehicleRequest) (Vehicle, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return Vehicle{}, ErrForbidden
 	}
 	if err := validate(input); err != nil {
@@ -77,7 +78,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input VehicleR
 }
 
 func (s *Service) Update(ctx context.Context, actor ActorContext, vehicleID int64, input VehicleRequest) (Vehicle, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return Vehicle{}, ErrForbidden
 	}
 	if err := validate(input); err != nil {
@@ -101,7 +102,7 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, vehicleID int6
 }
 
 func (s *Service) Delete(ctx context.Context, actor ActorContext, vehicleID int64) error {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return ErrForbidden
 	}
 	old, _ := s.repository.FindByID(ctx, vehicleID)
@@ -153,18 +154,9 @@ func isAllowedStatus(status string) bool {
 	}
 }
 
-func hasRole(actor ActorContext, role string) bool {
-	for _, current := range actor.Roles {
-		if strings.EqualFold(current, role) {
-			return true
-		}
-	}
-	return false
-}
-
 func enrichVehicle(actor ActorContext, vehicle Vehicle) Vehicle {
 	status := strings.ToUpper(strings.TrimSpace(vehicle.Status))
-	isAdmin := hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN")
+	isAdmin := actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
 	isRetired := status == "RETIRED"
 	isAssigned := vehicle.DriverID != nil
 

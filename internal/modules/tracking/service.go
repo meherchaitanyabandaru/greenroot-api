@@ -2,16 +2,16 @@ package tracking
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisgeo"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
-var ErrInvalidInput = errors.New("invalid input")
-var ErrForbidden = errors.New("forbidden")
+var ErrInvalidInput = apperrs.ErrInvalidInput
+var ErrForbidden    = apperrs.ErrForbidden
 
 type Service struct {
 	repository Repository
@@ -26,7 +26,7 @@ func NewService(r Repository, liveGeo ...*redisgeo.Service) *Service {
 	return s
 }
 func (s *Service) Create(ctx context.Context, a ActorContext, in CreateRequest) (TrackingPoint, error) {
-	if !hasRole(a, "ADMIN") && !hasRole(a, "DRIVER") {
+	if !a.HasRole("ADMIN") && !a.HasRole("DRIVER") {
 		return TrackingPoint{}, ErrForbidden
 	}
 	if (in.VehicleID == nil && in.DriverID == nil && in.DispatchID == nil) || in.Latitude < -90 || in.Latitude > 90 || in.Longitude < -180 || in.Longitude > 180 {
@@ -64,7 +64,7 @@ func (s *Service) UpdateLiveLocation(ctx context.Context, a ActorContext, in Liv
 	if driverUserID <= 0 {
 		return nil, ErrInvalidInput
 	}
-	if hasRole(a, "DRIVER") && !hasRole(a, "ADMIN") && driverUserID != a.UserID {
+	if a.HasRole("DRIVER") && !a.HasRole("ADMIN") && driverUserID != a.UserID {
 		return nil, ErrForbidden
 	}
 	if s.liveGeo == nil {
@@ -87,10 +87,10 @@ func (s *Service) canTrackDispatch(ctx context.Context, a ActorContext, dispatch
 	if !strings.EqualFold(access.Status, "IN_TRANSIT") {
 		return ErrInvalidInput
 	}
-	if hasRole(a, "ADMIN") {
+	if a.HasRole("ADMIN") {
 		return nil
 	}
-	if !hasRole(a, "DRIVER") {
+	if !a.HasRole("DRIVER") {
 		return ErrForbidden
 	}
 	if access.DriverUserID == nil || *access.DriverUserID != a.UserID {
@@ -105,7 +105,7 @@ func (s *Service) GetLiveDriver(ctx context.Context, a ActorContext, driverUserI
 	if driverUserID <= 0 {
 		return nil, ErrInvalidInput
 	}
-	if hasRole(a, "DRIVER") && !hasRole(a, "ADMIN") && driverUserID != a.UserID {
+	if a.HasRole("DRIVER") && !a.HasRole("ADMIN") && driverUserID != a.UserID {
 		return nil, ErrForbidden
 	}
 	if s.liveGeo == nil {
@@ -167,17 +167,9 @@ func toLiveLocation(loc *redisgeo.Location) *LiveDriverLocation {
 		LastSeen:     loc.LastSeen.UTC().Format(time.RFC3339Nano),
 	}
 }
-func hasRole(a ActorContext, role string) bool {
-	for _, r := range a.Roles {
-		if strings.EqualFold(r, role) {
-			return true
-		}
-	}
-	return false
-}
 func hasAnyRole(a ActorContext, roles ...string) bool {
 	for _, role := range roles {
-		if hasRole(a, role) {
+		if a.HasRole(role) {
 			return true
 		}
 	}

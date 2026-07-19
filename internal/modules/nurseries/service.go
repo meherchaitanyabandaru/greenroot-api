@@ -12,11 +12,12 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/redis/go-redis/v9"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden               = errors.New("forbidden")
-	ErrInvalidInput            = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 	ErrInvalidAddress          = errors.New("invalid address")
 	ErrAlreadyOwner            = errors.New("user already owns a nursery")
 	ErrNotNurseryOwner         = errors.New("only the nursery owner can perform this action")
@@ -91,7 +92,7 @@ func (s *Service) GetOwned(ctx context.Context, userID int64) (Nursery, error) {
 // ListManagers returns all managers for a nursery. Owner or admin only.
 func (s *Service) ListManagers(ctx context.Context, actor ActorContext, nurseryID int64) ([]UserLink, error) {
 	isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
-	if !isOwner && !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !isOwner && !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		return nil, ErrForbidden
 	}
 	return s.repository.ListManagers(ctx, nurseryID)
@@ -100,7 +101,7 @@ func (s *Service) ListManagers(ctx context.Context, actor ActorContext, nurseryI
 // AddManager adds a manager to a nursery. Owner only.
 func (s *Service) AddManager(ctx context.Context, actor ActorContext, nurseryID int64, input AddManagerRequest) (UserLink, error) {
 	isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
-	if !isOwner && !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !isOwner && !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		return UserLink{}, ErrNotNurseryOwner
 	}
 	if input.UserID <= 0 {
@@ -119,7 +120,7 @@ func (s *Service) AddManager(ctx context.Context, actor ActorContext, nurseryID 
 func (s *Service) ConnectDriver(ctx context.Context, actor ActorContext, nurseryID int64, driverUserID int64) (NurseryDriver, error) {
 	isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
 	isMember, _ := s.repository.IsNurseryMember(ctx, nurseryID, actor.UserID)
-	if !isOwner && !isMember && !hasRole(actor, "ADMIN") {
+	if !isOwner && !isMember && !actor.HasRole("ADMIN") {
 		return NurseryDriver{}, ErrForbidden
 	}
 	nd, err := s.repository.ConnectDriver(ctx, nurseryID, driverUserID, actor.UserID)
@@ -133,7 +134,7 @@ func (s *Service) ConnectDriver(ctx context.Context, actor ActorContext, nursery
 // ApproveDriverConnection approves a driver connection. Owner only.
 func (s *Service) ApproveDriverConnection(ctx context.Context, actor ActorContext, nurseryID int64, driverUserID int64) error {
 	isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
-	if !isOwner && !hasRole(actor, "ADMIN") {
+	if !isOwner && !actor.HasRole("ADMIN") {
 		return ErrNotNurseryOwner
 	}
 	if err := s.repository.ApproveDriverConnection(ctx, nurseryID, driverUserID, actor.UserID); err != nil {
@@ -146,7 +147,7 @@ func (s *Service) ApproveDriverConnection(ctx context.Context, actor ActorContex
 // ListConnectedDrivers returns all drivers connected to a nursery. Owner or admin only.
 func (s *Service) ListConnectedDrivers(ctx context.Context, actor ActorContext, nurseryID int64) ([]NurseryDriver, error) {
 	isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
-	if !isOwner && !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !isOwner && !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		return nil, ErrForbidden
 	}
 	return s.repository.ListConnectedDrivers(ctx, nurseryID)
@@ -164,7 +165,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateNu
 	// Any authenticated user can register a nursery (they become the owner).
 	// Admins bypass the one-per-user rules below.
 	// V1 rules: one nursery per user; managers cannot own a nursery.
-	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		alreadyOwns, err := s.repository.UserOwnsANursery(ctx, actor.UserID)
 		if err != nil {
 			return Nursery{}, err
@@ -188,7 +189,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateNu
 		}
 	}
 	// Non-admin actors own the nursery they create; admins leave owner_user_id nil unless specified.
-	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		input.OwnerUserID = &actor.UserID
 		status := "PENDING"
 		input.Status = &status
@@ -230,7 +231,7 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, nurseryID int6
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, nurseryID int64, status string) (Nursery, error) {
-	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		return Nursery{}, ErrForbidden
 	}
 	status = strings.ToUpper(strings.TrimSpace(status))
@@ -374,7 +375,7 @@ func (s *Service) AddUser(ctx context.Context, actor ActorContext, nurseryID int
 // GetCustomers returns buyers who accepted a CUSTOMER_INVITE for a nursery.
 // ADMIN/SUPER_ADMIN see all; NURSERY_OWNER must own it; MANAGER must be a member.
 func (s *Service) GetCustomers(ctx context.Context, actor ActorContext, nurseryID int64) ([]Customer, error) {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
 		return s.repository.GetCustomers(ctx, nurseryID)
 	}
 	isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
@@ -397,7 +398,7 @@ func (s *Service) RemoveUser(ctx context.Context, actor ActorContext, nurseryID 
 		return ErrOwnerCannotLeave
 	}
 	// Non-self removal requires owner or admin
-	if !isSelf && !isOwner && !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !isSelf && !isOwner && !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		return ErrForbidden
 	}
 
@@ -436,7 +437,7 @@ func (s *Service) DisconnectDriver(ctx context.Context, actor ActorContext, nurs
 	isSelf := driverUserID == actor.UserID
 	if !isSelf {
 		isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
-		if !isOwner && !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+		if !isOwner && !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 			return ErrForbidden
 		}
 	}
@@ -640,7 +641,7 @@ func isAllowedLocationSource(value string) bool {
 }
 
 func canManageNurseries(actor ActorContext) bool {
-	return hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") || hasRole(actor, "NURSERY_OWNER")
+	return actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") || actor.HasRole("NURSERY_OWNER")
 }
 
 type NurseryActor struct {
@@ -694,15 +695,6 @@ func hasNurseryRole(roles []string, role string) bool {
 
 func nurseryPtr[T any](value T) *T {
 	return &value
-}
-
-func hasRole(actor ActorContext, role string) bool {
-	for _, item := range actor.Roles {
-		if item == role {
-			return true
-		}
-	}
-	return false
 }
 
 func totalPages(total int64, perPage int) int {

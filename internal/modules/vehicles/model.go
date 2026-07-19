@@ -4,7 +4,11 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 )
+
+type ActorContext = authctx.ActorContext
+
 
 type Vehicle struct {
 	ID                   int64                      `json:"id"`
@@ -39,11 +43,4 @@ type VehicleSummary struct {
 	IsMaintenance bool `json:"is_maintenance"`
 	IsRetired     bool `json:"is_retired"`
 	IsAssigned    bool `json:"is_assigned"`
-}
-
-type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
 }

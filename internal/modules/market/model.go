@@ -4,16 +4,13 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 )
 
-// ── Actor ────────────────────────────────────────────────────
+type ActorContext = authctx.ActorContext
 
-type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
-}
+
+// ── Actor ────────────────────────────────────────────────────
 
 // ── Ad ───────────────────────────────────────────────────────
 

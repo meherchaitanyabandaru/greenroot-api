@@ -2,14 +2,14 @@ package attachments
 
 import (
 	"context"
-	"errors"
 	"math"
 	"strings"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden    = errors.New("forbidden")
-	ErrInvalidInput = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 )
 
 type Service struct{ repository Repository }
@@ -33,8 +33,8 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, id int64) (Attach
 }
 func (s *Service) Create(ctx context.Context, actor ActorContext, input AttachmentRequest) (Attachment, error) {
 	// Only nursery staff and admins may upload attachments; buyers and unauthenticated users cannot
-	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") &&
-		!hasRole(actor, "NURSERY_OWNER") && !hasRole(actor, "MANAGER") && !hasRole(actor, "DRIVER") {
+	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") &&
+		!actor.HasRole("NURSERY_OWNER") && !actor.HasRole("MANAGER") && !actor.HasRole("DRIVER") {
 		return Attachment{}, ErrForbidden
 	}
 	if strings.TrimSpace(input.EntityType) == "" || input.EntityID <= 0 || strings.TrimSpace(input.FileName) == "" || strings.TrimSpace(input.FileURL) == "" {
@@ -48,7 +48,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input Attachme
 	return *item, nil
 }
 func (s *Service) Delete(ctx context.Context, actor ActorContext, id int64) error {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return ErrForbidden
 	}
 	return s.repository.Delete(ctx, id)
@@ -66,14 +66,6 @@ func normalizeList(input ListRequest) ListRequest {
 	}
 	input.EntityType = strings.ToUpper(strings.TrimSpace(input.EntityType))
 	return input
-}
-func hasRole(actor ActorContext, role string) bool {
-	for _, r := range actor.Roles {
-		if strings.EqualFold(r, role) {
-			return true
-		}
-	}
-	return false
 }
 func pages(total int64, per int) int {
 	if per <= 0 {

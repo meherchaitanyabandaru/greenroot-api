@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
-var ErrNotFound = errors.New("not found")
+var ErrNotFound     = apperrs.ErrNotFound
 
 type Repository interface {
 	List(ctx context.Context, input ListOrdersRequest) ([]Order, int64, error)
@@ -22,6 +23,7 @@ type Repository interface {
 	OrderHasStartedDispatch(ctx context.Context, orderID int64) (bool, error)
 	OrderHasUndeliveredDispatch(ctx context.Context, orderID int64) (bool, error)
 	ActiveDispatchForOrder(ctx context.Context, orderID int64) (*ActiveDispatchSummary, error)
+	BatchActiveDispatchForOrders(ctx context.Context, orderIDs []int64) (map[int64]*ActiveDispatchSummary, error)
 	StartedDispatchDriverUserID(ctx context.Context, orderID int64) (*int64, error)
 	UpdateStatus(ctx context.Context, actorID int64, orderID int64, status string) (*Order, error)
 	UpdateStatusWithLoading(ctx context.Context, actorID int64, orderID int64, status string, phase string) (*Order, error)
@@ -333,6 +335,51 @@ func (r *PostgresRepository) ActiveDispatchForOrder(ctx context.Context, orderID
 		return nil, err
 	}
 	return &summary, nil
+}
+
+func (r *PostgresRepository) BatchActiveDispatchForOrders(ctx context.Context, orderIDs []int64) (map[int64]*ActiveDispatchSummary, error) {
+	if len(orderIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(orderIDs))
+	args := make([]any, len(orderIDs))
+	for i, id := range orderIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	query := fmt.Sprintf(`
+		SELECT DISTINCT ON (order_id) order_id, dispatch_id, dispatch_status::text
+		FROM public.dispatches
+		WHERE order_id IN (%s)
+		  AND COALESCE(dispatch_status::text, '') <> 'CANCELLED'
+		ORDER BY order_id,
+		  CASE COALESCE(dispatch_status::text, '')
+			WHEN 'DELIVERED' THEN 5
+			WHEN 'IN_TRANSIT' THEN 4
+			WHEN 'DISPATCHED' THEN 3
+			WHEN 'ACCEPTED' THEN 2
+			WHEN 'PENDING' THEN 1
+			ELSE 0
+		  END DESC,
+		  updated_at DESC NULLS LAST,
+		  dispatch_id DESC
+	`, strings.Join(placeholders, ","))
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[int64]*ActiveDispatchSummary)
+	for rows.Next() {
+		var orderID int64
+		var s ActiveDispatchSummary
+		if err := rows.Scan(&orderID, &s.ID, &s.Status); err != nil {
+			return nil, err
+		}
+		s2 := s
+		result[orderID] = &s2
+	}
+	return result, rows.Err()
 }
 
 func (r *PostgresRepository) StartedDispatchDriverUserID(ctx context.Context, orderID int64) (*int64, error) {

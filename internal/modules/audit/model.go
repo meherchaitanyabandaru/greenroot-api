@@ -1,6 +1,12 @@
 package audit
 
-import "time"
+import (
+	"time"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+)
+
+type ActorContext = authctx.ActorContext
+
 
 type AuditLog struct {
 	ID          int64     `json:"id"`
@@ -30,11 +36,4 @@ type SecurityLog struct {
 	DeviceInfo  *string   `json:"device_info,omitempty"`
 	Metadata    *string   `json:"metadata,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
-}
-
-type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
 }

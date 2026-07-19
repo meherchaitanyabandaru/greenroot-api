@@ -8,11 +8,12 @@ import (
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden             = errors.New("forbidden")
-	ErrInvalidInput          = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 	ErrInsufficientInventory = errors.New("insufficient inventory")
 	ErrInvalidTransition     = errors.New("invalid status transition")
 )
@@ -186,11 +187,11 @@ func (s *Service) UpdateResponse(ctx context.Context, actor ActorContext, respon
 }
 
 func (s *Service) canManageNursery(ctx context.Context, actor ActorContext, nurseryID int64) error {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
 		return nil
 	}
 	// Per business rules: both NURSERY_OWNER and MANAGER perform sourcing work
-	if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
+	if actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER") {
 		member, err := s.repository.IsNurseryMember(ctx, nurseryID, actor.UserID)
 		if err != nil {
 			return err
@@ -204,8 +205,8 @@ func (s *Service) canManageNursery(ctx context.Context, actor ActorContext, nurs
 
 func canUseRequests(actor ActorContext) bool {
 	// Per business rules: managers usually perform sourcing work and need full access
-	return hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") ||
-		hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER")
+	return actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") ||
+		actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER")
 }
 
 func (s *Service) enrichPlantRequest(ctx context.Context, actor ActorContext, request PlantRequest) PlantRequest {
@@ -336,15 +337,6 @@ func isAllowedManagerResponseStatus(value string) bool {
 	default:
 		return false
 	}
-}
-
-func hasRole(actor ActorContext, role string) bool {
-	for _, item := range actor.Roles {
-		if item == role {
-			return true
-		}
-	}
-	return false
 }
 
 func totalPages(total int64, perPage int) int {

@@ -4,7 +4,11 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 )
+
+type ActorContext = authctx.ActorContext
+
 
 const (
 	actionInsert = "INSERT"
@@ -47,11 +51,4 @@ type InventorySummary struct {
 	IsOutOfStock   bool `json:"is_out_of_stock"`
 	IsReserved     bool `json:"is_reserved"`
 	IsDiscontinued bool `json:"is_discontinued"`
-}
-
-type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
 }

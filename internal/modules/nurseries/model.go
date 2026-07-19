@@ -4,7 +4,11 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 )
+
+type ActorContext = authctx.ActorContext
+
 
 type Nursery struct {
 	ID              int64      `json:"id"`
@@ -117,11 +121,4 @@ type Customer struct {
 	Mobile     string     `json:"mobile"`
 	Email      *string    `json:"email,omitempty"`
 	AcceptedAt *time.Time `json:"accepted_at,omitempty"`
-}
-
-type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
 }

@@ -4,9 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
-var ErrNotFound = errors.New("not found")
+var ErrNotFound     = apperrs.ErrNotFound
 
 type Repository interface {
 	Create(ctx context.Context, actorID int64, req CreateInviteRequest) (*Invite, error)

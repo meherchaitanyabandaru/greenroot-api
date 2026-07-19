@@ -23,9 +23,9 @@ func IsTerminal(status string) bool {
 // No database access — struct fields and actor roles are the only inputs.
 func BuildCapabilities(actor ActorContext, q Quotation) *QuotationCapabilities {
 	status := q.Status
-	isAdmin := hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN")
-	isSeller := isAdmin || hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER")
-	isOwnerRole := isAdmin || hasRole(actor, "NURSERY_OWNER")
+	isAdmin := actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
+	isSeller := isAdmin || actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER")
+	isOwnerRole := isAdmin || actor.HasRole("NURSERY_OWNER")
 	isCustomer := isAdmin || (q.CustomerUserID != nil && *q.CustomerUserID == actor.UserID)
 	editable := IsEditable(status) && q.ConvertedOrderID == nil
 	isCustomerSent := status == "CUSTOMER_SENT" && !isExpiredTime(q.ValidUntil)

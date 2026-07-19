@@ -1,6 +1,12 @@
 package invites
 
-import "time"
+import (
+	"time"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+)
+
+type ActorContext = authctx.ActorContext
+
 
 const (
 	actionInsert = "INSERT"
@@ -24,12 +30,4 @@ type Invite struct {
 	AcceptedAt       *time.Time `json:"accepted_at,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
-}
-
-type ActorContext struct {
-	UserID    int64
-	Mobile    string
-	Roles     []string
-	IPAddress string
-	UserAgent string
 }

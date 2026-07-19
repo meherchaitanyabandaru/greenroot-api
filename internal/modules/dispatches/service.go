@@ -15,11 +15,12 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/redis/go-redis/v9"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden        = errors.New("forbidden")
-	ErrInvalidInput     = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 	ErrInvalidStatus    = errors.New("invalid status transition")
 	ErrDuplicate        = errors.New("duplicate dispatch")
 	ErrActiveDispatch   = errors.New("active dispatch already exists for order")
@@ -74,7 +75,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateDisp
 	// Business rule: only nursery operators can create dispatches.
 	// Owner accounts may still carry the legacy BUYER role after approval, so
 	// authorize by positive capability instead of deny-listing role labels.
-	if !hasRole(actor, "NURSERY_OWNER") && !hasRole(actor, "MANAGER") {
+	if !actor.HasRole("NURSERY_OWNER") && !actor.HasRole("MANAGER") {
 		return Dispatch{}, ErrForbidden
 	}
 	input, err := normalizeCreate(req)
@@ -215,7 +216,7 @@ func (s *Service) CreateTripEvent(ctx context.Context, actor ActorContext, dispa
 	if err != nil {
 		return TripEvent{}, err
 	}
-	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		// Must be the assigned driver
 		isDriver := false
 		if dispatch.DriverUserID != nil && *dispatch.DriverUserID == actor.UserID {
@@ -266,7 +267,7 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 	defer lock.Release(ctx)
 
 	// Only drivers may accept dispatches.
-	if !hasRole(actor, "DRIVER") {
+	if !actor.HasRole("DRIVER") {
 		return Dispatch{}, ErrForbidden
 	}
 	dispatch, err := s.repository.FindByID(ctx, dispatchID)
@@ -324,14 +325,14 @@ func (s *Service) GetPublicTracking(ctx context.Context, uuid string) (Dispatch,
 }
 
 func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *ListDispatchesRequest) error {
-	if hasRole(actor, "ADMIN") {
+	if actor.HasRole("ADMIN") {
 		return nil
 	}
-	if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
+	if actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER") {
 		if input.Buying {
 			// Buyer perspective: incoming dispatches for orders this owner placed as buyer.
 			input.BuyerUserID = actor.UserID
-			if hasRole(actor, "NURSERY_OWNER") {
+			if actor.HasRole("NURSERY_OWNER") {
 				nurseryID, _ := s.repository.GetOwnedNurseryID(ctx, actor.UserID)
 				if nurseryID != nil {
 					input.BuyerNurseryID = *nurseryID
@@ -369,11 +370,11 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 		input.NurseryID = nurseryIDs[0]
 		return nil
 	}
-	if hasRole(actor, "DRIVER") {
+	if actor.HasRole("DRIVER") {
 		input.DriverUserID = actor.UserID
 		return nil
 	}
-	if hasRole(actor, "BUYER") {
+	if actor.HasRole("BUYER") {
 		// Buyers see dispatches for their own orders only.
 		input.BuyerUserID = actor.UserID
 		return nil
@@ -382,12 +383,12 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 }
 
 func (s *Service) canAccess(ctx context.Context, actor ActorContext, dispatch Dispatch) error {
-	if hasRole(actor, "ADMIN") {
+	if actor.HasRole("ADMIN") {
 		return nil
 	}
 	if dispatch.SellerNurseryID != nil {
 		// Both owners and managers of the seller nursery can manage the dispatch.
-		if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
+		if actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER") {
 			member, err := s.repository.IsNurseryMember(ctx, *dispatch.SellerNurseryID, actor.UserID)
 			if err != nil {
 				return err
@@ -397,7 +398,7 @@ func (s *Service) canAccess(ctx context.Context, actor ActorContext, dispatch Di
 			}
 		}
 	}
-	if hasRole(actor, "DRIVER") {
+	if actor.HasRole("DRIVER") {
 		if dispatch.DriverUserID != nil && *dispatch.DriverUserID == actor.UserID {
 			return nil
 		}
@@ -408,7 +409,7 @@ func (s *Service) canAccess(ctx context.Context, actor ActorContext, dispatch Di
 			}
 		}
 	}
-	if hasRole(actor, "BUYER") {
+	if actor.HasRole("BUYER") {
 		// Buyer can access dispatch if it belongs to their order.
 		access, err := s.repository.OrderAccess(ctx, dispatch.OrderID)
 		if err == nil && access.BuyerID != nil && *access.BuyerID == actor.UserID {
@@ -419,10 +420,10 @@ func (s *Service) canAccess(ctx context.Context, actor ActorContext, dispatch Di
 }
 
 func (s *Service) canAccessOrder(ctx context.Context, actor ActorContext, access *OrderAccess) error {
-	if hasRole(actor, "ADMIN") {
+	if actor.HasRole("ADMIN") {
 		return nil
 	}
-	if (hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER")) && access.NurseryID != nil {
+	if (actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER")) && access.NurseryID != nil {
 		member, err := s.repository.IsNurseryMember(ctx, *access.NurseryID, actor.UserID)
 		if err != nil {
 			return err
@@ -431,7 +432,7 @@ func (s *Service) canAccessOrder(ctx context.Context, actor ActorContext, access
 			return nil
 		}
 	}
-	if hasRole(actor, "BUYER") && access.BuyerID != nil && *access.BuyerID == actor.UserID {
+	if actor.HasRole("BUYER") && access.BuyerID != nil && *access.BuyerID == actor.UserID {
 		return nil
 	}
 	return ErrForbidden
@@ -510,15 +511,6 @@ func (s *Service) removeLiveDriverLocation(ctx context.Context, dispatch Dispatc
 	if err := s.liveGeo.RemoveDriver(ctx, driverID); err != nil {
 		slog.Warn("redis geo live driver cleanup skipped", "dispatch_id", dispatch.ID, "driver_id", driverID, "error", err)
 	}
-}
-
-func hasRole(actor ActorContext, role string) bool {
-	for _, current := range actor.Roles {
-		if strings.EqualFold(current, role) {
-			return true
-		}
-	}
-	return false
 }
 
 func totalPages(total int64, perPage int) int {

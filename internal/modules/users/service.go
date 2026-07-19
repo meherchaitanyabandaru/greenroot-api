@@ -15,11 +15,16 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/revocation"
 	platformstorage "github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
+type ActorContext = authctx.ActorContext
+
+
 var (
-	ErrForbidden              = errors.New("forbidden")
-	ErrInvalidInput           = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 	ErrInvalidAddress         = errors.New("invalid address")
 	ErrAccountDeleted         = errors.New("account has already been deleted")
 	ErrAccountDeletionBlocked = errors.New("account deletion blocked by active business records")
@@ -32,15 +37,6 @@ type Service struct {
 	storage    *platformstorage.Client
 	auditSvc   *auditlog.Service
 	redis      redis.Cmdable
-}
-
-type ActorContext struct {
-	UserID        int64
-	Roles         []string
-	IPAddress     string
-	UserAgent     string
-	TokenJTI      string
-	TokenExpEpoch int64
 }
 
 func NewService(repository Repository, storage *platformstorage.Client, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
@@ -308,20 +304,11 @@ func (s *Service) recordChange(ctx context.Context, actor ActorContext, table st
 }
 
 func canReadUser(actor ActorContext, userID int64) bool {
-	return actor.UserID == userID || hasRole(actor, "ADMIN")
+	return actor.UserID == userID || actor.HasRole("ADMIN")
 }
 
 func canWriteUser(actor ActorContext, userID int64) bool {
-	return actor.UserID == userID || hasRole(actor, "ADMIN")
-}
-
-func hasRole(actor ActorContext, role string) bool {
-	for _, item := range actor.Roles {
-		if item == role {
-			return true
-		}
-	}
-	return false
+	return actor.UserID == userID || actor.HasRole("ADMIN")
 }
 
 func isAllowedGender(value string) bool {

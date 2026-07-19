@@ -20,11 +20,12 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden         = errors.New("forbidden")
-	ErrInvalidInput      = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 	ErrAlreadyConverted  = errors.New("quotation already converted to an order")
 	ErrCustomerRequired  = errors.New("customer information required for customer quotations")
 	ErrInvalidTransition = errors.New("action not allowed in current quotation status")
@@ -177,7 +178,7 @@ func (s *Service) RenderPDF(ctx context.Context, actor ActorContext, id int64) (
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQuotationRequest) (Quotation, error) {
 	// Business rule: admins and drivers do not participate in business transactions.
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") || hasRole(actor, "DRIVER") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") || actor.HasRole("DRIVER") {
 		return Quotation{}, ErrForbidden
 	}
 	if input.QuotationType != "INTERNAL" {
@@ -201,7 +202,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQu
 
 	var nurseryName, nurseryPhone *string
 	if input.NurseryID != nil && *input.NurseryID > 0 {
-		if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+		if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 			// Nursery must be ACTIVE before quotations can be created.
 			active, err := s.repository.IsNurseryActive(ctx, *input.NurseryID)
 			if err != nil {
@@ -265,7 +266,7 @@ func (s *Service) scheduleQuotationExpiry(ctx context.Context, q *Quotation) {
 }
 
 func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, input UpdateQuotationRequest) (Quotation, error) {
-	if hasRole(actor, "DRIVER") {
+	if actor.HasRole("DRIVER") {
 		return Quotation{}, ErrForbidden
 	}
 	if len(input.Items) == 0 {
@@ -301,14 +302,14 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, inpu
 	// Exclusive-editor rule: once a quotation is assigned to a manager, only that
 	// manager may edit its content.  The owner regains edit access only after
 	// reassigning the quotation to themselves or removing the assignment.
-	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		if q.AssignedManagerUserID != nil && *q.AssignedManagerUserID != actor.UserID {
 			return Quotation{}, ErrForbidden
 		}
 	}
 	// Managers may edit quote content, but customer identity/contact remains
 	// owner-controlled and is often redacted from manager clients.
-	if !s.isNurseryOwner(ctx, actor, *q) && !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !s.isNurseryOwner(ctx, actor, *q) && !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		input.CustomerUserID = q.CustomerUserID
 		input.RecipientName = q.RecipientName
 		input.RecipientMobile = q.RecipientMobile
@@ -369,7 +370,7 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, id int64) erro
 	if q.ConvertedOrderID != nil {
 		return ErrAlreadyConverted
 	}
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
 		if err := s.repository.SoftDelete(ctx, id); err != nil {
 			return err
 		}
@@ -506,7 +507,7 @@ func (s *Service) AssignManager(ctx context.Context, actor ActorContext, quotati
 	if q.ConvertedOrderID != nil {
 		return Quotation{}, ErrAlreadyConverted
 	}
-	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		if !s.isNurseryOwner(ctx, actor, *q) {
 			return Quotation{}, ErrForbidden
 		}
@@ -540,7 +541,7 @@ func (s *Service) UnassignManager(ctx context.Context, actor ActorContext, quota
 	if q.ConvertedOrderID != nil {
 		return Quotation{}, ErrAlreadyConverted
 	}
-	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		if !s.isNurseryOwner(ctx, actor, *q) {
 			return Quotation{}, ErrForbidden
 		}
@@ -659,7 +660,7 @@ func (s *Service) RecordDownload(ctx context.Context, actor ActorContext, quotat
 // Matches both linked accounts (customer_user_id) and unlinked mobile-only quotations.
 // Also enforces valid_until expiry.
 func (s *Service) canBuyerAct(ctx context.Context, actor ActorContext, q Quotation) error {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
 		return nil
 	}
 	// Expiry check: buyer cannot act on an expired quotation.
@@ -688,7 +689,7 @@ func (s *Service) canBuyerAct(ctx context.Context, actor ActorContext, q Quotati
 // canView checks whether the actor may read a quotation.
 // Uses the passed context so request cancellation/timeouts are respected.
 func (s *Service) canView(ctx context.Context, actor ActorContext, q Quotation) error {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
 		return nil
 	}
 	if q.CreatedByUserID == actor.UserID {
@@ -743,7 +744,7 @@ func (s *Service) canView(ctx context.Context, actor ActorContext, q Quotation) 
 // canManage checks if the actor may approve, recall, convert, or otherwise mutate a quotation's state.
 // Both nursery owners and managers qualify; admins always qualify.
 func (s *Service) canManage(ctx context.Context, actor ActorContext, q Quotation) error {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
 		return nil
 	}
 	if q.NurseryID != nil {
@@ -769,16 +770,16 @@ func (s *Service) isNurseryOwner(ctx context.Context, actor ActorContext, q Quot
 }
 
 func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *ListQuotationsRequest) error {
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
 		return nil
 	}
-	if hasRole(actor, "DRIVER") {
+	if actor.HasRole("DRIVER") {
 		return ErrForbidden
 	}
 	if input.Buying {
 		// Buyer perspective: filter by buyer user or buyer nursery.
 		input.UserID = actor.UserID
-		if hasRole(actor, "NURSERY_OWNER") {
+		if actor.HasRole("NURSERY_OWNER") {
 			nurseryID, _ := s.repository.GetOwnedNurseryID(ctx, actor.UserID)
 			if nurseryID != nil {
 				input.BuyerNurseryID = *nurseryID
@@ -788,9 +789,9 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 	}
 	// Seller perspective: always force scope to the actor's own nursery.
 	// Never trust a client-supplied nursery_id — an owner could read another nursery by passing ?nursery_id=X.
-	if hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER") {
+	if actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER") {
 		nurseryID, _ := s.repository.GetOwnedNurseryID(ctx, actor.UserID)
-		if nurseryID == nil && hasRole(actor, "MANAGER") {
+		if nurseryID == nil && actor.HasRole("MANAGER") {
 			nurseryID, _ = s.repository.GetManagerNurseryID(ctx, actor.UserID)
 		}
 		input.UserID = 0
@@ -883,15 +884,6 @@ func normalizeList(input ListQuotationsRequest) ListQuotationsRequest {
 	input.Search = strings.TrimSpace(input.Search)
 	input.Status = strings.ToUpper(strings.TrimSpace(input.Status))
 	return input
-}
-
-func hasRole(actor ActorContext, role string) bool {
-	for _, r := range actor.Roles {
-		if r == role {
-			return true
-		}
-	}
-	return false
 }
 
 func totalPages(total int64, perPage int) int {
@@ -1127,7 +1119,7 @@ func (s *Service) UploadDocument(ctx context.Context, actor ActorContext, quotat
 		return QuotationDocument{}, "", err
 	}
 	// Admin/super-admin = read-only; drivers/buyers cannot upload
-	if hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN") || hasRole(actor, "DRIVER") {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") || actor.HasRole("DRIVER") {
 		return QuotationDocument{}, "", ErrForbidden
 	}
 	if err := s.canManage(ctx, actor, *q); err != nil {
@@ -1225,7 +1217,7 @@ func (s *Service) ListDocuments(ctx context.Context, actor ActorContext, quotati
 	if err != nil {
 		return nil, err
 	}
-	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		if !s.isNurseryOwner(ctx, actor, *q) {
 			return nil, ErrForbidden
 		}
@@ -1251,10 +1243,10 @@ func (s *Service) audit(ctx context.Context, actor ActorContext, entityType stri
 
 // isManagerOnly returns true when the actor is a manager but NOT also an owner or admin.
 func isManagerOnly(actor ActorContext) bool {
-	return hasRole(actor, "MANAGER") &&
-		!hasRole(actor, "NURSERY_OWNER") &&
-		!hasRole(actor, "ADMIN") &&
-		!hasRole(actor, "SUPER_ADMIN")
+	return actor.HasRole("MANAGER") &&
+		!actor.HasRole("NURSERY_OWNER") &&
+		!actor.HasRole("ADMIN") &&
+		!actor.HasRole("SUPER_ADMIN")
 }
 
 // redactCustomerContact removes customer-identifying details for actors who must not see them.

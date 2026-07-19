@@ -2,16 +2,16 @@ package plants
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden    = errors.New("forbidden")
-	ErrInvalidInput = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 )
 
 type Service struct {
@@ -106,7 +106,7 @@ func (s *Service) ListCategories(ctx context.Context) ([]Category, error) {
 }
 
 func (s *Service) CreateCategory(ctx context.Context, actor ActorContext, input CreateCategoryRequest) (Category, error) {
-	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		return Category{}, ErrForbidden
 	}
 	name := strings.TrimSpace(input.Name)
@@ -117,14 +117,14 @@ func (s *Service) CreateCategory(ctx context.Context, actor ActorContext, input 
 }
 
 func (s *Service) UpdateCategory(ctx context.Context, actor ActorContext, categoryID int64, input UpdateCategoryRequest) (Category, error) {
-	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		return Category{}, ErrForbidden
 	}
 	return s.repository.UpdateCategory(ctx, categoryID, input)
 }
 
 func (s *Service) DeleteCategory(ctx context.Context, actor ActorContext, categoryID int64) error {
-	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		return ErrForbidden
 	}
 	return s.repository.DeleteCategory(ctx, categoryID)
@@ -220,16 +220,7 @@ func validatePlantInput(input CreatePlantRequest) error {
 }
 
 func canManagePlants(actor ActorContext) bool {
-	return hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN")
-}
-
-func hasRole(actor ActorContext, role string) bool {
-	for _, item := range actor.Roles {
-		if item == role {
-			return true
-		}
-	}
-	return false
+	return actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
 }
 
 func totalPages(total int64, perPage int) int {

@@ -2,16 +2,16 @@ package inventory
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden    = errors.New("forbidden")
-	ErrInvalidInput = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 )
 
 type Service struct {
@@ -91,10 +91,10 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, inventoryID in
 }
 
 func (s *Service) canManage(ctx context.Context, actor ActorContext, nurseryID int64) error {
-	if hasRole(actor, "ADMIN") {
+	if actor.HasRole("ADMIN") {
 		return nil
 	}
-	if hasRole(actor, "NURSERY_OWNER") {
+	if actor.HasRole("NURSERY_OWNER") {
 		member, err := s.repository.IsNurseryMember(ctx, nurseryID, actor.UserID)
 		if err != nil {
 			return err
@@ -169,15 +169,6 @@ func isAllowedStatus(value string) bool {
 	}
 }
 
-func hasRole(actor ActorContext, role string) bool {
-	for _, item := range actor.Roles {
-		if item == role {
-			return true
-		}
-	}
-	return false
-}
-
 func enrichInventory(actor ActorContext, item InventoryItem, includeCapabilities bool) InventoryItem {
 	status := strings.ToUpper(strings.TrimSpace(item.Status))
 	item.Lifecycle = inventoryPtr(lifecycle.Inventory(status))
@@ -189,7 +180,7 @@ func enrichInventory(actor ActorContext, item InventoryItem, includeCapabilities
 		IsDiscontinued: status == "DISCONTINUED",
 	}
 	if includeCapabilities {
-		canManage := hasRole(actor, "ADMIN") || hasRole(actor, "NURSERY_OWNER")
+		canManage := actor.HasRole("ADMIN") || actor.HasRole("NURSERY_OWNER")
 		isDiscontinued := status == "DISCONTINUED"
 		item.Capabilities = &InventoryCapabilities{
 			CanEdit:        canManage && !isDiscontinued,

@@ -1,6 +1,12 @@
 package drivers
 
-import "time"
+import (
+	"time"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+)
+
+type ActorContext = authctx.ActorContext
+
 
 const (
 	actionInsert = "INSERT"
@@ -52,11 +58,4 @@ type DriverLocation struct {
 	Longitude  float64   `json:"longitude"`
 	RecordedAt time.Time `json:"recorded_at"`
 	CreatedBy  *int64    `json:"created_by,omitempty"`
-}
-
-type ActorContext struct {
-	UserID    int64
-	Roles     []string
-	IPAddress string
-	UserAgent string
 }

@@ -15,11 +15,12 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/redis/go-redis/v9"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
 var (
-	ErrForbidden    = errors.New("forbidden")
-	ErrInvalidInput = errors.New("invalid input")
+	ErrForbidden    = apperrs.ErrForbidden
+	ErrInvalidInput = apperrs.ErrInvalidInput
 	ErrConflict     = errors.New("conflict")
 )
 
@@ -102,7 +103,7 @@ func (s *Service) GetPlan(ctx context.Context, planID int64) (SubscriptionPlan, 
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListSubscriptionsRequest) ([]UserSubscription, Pagination, error) {
 	input = normalizeList(actor, input)
-	if !hasRole(actor, "ADMIN") && input.UserID != actor.UserID {
+	if !actor.HasRole("ADMIN") && input.UserID != actor.UserID {
 		return nil, Pagination{}, ErrForbidden
 	}
 	subscriptions, total, err := s.repository.List(ctx, input)
@@ -129,7 +130,7 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, subscriptionID in
 func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateSubscriptionRequest) (UserSubscription, error) {
 	userID := actor.UserID
 	if input.UserID != nil {
-		if !hasRole(actor, "ADMIN") && *input.UserID != actor.UserID {
+		if !actor.HasRole("ADMIN") && *input.UserID != actor.UserID {
 			return UserSubscription{}, ErrForbidden
 		}
 		userID = *input.UserID
@@ -185,7 +186,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateSu
 
 func (s *Service) Me(ctx context.Context, actor ActorContext) ([]UserSubscription, Pagination, error) {
 	// Managers are nursery employees and do not hold subscriptions.
-	if hasRole(actor, "MANAGER") {
+	if actor.HasRole("MANAGER") {
 		return nil, Pagination{}, ErrForbidden
 	}
 	return s.List(ctx, actor, ListSubscriptionsRequest{UserID: actor.UserID, Page: 1, PerPage: 50})
@@ -198,7 +199,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, subscrip
 	}
 	defer lock.Release(ctx)
 
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return UserSubscription{}, ErrForbidden
 	}
 	status := strings.ToUpper(strings.TrimSpace(input.Status))
@@ -376,7 +377,7 @@ func lifecyclePtr[T any](value T) *T {
 }
 
 func (s *Service) canAccess(actor ActorContext, subscription UserSubscription) error {
-	if hasRole(actor, "ADMIN") || subscription.UserID == actor.UserID {
+	if actor.HasRole("ADMIN") || subscription.UserID == actor.UserID {
 		return nil
 	}
 	return ErrForbidden
@@ -433,7 +434,7 @@ func normalizeList(actor ActorContext, input ListSubscriptionsRequest) ListSubsc
 		input.PerPage = 100
 	}
 	input.Status = strings.ToUpper(strings.TrimSpace(input.Status))
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		input.UserID = actor.UserID
 	}
 	return input
@@ -464,14 +465,14 @@ func cycleEndAndAmount(startDate time.Time, cycle string, plan SubscriptionPlan)
 // ── Promo service methods ─────────────────────────────────────────────────────
 
 func (s *Service) ListPromos(ctx context.Context, actor ActorContext) ([]SubscriptionPromo, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return nil, ErrForbidden
 	}
 	return s.repository.ListPromos(ctx, false)
 }
 
 func (s *Service) CreatePromo(ctx context.Context, actor ActorContext, req CreatePromoRequest) (SubscriptionPromo, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return SubscriptionPromo{}, ErrForbidden
 	}
 	if err := validatePromoRequest(req.PromoCode, req.DiscountType, req.DiscountValue, req.ValidFrom, req.ValidUntil); err != nil {
@@ -499,7 +500,7 @@ func (s *Service) CreatePromo(ctx context.Context, actor ActorContext, req Creat
 }
 
 func (s *Service) UpdatePromo(ctx context.Context, actor ActorContext, promoID int64, req UpdatePromoRequest) (SubscriptionPromo, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return SubscriptionPromo{}, ErrForbidden
 	}
 	if err := validatePromoRequest("CODE", req.DiscountType, req.DiscountValue, req.ValidFrom, req.ValidUntil); err != nil {
@@ -575,7 +576,7 @@ func (s *Service) ValidatePromo(ctx context.Context, req ValidatePromoRequest) P
 }
 
 func (s *Service) BlastPromo(ctx context.Context, actor ActorContext, promoID int64) (int, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return 0, ErrForbidden
 	}
 	promo, err := s.repository.FindPromo(ctx, promoID)
@@ -699,7 +700,7 @@ func containsStr(slice []string, val string) bool {
 }
 
 func (s *Service) UpdatePlan(ctx context.Context, actor ActorContext, planID int64, input UpdatePlanRequest) (SubscriptionPlan, error) {
-	if !hasRole(actor, "ADMIN") {
+	if !actor.HasRole("ADMIN") {
 		return SubscriptionPlan{}, ErrForbidden
 	}
 	plan, err := s.repository.UpdatePlan(ctx, planID, UpdatePlanInput{
@@ -734,15 +735,6 @@ func isAllowedPaymentMethod(value string) bool {
 	default:
 		return false
 	}
-}
-
-func hasRole(actor ActorContext, role string) bool {
-	for _, current := range actor.Roles {
-		if strings.EqualFold(current, role) {
-			return true
-		}
-	}
-	return false
 }
 
 func totalPages(total int64, perPage int) int {

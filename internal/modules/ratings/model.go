@@ -1,6 +1,12 @@
 package ratings
 
-import "time"
+import (
+	"time"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+)
+
+type ActorContext = authctx.ActorContext
+
 
 type Rating struct {
 	ID               int64     `json:"id"`
@@ -58,9 +64,4 @@ type ListRatingsRequest struct {
 	RatingType string
 	Page       int
 	PerPage    int
-}
-
-type ActorContext struct {
-	UserID int64
-	Roles  []string
 }

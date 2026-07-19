@@ -3,11 +3,11 @@ package ratings
 import (
 	"context"
 	"errors"
-	"strings"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
-var ErrForbidden = errors.New("forbidden")
-var ErrInvalidInput = errors.New("invalid input")
+var ErrForbidden    = apperrs.ErrForbidden
+var ErrInvalidInput = apperrs.ErrInvalidInput
 
 type Service struct {
 	repository Repository
@@ -25,7 +25,7 @@ func (s *Service) SubmitApp(ctx context.Context, actor ActorContext, req SubmitA
 }
 
 func (s *Service) SubmitTrip(ctx context.Context, actor ActorContext, dispatchID int64, req SubmitTripRatingRequest) (*Rating, error) {
-	if !hasRole(actor, "BUYER") && !hasRole(actor, "NURSERY_OWNER") && !hasRole(actor, "MANAGER") {
+	if !actor.HasRole("BUYER") && !actor.HasRole("NURSERY_OWNER") && !actor.HasRole("MANAGER") {
 		return nil, ErrForbidden
 	}
 	return s.repository.UpsertTrip(ctx, actor.UserID, dispatchID, req)
@@ -33,7 +33,7 @@ func (s *Service) SubmitTrip(ctx context.Context, actor ActorContext, dispatchID
 
 func (s *Service) SubmitOrder(ctx context.Context, actor ActorContext, orderID int64, req SubmitOrderRatingRequest) (*Rating, error) {
 	// Only buyers can rate orders
-	if !hasRole(actor, "BUYER") {
+	if !actor.HasRole("BUYER") {
 		return nil, ErrForbidden
 	}
 	return s.repository.UpsertOrder(ctx, actor.UserID, orderID, req)
@@ -64,17 +64,8 @@ func (s *Service) GetMyTripRating(ctx context.Context, actor ActorContext, dispa
 }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListRatingsRequest) ([]Rating, error) {
-	if !hasRole(actor, "ADMIN") && !hasRole(actor, "SUPER_ADMIN") {
+	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		return nil, ErrForbidden
 	}
 	return s.repository.List(ctx, input)
-}
-
-func hasRole(actor ActorContext, role string) bool {
-	for _, r := range actor.Roles {
-		if strings.EqualFold(r, role) {
-			return true
-		}
-	}
-	return false
 }

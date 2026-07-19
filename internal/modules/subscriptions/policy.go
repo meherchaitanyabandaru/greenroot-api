@@ -14,7 +14,7 @@ func IsTerminal(status string) bool {
 // No database access — struct fields and actor roles are the only inputs.
 func BuildCapabilities(actor ActorContext, sub UserSubscription) SubscriptionCapabilities {
 	status := strings.ToUpper(strings.TrimSpace(sub.Status))
-	isAdmin := hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN")
+	isAdmin := actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
 	isOwner := sub.UserID == actor.UserID
 
 	canRetryPayment := false

@@ -26,7 +26,7 @@ func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, b
 	if !ok {
 		return ActorContext{}, false
 	}
-	return ActorContext{UserID: actor.UserID, Roles: actor.Roles}, true
+	return actor.AsActorContext(), true
 }
 
 // SubmitApp godoc: POST /ratings/app

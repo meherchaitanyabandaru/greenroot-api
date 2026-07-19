@@ -71,9 +71,9 @@ type OrderCapabilities struct {
 // BuildCapabilities computes the capability set for the given actor and order status.
 // No database access — status string and actor roles are the only inputs.
 func BuildCapabilities(actor ActorContext, status string) OrderCapabilities {
-	isOperator := hasRole(actor, "NURSERY_OWNER") || hasRole(actor, "MANAGER")
-	isAdmin := hasRole(actor, "ADMIN") || hasRole(actor, "SUPER_ADMIN")
-	isBuyer := hasRole(actor, "BUYER")
+	isOperator := actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER")
+	isAdmin := actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
+	isBuyer := actor.HasRole("BUYER")
 	isManage := isOperator || isAdmin
 	editable := IsEditable(status)
 

@@ -10,9 +10,10 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/revocation"
 	"github.com/redis/go-redis/v9"
+	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 )
 
-var ErrForbidden = errors.New("forbidden")
+var ErrForbidden    = apperrs.ErrForbidden
 
 type Service struct {
 	repository Repository
@@ -27,14 +28,14 @@ func NewService(r Repository, redisClients ...redis.Cmdable) *Service {
 	return &Service{repository: r, redis: rdb}
 }
 func (s *Service) Dashboard(ctx context.Context, a ActorContext) (Summary, error) {
-	if !hasRole(a, "ADMIN") && !hasRole(a, "SUPER_ADMIN") {
+	if !a.HasRole("ADMIN") && !a.HasRole("SUPER_ADMIN") {
 		return Summary{}, ErrForbidden
 	}
 	return s.repository.Summary(ctx)
 }
 
 func (s *Service) ListUsers(ctx context.Context, a ActorContext, input ListUsersRequest) ([]User, Pagination, error) {
-	if !hasRole(a, "ADMIN") && !hasRole(a, "SUPER_ADMIN") {
+	if !a.HasRole("ADMIN") && !a.HasRole("SUPER_ADMIN") {
 		return nil, Pagination{}, ErrForbidden
 	}
 	users, total, err := s.repository.ListUsers(ctx, input)
@@ -54,7 +55,7 @@ func (s *Service) ListUsers(ctx context.Context, a ActorContext, input ListUsers
 // immediately revoked from the in-process store so their next request is rejected
 // within milliseconds — even if their JWT is still within its 15-minute window.
 func (s *Service) UpdateUserStatus(ctx context.Context, a ActorContext, userID int64, req UpdateUserStatusRequest) error {
-	if !hasRole(a, "ADMIN") && !hasRole(a, "SUPER_ADMIN") {
+	if !a.HasRole("ADMIN") && !a.HasRole("SUPER_ADMIN") {
 		return ErrForbidden
 	}
 	status := strings.ToUpper(strings.TrimSpace(req.Status))
@@ -75,7 +76,7 @@ func (s *Service) UpdateUserStatus(ctx context.Context, a ActorContext, userID i
 }
 
 func (s *Service) UpdateNurseryStatus(ctx context.Context, a ActorContext, nurseryID int64, req UpdateNurseryStatusRequest) error {
-	if !hasRole(a, "ADMIN") && !hasRole(a, "SUPER_ADMIN") {
+	if !a.HasRole("ADMIN") && !a.HasRole("SUPER_ADMIN") {
 		return ErrForbidden
 	}
 	status := strings.ToUpper(strings.TrimSpace(req.Status))
@@ -92,13 +93,4 @@ func (s *Service) UpdateNurseryStatus(ctx context.Context, a ActorContext, nurse
 	}
 	redisutil.InvalidateWorkspaces(ctx, s.redis, slog.Default(), userIDs...)
 	return nil
-}
-
-func hasRole(a ActorContext, role string) bool {
-	for _, r := range a.Roles {
-		if strings.EqualFold(r, role) {
-			return true
-		}
-	}
-	return false
 }
