@@ -341,6 +341,10 @@ func (m *mockRepo) CreateVerificationToken(_ context.Context, quotationID int64,
 	}, nil
 }
 
+func (m *mockRepo) GetPDFContactExtras(_ context.Context, _ *int64, _ *int64) (PDFContactExtras, error) {
+	return PDFContactExtras{}, nil
+}
+
 func (m *mockRepo) RevokeVerificationTokens(_ context.Context, _ int64, _ int64) error {
 	return nil
 }

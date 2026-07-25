@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 // ── mock repository ───────────────────────────────────────────────────────────
@@ -287,7 +288,27 @@ func (m *mockRepo) SetLoadedQuantity(_ context.Context, itemID int64, qty float6
 	return item, nil
 }
 
-func (m *mockRepo) RecalculateTotalFromLoaded(_ context.Context, _ int64) error { return nil }
+// RecalculateTotalFromLoaded mirrors the real SQL in repository.go:
+// SUM(COALESCE(loaded_quantity, quantity) * COALESCE(unit_price, 0)).
+func (m *mockRepo) RecalculateTotalFromLoaded(_ context.Context, orderID int64) error {
+	o, ok := m.orders[orderID]
+	if !ok {
+		return ErrNotFound
+	}
+	var total float64
+	for _, item := range m.items {
+		if item.OrderID != orderID {
+			continue
+		}
+		qty := item.Quantity
+		if item.LoadedQuantity != nil {
+			qty = *item.LoadedQuantity
+		}
+		total += qty * item.UnitPrice
+	}
+	o.TotalAmount = total
+	return nil
+}
 
 func (m *mockRepo) CreateNotification(_ context.Context, userID int64, _, _, _ string) error {
 	m.notifications = append(m.notifications, userID)
@@ -329,6 +350,39 @@ func (m *mockRepo) FindOrCreateBuyerByMobile(_ context.Context, _ string, _ stri
 	return m.nextID, nil
 }
 
+func (m *mockRepo) GetNurseryContactExtras(_ context.Context, _ int64) (PDFNurseryExtras, error) {
+	return PDFNurseryExtras{}, nil
+}
+
+func (m *mockRepo) GetUserName(_ context.Context, _ int64) (string, error) { return "", nil }
+
+func (m *mockRepo) GetActiveVerificationToken(_ context.Context, _ int64) (*OrderVerification, error) {
+	return nil, nil
+}
+
+func (m *mockRepo) GetVerificationByToken(_ context.Context, _ string) (*OrderVerification, error) {
+	return nil, nil
+}
+
+func (m *mockRepo) CreateVerificationToken(_ context.Context, orderID int64, token string) (*OrderVerification, error) {
+	return &OrderVerification{VerificationID: 1, OrderID: orderID, Token: token, Status: "ACTIVE", CreatedAt: time.Now()}, nil
+}
+
+func (m *mockRepo) RevokeVerificationTokens(_ context.Context, _ int64, _ int64) error { return nil }
+
+func (m *mockRepo) CreateDocument(_ context.Context, doc OrderDocument) (*OrderDocument, error) {
+	doc.DocID = 1
+	doc.IsCurrent = true
+	doc.CreatedAt = time.Now()
+	return &doc, nil
+}
+
+func (m *mockRepo) GetCurrentDocument(_ context.Context, _ int64) (*OrderDocument, error) {
+	return nil, nil
+}
+
+func (m *mockRepo) MarkDocumentsNotCurrent(_ context.Context, _ int64) error { return nil }
+
 // ── actor helpers ─────────────────────────────────────────────────────────────
 
 func adminActor(id int64) ActorContext { return ActorContext{UserID: id, Roles: []string{"ADMIN"}} }
@@ -350,7 +404,7 @@ func testDeliverySnapshot() *DeliverySnapshot {
 	return &DeliverySnapshot{AddressLine1: str("Delivery address")}
 }
 
-func svc(repo *mockRepo) *Service { return NewService(repo, nil) }
+func svc(repo *mockRepo) *Service { return NewService(repo, nil, nil) }
 
 // ── Create ────────────────────────────────────────────────────────────────────
 
@@ -532,8 +586,8 @@ func TestUpdateStatus_PendingToConfirmedRequiresDeliveryAddress(t *testing.T) {
 	nid := int64(1)
 	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
 	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "CONFIRMED"})
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("PENDING→CONFIRMED without delivery: want ErrInvalidInput, got %v", err)
+	if !errors.Is(err, ErrMissingDeliveryAddress) {
+		t.Fatalf("PENDING→CONFIRMED without delivery: want ErrMissingDeliveryAddress, got %v", err)
 	}
 }
 
@@ -713,6 +767,28 @@ func TestCompleteLoading_ShortBecomesPartiallyFulfilled(t *testing.T) {
 	}
 	if o.Status != "PARTIALLY_FULFILLED" {
 		t.Errorf("status: want PARTIALLY_FULFILLED, got %s", o.Status)
+	}
+}
+
+// Regression test: CompleteLoading must return the *recalculated* total_amount for a
+// partially-fulfilled order, not the pre-recalculation snapshot fetched before
+// RecalculateTotalFromLoaded ran (see service.go CompleteLoading).
+func TestCompleteLoading_PartialReturnsRecalculatedTotal(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, 100)
+	nid := int64(1)
+	repo.seedOrder(Order{ID: 10, Status: "LOADING", NurseryID: &nid, TotalAmount: 500})
+	partial := float64(7) // ordered 10 @ 50/unit, loaded only 7 -> should recalc to 350
+	repo.seedItem(OrderItem{ID: 1, OrderID: 10, Quantity: 10, UnitPrice: 50, LoadedQuantity: &partial})
+	o, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10)
+	if err != nil {
+		t.Fatalf("CompleteLoading partial: %v", err)
+	}
+	if o.Status != "PARTIALLY_FULFILLED" {
+		t.Fatalf("status: want PARTIALLY_FULFILLED, got %s", o.Status)
+	}
+	if o.TotalAmount != 350 {
+		t.Errorf("total_amount: want 350 (recalculated from loaded_quantity), got %v — response is stale", o.TotalAmount)
 	}
 }
 

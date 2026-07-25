@@ -2,38 +2,48 @@ package orders
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
 )
 
 var (
-	ErrForbidden     = apperrs.ErrForbidden
-	ErrInvalidInput  = apperrs.ErrInvalidInput
-	ErrInvalidStatus = errors.New("invalid status transition")
+	ErrForbidden              = apperrs.ErrForbidden
+	ErrInvalidInput           = apperrs.ErrInvalidInput
+	ErrInvalidStatus          = errors.New("invalid status transition")
+	ErrMissingDeliveryAddress = errors.New("missing delivery address")
+	ErrRateLimited            = errors.New("too many requests")
+	ErrDocumentNotFound       = errors.New("no verification token found for this order")
 )
 
 type Service struct {
 	repository Repository
 	auditSvc   *auditlog.Service
+	storage    *storage.Client
 	redis      redis.Cmdable
 }
 
-func NewService(repository Repository, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
+func NewService(repository Repository, auditSvc *auditlog.Service, storageCli *storage.Client, redisClients ...redis.Cmdable) *Service {
 	var rdb redis.Cmdable
 	if len(redisClients) > 0 {
 		rdb = redisClients[0]
 	}
-	return &Service{repository: repository, auditSvc: auditSvc, redis: rdb}
+	return &Service{repository: repository, auditSvc: auditSvc, storage: storageCli, redis: rdb}
 }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListOrdersRequest) ([]Order, Pagination, error) {
@@ -59,6 +69,331 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, orderID int64) (O
 	}
 	s.enrichOrder(ctx, actor, order)
 	return *order, nil
+}
+
+// RenderPDF generates the order receipt PDF on the fly (no storage persistence).
+// Content is gated by role: notes and internal handler identity are hidden from
+// buyers (see visibilityFor in pdf.go) — everything else is shown in full to any
+// role that can view the order, since managers/owners operationally need full
+// delivery details to fulfil it.
+// RenderPDF generates the order receipt PDF on the fly. Content is gated by role
+// (see visibilityFor) — but the QR verification link and the S3-archived "official"
+// copy always reflect the full, canonical document regardless of who triggered the
+// render, so history doesn't churn a new version every time a different role
+// downloads the same order.
+func (s *Service) RenderPDF(ctx context.Context, actor ActorContext, orderID int64) ([]byte, string, error) {
+	o, err := s.Get(ctx, actor, orderID)
+	if err != nil {
+		return nil, "", err
+	}
+	var nursery PDFNurseryExtras
+	nurseryID := o.NurseryID
+	if nurseryID == nil {
+		nurseryID = o.SellerNurseryID
+	}
+	if nurseryID != nil {
+		if extras, extrasErr := s.repository.GetNurseryContactExtras(ctx, *nurseryID); extrasErr == nil {
+			nursery = extras
+		}
+	}
+
+	// Best-effort: a token failure should never block a PDF download.
+	verifyURL := s.ensureVerifyURL(ctx, orderID)
+
+	pdfBytes := buildOrderPDF(o, nursery, visibilityFor(actor), verifyURL)
+
+	// Best-effort: persist the canonical (full-visibility) copy as the official
+	// historical record, deduped by content hash, if storage is configured.
+	s.persistDocumentIfChanged(ctx, actor, o, nursery, verifyURL, nurseryID)
+
+	s.audit(ctx, actor, auditlog.EntityOrder, orderID, auditlog.ActionDownload,
+		fmt.Sprintf("Order #%d PDF generated", orderID), nil, nil)
+	return pdfBytes, o.OrderCode + ".pdf", nil
+}
+
+func (s *Service) persistDocumentIfChanged(ctx context.Context, actor ActorContext, o Order, nursery PDFNurseryExtras, verifyURL string, nurseryID *int64) {
+	if s.storage == nil {
+		return
+	}
+	canonicalVis := orderPDFVisibility{showInternalNotes: true, showAssignedHandler: true}
+	canonical := buildOrderPDF(o, nursery, canonicalVis, verifyURL)
+	hash := sha256.Sum256(canonical)
+	hashHex := hex.EncodeToString(hash[:])
+
+	current, err := s.repository.GetCurrentDocument(ctx, o.ID)
+	if err != nil {
+		return
+	}
+	if current != nil && current.SHA256Hash == hashHex {
+		return // unchanged since last render — skip the duplicate upload
+	}
+
+	version := 1
+	if current != nil {
+		version = current.Version + 1
+		if err := s.repository.MarkDocumentsNotCurrent(ctx, o.ID); err != nil {
+			return
+		}
+	}
+
+	nID := int64(0)
+	if nurseryID != nil {
+		nID = *nurseryID
+	}
+	objectKey := fmt.Sprintf("orders/%d/%d/order-v%d.pdf", nID, o.ID, version)
+	if _, err := s.storage.PutObject(ctx, storage.BucketOrderPDFs, objectKey, "application/pdf", canonical); err != nil {
+		return
+	}
+
+	generatedByName, _ := s.repository.GetUserName(ctx, actor.UserID)
+	doc := OrderDocument{
+		OrderID:         o.ID,
+		Version:         version,
+		ObjectKey:       objectKey,
+		SHA256Hash:      hashHex,
+		MimeType:        "application/pdf",
+		FileSize:        int64(len(canonical)),
+		GeneratedBy:     &actor.UserID,
+		GeneratedByName: &generatedByName,
+		IsCurrent:       true,
+	}
+	if _, err := s.repository.CreateDocument(ctx, doc); err != nil {
+		return
+	}
+	s.audit(ctx, actor, auditlog.EntityOrder, o.ID, auditlog.ActionUpload,
+		fmt.Sprintf("Order #%d PDF archived as version %d", o.ID, version), nil, map[string]any{
+			"version": version, "sha256_hash": hashHex,
+		})
+}
+
+// ensureVerifyURL returns the URL for the order's active verification token,
+// auto-provisioning one if none exists yet. Best-effort — errors return "" so a
+// verification failure never blocks a PDF render.
+func (s *Service) ensureVerifyURL(ctx context.Context, orderID int64) string {
+	existing, err := s.repository.GetActiveVerificationToken(ctx, orderID)
+	if err == nil && existing != nil {
+		return s.verifyURL(existing.Token)
+	}
+	token, err := generateOrderToken()
+	if err != nil {
+		return ""
+	}
+	created, err := s.repository.CreateVerificationToken(ctx, orderID, token)
+	if err != nil {
+		return ""
+	}
+	return s.verifyURL(created.Token)
+}
+
+// ── Verification token endpoints ─────────────────────────────────────────────
+
+// GetOrCreateVerifyToken returns the existing ACTIVE token for an order, creating
+// one if the actor can manage the order. Buyers/admins may only read an existing
+// token — they receive ErrDocumentNotFound if none exists yet.
+func (s *Service) GetOrCreateVerifyToken(ctx context.Context, actor ActorContext, orderID int64) (VerifyTokenResponse, error) {
+	o, err := s.repository.FindByID(ctx, orderID)
+	if err != nil {
+		return VerifyTokenResponse{}, err
+	}
+	canCreate := s.canManage(ctx, actor, *o) == nil
+	if !canCreate {
+		if err := s.canView(ctx, actor, *o); err != nil {
+			return VerifyTokenResponse{}, ErrForbidden
+		}
+	}
+
+	existing, err := s.repository.GetActiveVerificationToken(ctx, orderID)
+	if err != nil {
+		return VerifyTokenResponse{}, err
+	}
+	if existing != nil {
+		return VerifyTokenResponse{Token: existing.Token, VerifyURL: s.verifyURL(existing.Token), CreatedAt: existing.CreatedAt}, nil
+	}
+	if !canCreate {
+		return VerifyTokenResponse{}, ErrDocumentNotFound
+	}
+
+	token, err := generateOrderToken()
+	if err != nil {
+		return VerifyTokenResponse{}, fmt.Errorf("generate token: %w", err)
+	}
+	created, err := s.repository.CreateVerificationToken(ctx, orderID, token)
+	if err != nil {
+		return VerifyTokenResponse{}, fmt.Errorf("store token: %w", err)
+	}
+	s.audit(ctx, actor, auditlog.EntityOrder, orderID, auditlog.ActionCreate,
+		fmt.Sprintf("Order #%d verify token created", orderID), nil, map[string]any{"token_prefix": token[:8]})
+	return VerifyTokenResponse{Token: created.Token, VerifyURL: s.verifyURL(created.Token), CreatedAt: created.CreatedAt}, nil
+}
+
+// RevokeAndRegenerateToken revokes the current active token and issues a new one.
+// Only the nursery owner (or admin) may call this.
+func (s *Service) RevokeAndRegenerateToken(ctx context.Context, actor ActorContext, orderID int64) (VerifyTokenResponse, error) {
+	o, err := s.repository.FindByID(ctx, orderID)
+	if err != nil {
+		return VerifyTokenResponse{}, err
+	}
+	isAdmin := actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
+	if !isAdmin {
+		nurseryID := o.NurseryID
+		if nurseryID == nil {
+			nurseryID = o.SellerNurseryID
+		}
+		if nurseryID == nil {
+			return VerifyTokenResponse{}, ErrForbidden
+		}
+		owner, err := s.repository.IsNurseryOwner(ctx, *nurseryID, actor.UserID)
+		if err != nil || !owner {
+			return VerifyTokenResponse{}, ErrForbidden
+		}
+	}
+
+	if err := s.repository.RevokeVerificationTokens(ctx, orderID, actor.UserID); err != nil {
+		return VerifyTokenResponse{}, fmt.Errorf("revoke token: %w", err)
+	}
+	token, err := generateOrderToken()
+	if err != nil {
+		return VerifyTokenResponse{}, fmt.Errorf("generate token: %w", err)
+	}
+	created, err := s.repository.CreateVerificationToken(ctx, orderID, token)
+	if err != nil {
+		return VerifyTokenResponse{}, fmt.Errorf("store token: %w", err)
+	}
+	s.audit(ctx, actor, auditlog.EntityOrder, orderID, auditlog.ActionUpdate,
+		fmt.Sprintf("Order #%d verify token revoked and regenerated", orderID), nil, map[string]any{"token_prefix": token[:8]})
+	return VerifyTokenResponse{Token: created.Token, VerifyURL: s.verifyURL(created.Token), CreatedAt: created.CreatedAt}, nil
+}
+
+// publicVerifyOrderLimiter: 30 requests per IP per 10 minutes.
+var publicVerifyOrderLimiter = newOrderIPRateLimiter(10*time.Minute, 30)
+
+// PublicVerify is the unauthenticated endpoint for QR code scans. Returns only
+// safe public fields — never reveals nursery name, buyer details, prices, or hash.
+func (s *Service) PublicVerify(ctx context.Context, token string, remoteIP string) (PublicVerifyResponse, error) {
+	if !publicVerifyOrderLimiter.Allow(remoteIP) {
+		return PublicVerifyResponse{}, ErrRateLimited
+	}
+
+	v, err := s.repository.GetVerificationByToken(ctx, token)
+	if err != nil {
+		return PublicVerifyResponse{}, err
+	}
+
+	now := time.Now()
+	if s.auditSvc != nil {
+		s.auditSvc.Log(ctx, auditlog.Entry{
+			Module:     auditlog.ModuleOrders,
+			EntityType: auditlog.EntityOrder,
+			Action:     "QR_SCAN",
+			IPAddress:  remoteIP,
+			NewValue:   map[string]any{"token_prefix": token[:min(8, len(token))], "found": v != nil},
+		})
+	}
+
+	if v == nil || v.Status == "REVOKED" {
+		return PublicVerifyResponse{Authenticity: "INVALID", OrderStatus: "UNKNOWN", DocumentIntegrity: "UNVERIFIED", VerifiedAt: now}, nil
+	}
+
+	o, err := s.repository.FindByID(ctx, v.OrderID)
+	if err != nil {
+		return PublicVerifyResponse{}, err
+	}
+
+	doc, _ := s.repository.GetCurrentDocument(ctx, v.OrderID)
+	documentIntegrity := "UNVERIFIED"
+	if doc != nil {
+		documentIntegrity = "UNMODIFIED"
+	}
+
+	return PublicVerifyResponse{
+		OrderCode:         o.OrderCode,
+		Authenticity:      "VERIFIED",
+		OrderStatus:       o.Status,
+		DocumentIntegrity: documentIntegrity,
+		IssuedAt:          o.CreatedAt,
+		VerifiedAt:        now,
+	}, nil
+}
+
+// webBaseURL is the public web app origin used to build scannable verification links.
+var orderWebBaseURL = envOr("WEB_BASE_URL", "https://greenroot.app")
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// Path is /verify-order/<token> — distinct from quotations' /verify/<token> so the
+// two public routes never collide; the mobile QR classifier recognizes both.
+func (s *Service) verifyURL(token string) string {
+	return strings.TrimRight(orderWebBaseURL, "/") + "/verify-order/" + token
+}
+
+func generateOrderToken() (string, error) {
+	b := make([]byte, 32) // 256-bit entropy
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+type orderIPRateLimiter struct {
+	mu     sync.Mutex
+	hits   map[string][]time.Time
+	window time.Duration
+	max    int
+}
+
+func newOrderIPRateLimiter(window time.Duration, max int) *orderIPRateLimiter {
+	rl := &orderIPRateLimiter{hits: make(map[string][]time.Time), window: window, max: max}
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		for range ticker.C {
+			rl.cleanup()
+		}
+	}()
+	return rl
+}
+
+func (rl *orderIPRateLimiter) Allow(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	cutoff := now.Add(-rl.window)
+	hits := rl.hits[ip]
+	valid := hits[:0]
+	for _, h := range hits {
+		if h.After(cutoff) {
+			valid = append(valid, h)
+		}
+	}
+	if len(valid) >= rl.max {
+		rl.hits[ip] = valid
+		return false
+	}
+	rl.hits[ip] = append(valid, now)
+	return true
+}
+
+func (rl *orderIPRateLimiter) cleanup() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	cutoff := time.Now().Add(-rl.window)
+	for k, hits := range rl.hits {
+		valid := hits[:0]
+		for _, h := range hits {
+			if h.After(cutoff) {
+				valid = append(valid, h)
+			}
+		}
+		if len(valid) == 0 {
+			delete(rl.hits, k)
+		} else {
+			rl.hits[k] = valid
+		}
+	}
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateOrderRequest) (Order, error) {
@@ -115,7 +450,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID 
 		return Order{}, ErrInvalidStatus
 	}
 	if status == "CONFIRMED" && !hasUsableDeliverySnapshot(current.DeliverySnapshot) {
-		return Order{}, ErrInvalidInput
+		return Order{}, ErrMissingDeliveryAddress
 	}
 	if status == "COMPLETED" {
 		hasUndeliveredDispatch, err := s.repository.OrderHasUndeliveredDispatch(ctx, orderID)
@@ -199,7 +534,7 @@ func (s *Service) StartLoading(ctx context.Context, actor ActorContext, orderID 
 		return Order{}, err
 	}
 	if !hasUsableDeliverySnapshot(order.DeliverySnapshot) {
-		return Order{}, ErrInvalidInput
+		return Order{}, ErrMissingDeliveryAddress
 	}
 	updated, err := s.repository.UpdateStatusWithLoading(ctx, actor.UserID, orderID, "LOADING", "start")
 	if err != nil {
@@ -244,6 +579,11 @@ func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, order
 		return Order{}, err
 	}
 	_ = s.repository.RecalculateTotalFromLoaded(ctx, orderID)
+	// Re-fetch: RecalculateTotalFromLoaded can change total_amount (partial fulfillment),
+	// and `updated` above was read before that recalculation ran.
+	if refetched, err := s.repository.FindByID(ctx, orderID); err == nil {
+		updated = refetched
+	}
 	if finalStatus == "PARTIALLY_FULFILLED" && order.BuyerUserID != nil {
 		msg := fmt.Sprintf("Order %s was loaded with reduced quantities. Please review your updated order.", updated.OrderCode)
 		_ = s.repository.CreateNotification(ctx, *order.BuyerUserID, "ORDER_PARTIAL", "Partial Delivery Notice", msg)
@@ -717,7 +1057,7 @@ func withLifecycle(actor ActorContext, order Order) Order {
 		lc = lifecycle.OrderWithDispatch(order.Status, *order.ActiveDispatchStatus)
 	}
 	order.Lifecycle = &lc
-	caps := BuildCapabilities(actor, order.Status)
+	caps := BuildCapabilities(actor, order)
 	order.Capabilities = &caps
 	return order
 }

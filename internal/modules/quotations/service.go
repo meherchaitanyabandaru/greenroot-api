@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -168,7 +169,13 @@ func (s *Service) RenderPDF(ctx context.Context, actor ActorContext, id int64) (
 	if v, verErr := s.repository.GetActiveVerificationToken(ctx, id); verErr == nil && v != nil {
 		verifyURL = s.verifyURL(v.Token)
 	}
-	pdfBytes := buildQuotationPDF(q, verifyURL)
+	// q is already privacy-masked by s.Get() above, so a nil CustomerUserID here correctly
+	// withholds recipient contact details from manager-only actors.
+	extras, extrasErr := s.repository.GetPDFContactExtras(ctx, q.NurseryID, q.CustomerUserID)
+	if extrasErr != nil {
+		extras = PDFContactExtras{}
+	}
+	pdfBytes := buildQuotationPDF(q, verifyURL, extras)
 	s.audit(ctx, actor, auditlog.EntityQuotation, id, auditlog.ActionDownload, map[string]any{
 		"masked":    isManagerOnly(actor),
 		"generated": true,
@@ -1065,8 +1072,21 @@ func (s *Service) GetByToken(ctx context.Context, actor ActorContext, token stri
 	return enrichQuotation(actor, *q), nil
 }
 
+// webBaseURL is the public web app origin used to build scannable verification links.
+// Overridable via WEB_BASE_URL for non-production environments.
+var webBaseURL = envOr("WEB_BASE_URL", "https://greenroot.app")
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// Path must be /verify/<token> — the mobile app's QR classifier only recognizes
+// a bare 64-hex token or a URL containing this exact segment (see classifier.dart).
 func (s *Service) verifyURL(token string) string {
-	return token
+	return strings.TrimRight(webBaseURL, "/") + "/verify/" + token
 }
 
 func generateToken() (string, error) {

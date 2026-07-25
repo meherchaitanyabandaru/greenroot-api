@@ -68,24 +68,30 @@ type OrderCapabilities struct {
 	CanAddItems        bool `json:"can_add_items"`
 }
 
-// BuildCapabilities computes the capability set for the given actor and order status.
-// No database access — status string and actor roles are the only inputs.
-func BuildCapabilities(actor ActorContext, status string) OrderCapabilities {
+// BuildCapabilities computes the capability set for the given actor and order.
+// No database access — the order's already-loaded fields (status, buyer, delivery
+// snapshot) and actor roles are the only inputs.
+func BuildCapabilities(actor ActorContext, order Order) OrderCapabilities {
+	status := order.Status
 	isOperator := actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER")
 	isAdmin := actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
-	isBuyer := actor.HasRole("BUYER")
 	isManage := isOperator || isAdmin
 	editable := IsEditable(status)
+	hasDeliveryAddress := hasUsableDeliverySnapshot(order.DeliverySnapshot)
 
-	// Buyers may cancel their own PENDING order; service enforces ownership.
-	buyerCanCancel := isBuyer && status == "PENDING"
+	// Buyers may cancel their own PENDING order. Checked by order ownership
+	// (buyer_user_id match), not a "BUYER" role tag — accounts can legitimately
+	// own an order without that literal role tag (e.g. older/seeded data), and
+	// Cancel()'s actual enforcement already checks ownership, not the role.
+	isOwnOrderBuyer := order.BuyerUserID != nil && *order.BuyerUserID == actor.UserID
+	buyerCanCancel := isOwnOrderBuyer && status == "PENDING"
 
 	return OrderCapabilities{
 		CanEdit:            isManage && editable,
-		CanConfirm:         isManage && (status == "PENDING" || status == "DRAFT"),
+		CanConfirm:         isManage && (status == "PENDING" || status == "DRAFT") && hasDeliveryAddress,
 		CanCancel:          (isManage && CanCancel(status)) || buyerCanCancel,
 		CanDelete:          isManage && status == "PENDING",
-		CanStartLoading:    isManage && (status == "CONFIRMED" || status == "DRAFT"),
+		CanStartLoading:    isManage && (status == "CONFIRMED" || status == "DRAFT") && hasDeliveryAddress,
 		CanCompleteLoading: isManage && status == "LOADING",
 		CanAddItems:        isManage && editable,
 	}

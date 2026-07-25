@@ -43,6 +43,18 @@ type Repository interface {
 	GetUserNurseryIDs(ctx context.Context, userID int64) ([]int64, error)
 	GetOwnedNurseryID(ctx context.Context, userID int64) (*int64, error)
 	FindOrCreateBuyerByMobile(ctx context.Context, mobile string, name string) (int64, error)
+	// PDF rendering
+	GetNurseryContactExtras(ctx context.Context, nurseryID int64) (PDFNurseryExtras, error)
+	GetUserName(ctx context.Context, userID int64) (string, error)
+	// Verification token methods
+	GetActiveVerificationToken(ctx context.Context, orderID int64) (*OrderVerification, error)
+	GetVerificationByToken(ctx context.Context, token string) (*OrderVerification, error)
+	CreateVerificationToken(ctx context.Context, orderID int64, token string) (*OrderVerification, error)
+	RevokeVerificationTokens(ctx context.Context, orderID int64, revokedByUserID int64) error
+	// Document (S3/MinIO storage) methods
+	CreateDocument(ctx context.Context, doc OrderDocument) (*OrderDocument, error)
+	GetCurrentDocument(ctx context.Context, orderID int64) (*OrderDocument, error)
+	MarkDocumentsNotCurrent(ctx context.Context, orderID int64) error
 }
 
 type PostgresRepository struct {
@@ -1128,4 +1140,183 @@ func statusOrPending(value string) string {
 		return "PENDING"
 	}
 	return status
+}
+
+// GetNurseryContactExtras loads nursery email/phone/address for the order PDF header.
+func (r *PostgresRepository) GetNurseryContactExtras(ctx context.Context, nurseryID int64) (PDFNurseryExtras, error) {
+	var extras PDFNurseryExtras
+	var email, phone, line1, city, state, postal sql.NullString
+	err := r.db.QueryRowContext(ctx, `
+		SELECT n.email, n.mobile, na.address_line1, na.city, na.state, na.postal_code
+		FROM public.nurseries n
+		LEFT JOIN public.nursery_addresses na ON na.nursery_id = n.nursery_id AND na.is_primary = true
+		WHERE n.nursery_id = $1
+	`, nurseryID).Scan(&email, &phone, &line1, &city, &state, &postal)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return extras, err
+	}
+	extras.Email = email.String
+	extras.Phone = phone.String
+	extras.Address = joinAddressParts(line1.String, city.String, state.String, postal.String)
+	return extras, nil
+}
+
+func (r *PostgresRepository) GetUserName(ctx context.Context, userID int64) (string, error) {
+	var name string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COALESCE(first_name, mobile) FROM public.users WHERE user_id = $1`,
+		userID,
+	).Scan(&name)
+	return name, err
+}
+
+// ── Verification token methods ────────────────────────────────────────────────
+
+func (r *PostgresRepository) GetActiveVerificationToken(ctx context.Context, orderID int64) (*OrderVerification, error) {
+	const q = `
+		SELECT verification_id, order_id, token, status, created_at, revoked_at, revoked_by
+		FROM public.order_verifications
+		WHERE order_id = $1 AND status = 'ACTIVE'
+	`
+	return scanOrderVerification(r.db.QueryRowContext(ctx, q, orderID))
+}
+
+func (r *PostgresRepository) GetVerificationByToken(ctx context.Context, token string) (*OrderVerification, error) {
+	const q = `
+		SELECT verification_id, order_id, token, status, created_at, revoked_at, revoked_by
+		FROM public.order_verifications
+		WHERE token = $1
+	`
+	return scanOrderVerification(r.db.QueryRowContext(ctx, q, token))
+}
+
+func (r *PostgresRepository) CreateVerificationToken(ctx context.Context, orderID int64, token string) (*OrderVerification, error) {
+	const q = `
+		INSERT INTO public.order_verifications (order_id, token, status)
+		VALUES ($1, $2, 'ACTIVE')
+		RETURNING verification_id, order_id, token, status, created_at, revoked_at, revoked_by
+	`
+	return scanOrderVerification(r.db.QueryRowContext(ctx, q, orderID, token))
+}
+
+func (r *PostgresRepository) RevokeVerificationTokens(ctx context.Context, orderID int64, revokedByUserID int64) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE public.order_verifications
+		SET status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP, revoked_by = $2
+		WHERE order_id = $1 AND status = 'ACTIVE'
+	`, orderID, revokedByUserID)
+	return err
+}
+
+func scanOrderVerification(row interface{ Scan(dest ...any) error }) (*OrderVerification, error) {
+	var v OrderVerification
+	var revokedAt sql.NullTime
+	var revokedBy sql.NullInt64
+	err := row.Scan(&v.VerificationID, &v.OrderID, &v.Token, &v.Status, &v.CreatedAt, &revokedAt, &revokedBy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if revokedAt.Valid {
+		v.RevokedAt = &revokedAt.Time
+	}
+	if revokedBy.Valid {
+		v.RevokedBy = &revokedBy.Int64
+	}
+	return &v, nil
+}
+
+// ── Document (S3/MinIO storage) methods ─────────────────────────────────────────
+
+func (r *PostgresRepository) CreateDocument(ctx context.Context, doc OrderDocument) (*OrderDocument, error) {
+	const q = `
+		INSERT INTO public.order_documents
+			(order_id, version, object_key, sha256_hash, mime_type, file_size, generated_by, generated_by_name, is_current)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)
+		RETURNING doc_id, order_id, version, object_key, sha256_hash, mime_type, file_size,
+		          generated_by, generated_by_name, is_current, created_at
+	`
+	var d OrderDocument
+	var generatedBy sql.NullInt64
+	var generatedByName sql.NullString
+	if doc.GeneratedBy != nil {
+		generatedBy = sql.NullInt64{Int64: *doc.GeneratedBy, Valid: true}
+	}
+	if doc.GeneratedByName != nil {
+		generatedByName = sql.NullString{String: *doc.GeneratedByName, Valid: true}
+	}
+	err := r.db.QueryRowContext(ctx, q,
+		doc.OrderID, doc.Version, doc.ObjectKey, doc.SHA256Hash,
+		doc.MimeType, doc.FileSize, generatedBy, generatedByName,
+	).Scan(
+		&d.DocID, &d.OrderID, &d.Version, &d.ObjectKey, &d.SHA256Hash,
+		&d.MimeType, &d.FileSize, &generatedBy, &generatedByName, &d.IsCurrent, &d.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if generatedBy.Valid {
+		d.GeneratedBy = &generatedBy.Int64
+	}
+	if generatedByName.Valid {
+		d.GeneratedByName = &generatedByName.String
+	}
+	return &d, nil
+}
+
+func (r *PostgresRepository) GetCurrentDocument(ctx context.Context, orderID int64) (*OrderDocument, error) {
+	const q = `
+		SELECT doc_id, order_id, version, object_key, sha256_hash, mime_type, file_size,
+		       generated_by, generated_by_name, is_current, created_at
+		FROM public.order_documents
+		WHERE order_id = $1 AND is_current = TRUE
+	`
+	var d OrderDocument
+	var generatedBy sql.NullInt64
+	var generatedByName sql.NullString
+	err := r.db.QueryRowContext(ctx, q, orderID).Scan(
+		&d.DocID, &d.OrderID, &d.Version, &d.ObjectKey, &d.SHA256Hash,
+		&d.MimeType, &d.FileSize, &generatedBy, &generatedByName, &d.IsCurrent, &d.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if generatedBy.Valid {
+		d.GeneratedBy = &generatedBy.Int64
+	}
+	if generatedByName.Valid {
+		d.GeneratedByName = &generatedByName.String
+	}
+	return &d, nil
+}
+
+func (r *PostgresRepository) MarkDocumentsNotCurrent(ctx context.Context, orderID int64) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE public.order_documents SET is_current = FALSE WHERE order_id = $1 AND is_current = TRUE`,
+		orderID,
+	)
+	return err
+}
+
+func joinAddressParts(line1, city, state, postal string) string {
+	parts := make([]string, 0, 3)
+	for _, p := range []string{line1, city, state} {
+		if strings.TrimSpace(p) != "" {
+			parts = append(parts, strings.TrimSpace(p))
+		}
+	}
+	addr := strings.Join(parts, ", ")
+	if strings.TrimSpace(postal) != "" {
+		if addr != "" {
+			addr += " " + strings.TrimSpace(postal)
+		} else {
+			addr = strings.TrimSpace(postal)
+		}
+	}
+	return addr
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,49 +16,304 @@ type pdfCanvas struct {
 	bytes.Buffer
 }
 
-func buildQuotationPDF(q Quotation, verifyURL string) []byte {
-	brand := parseBrandColor(q.NurseryBrandColor)
-	var c pdfCanvas
+// ── Page geometry ────────────────────────────────────────────────────────────
+// All Y coordinates are PDF-native (origin bottom-left, increasing upward) on an
+// A4 page (595 x 842 pt). "tableY" parameters follow the convention used by
+// itemsTableChunk: they are the BOTTOM edge of the green header bar; rows are
+// drawn below that.
 
-	// ── Header ───────────────────────────────────────────────────────────────
+const (
+	partyBoxTop       = 674.0 // fixed top edge of the FROM/TO boxes (page 1 only) -- just below the header divider
+	p1InternalTableY  = 566.0 // item table Y for INTERNAL-type quotations (banner instead of party boxes)
+	contTableY        = 630.0 // item table Y on continuation pages
+	contLabelY        = 670.0 // "ITEMS - CONTINUED" baseline on continuation pages
+	summaryOnlyTableY = 630.0 - itemHdrH // where a dedicated summary-only page starts its content
+	itemRowH          = 40.0
+	itemHdrH          = 33.0 // 30pt header bar + 3pt gap before first row
+	itemsBottomStop   = 105.0
+	pageBottomMargin  = 90.0
+	verificationBoxH  = 134.0
+)
+
+func buildQuotationPDF(q Quotation, verifyURL string, extras PDFContactExtras) []byte {
+	brand := parseBrandColor(q.NurseryBrandColor)
+	hasDesc := false
+	for _, item := range q.Items {
+		if item.Description != nil && strings.TrimSpace(*item.Description) != "" {
+			hasDesc = true
+			break
+		}
+	}
+
+	chunks := planPages(q, extras, brand, verifyURL)
+	totalPages := len(chunks)
+
+	pageContents := make([]string, 0, totalPages)
+	for i, chunk := range chunks {
+		var c pdfCanvas
+		drawPageHeader(&c, q, brand, i+1, totalPages)
+
+		var tableBottom float64
+		switch {
+		case chunk.isFirst:
+			tableBottom = drawFirstPageBody(&c, q, extras, brand, hasDesc, chunk.items)
+		case len(chunk.items) > 0:
+			c.text(50, contLabelY, 11, true, brand, "ITEMS - CONTINUED")
+			tableBottom = c.itemsTableChunk(chunk.items, chunk.startIndex, contTableY, brand, hasDesc)
+		default:
+			tableBottom = summaryOnlyTableY
+		}
+
+		if chunk.hasSummary {
+			drawSummaryChain(&c, tableBottom, q, brand, verifyURL)
+		}
+
+		drawFooter(&c, i+1, totalPages)
+		pageContents = append(pageContents, c.String())
+	}
+
+	return wrapMultiPagePDF(pageContents)
+}
+
+// ── Pagination planning ──────────────────────────────────────────────────────
+
+type pageChunk struct {
+	items      []QuotationItem
+	startIndex int // 1-based item number of the first item in this chunk
+	isFirst    bool
+	hasSummary bool
+}
+
+// planPages partitions items across pages using the exact same Y-coordinate math
+// the render pass uses, then decides whether the totals/verification/terms block
+// fits on the last items page or needs a dedicated trailing page.
+func planPages(q Quotation, extras PDFContactExtras, brand pdfColor, verifyURL string) []pageChunk {
+	items := q.Items
+	startY := firstPageTableY(q, extras)
+
+	var chunks []pageChunk
+	idx := 0
+	first := true
+	for {
+		tableY := contTableY
+		if first {
+			tableY = startY
+		}
+		rowY := tableY - itemHdrH
+		startIdx := idx
+		for idx < len(items) && rowY >= itemsBottomStop {
+			rowY -= itemRowH
+			idx++
+		}
+		chunks = append(chunks, pageChunk{items: items[startIdx:idx], startIndex: startIdx + 1, isFirst: first})
+		first = false
+		if idx >= len(items) || len(chunks) > 500 {
+			break
+		}
+	}
+
+	last := &chunks[len(chunks)-1]
+	lastTableY := contTableY
+	if last.isFirst {
+		lastTableY = startY
+	}
+	lastTableBottom := lastTableY - itemHdrH - float64(len(last.items))*itemRowH
+
+	required := summaryBlockHeight(q, brand, verifyURL)
+	if lastTableBottom-required < pageBottomMargin {
+		chunks = append(chunks, pageChunk{isFirst: false, hasSummary: true})
+	} else {
+		last.hasSummary = true
+	}
+	return chunks
+}
+
+// firstPageTableY returns the item-table Y for page 1, which depends on how many
+// contact lines the FROM/TO boxes need (email/address grow the box downward).
+func firstPageTableY(q Quotation, extras PDFContactExtras) float64 {
+	if strings.EqualFold(q.QuotationType, "INTERNAL") {
+		return p1InternalTableY
+	}
+	fromLines, toLines := partyLinesFor(q, extras)
+	maxLines := len(fromLines)
+	if len(toLines) > maxLines {
+		maxLines = len(toLines)
+	}
+	return partyBoxTop - partyBoxHeight(maxLines) - 50
+}
+
+func partyLinesFor(q Quotation, extras PDFContactExtras) (fromLines, toLines []string) {
+	fromLines = buildLines(textOr(q.NurseryPhone, ""), extras.NurseryEmail, extras.NurseryAddress, "Prepared by "+textOr(q.CreatedByName, "-"))
+	if q.RecipientName != nil {
+		toLines = buildLines(textOr(q.RecipientMobile, ""), extras.RecipientEmail, extras.RecipientAddress)
+	}
+	return
+}
+
+func buildLines(vals ...string) []string {
+	out := make([]string, 0, len(vals))
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func partyBoxHeight(lineCount int) float64 {
+	return 46 + float64(lineCount)*14 + 10
+}
+
+// summaryBlockHeight measures the totals/notes/disclaimer/verification/terms block by
+// rendering it into a throwaway canvas — this guarantees the measurement can never
+// drift from what actually gets drawn.
+func summaryBlockHeight(q Quotation, brand pdfColor, verifyURL string) float64 {
+	var scratch pdfCanvas
+	const anchor = 1000.0
+	bottom := drawSummaryChain(&scratch, anchor, q, brand, verifyURL)
+	return anchor - bottom
+}
+
+// ── Header (repeated on every page) ──────────────────────────────────────────
+
+const (
+	metaLabelX = 395.0
+	metaValueX = 465.0
+)
+
+func drawPageHeader(c *pdfCanvas, q Quotation, brand pdfColor, pageNum, totalPages int) {
 	c.rectFill(38, 680, 6, 128, brand) // left brand accent stripe
 	c.rectFill(50, 805, 495, 3, brand) // top accent line
 	c.text(50, 760, 22, true, pdfDark, textOr(q.NurseryName, "GreenRoot Quotation"))
 	c.text(50, 741, 10, false, pdfMuted, textOr(q.NurseryPhone, ""))
-	// Right column (quotation identity)
-	c.text(395, 775, 9, true, pdfMuted, "QUOTATION")
-	c.text(372, 748, 18, true, pdfDark, q.QuotationCode)
-	c.meta(414, 725, "Date", formatPDFDateTime(q.CreatedAt))
-	c.meta(384, 707, "Valid Until", validUntilText(q))
+
+	c.textRightAligned(545, 775, 9, true, pdfMuted, "QUOTATION")
+	c.textRightAligned(545, 748, 18, true, pdfDark, q.QuotationCode)
+
+	c.text(metaLabelX, 728, 8, true, pdfMuted, "Status")
+	c.statusBadge(545, 728, quotationStatusBadgeLabel(q))
+	c.metaRow(712, "Date", formatPDFDateTime(q.CreatedAt))
+	c.metaRow(696, "Valid Until", validUntilText(q))
+
 	c.line(50, 680, 545, 680, pdfBorder)
+}
 
-	// ── Party boxes ───────────────────────────────────────────────────────────
+func (c *pdfCanvas) metaRow(y float64, label, value string) {
+	c.text(metaLabelX, y, 8, true, pdfMuted, label)
+	c.text(metaValueX, y, 8, true, pdfDark, value)
+}
+
+// ── First page body: party boxes / internal banner + item table ─────────────
+
+func drawFirstPageBody(c *pdfCanvas, q Quotation, extras PDFContactExtras, brand pdfColor, hasDesc bool, items []QuotationItem) float64 {
 	if strings.EqualFold(q.QuotationType, "INTERNAL") {
-		c.rectFill(50, 645, 495, 48, pdfSoftGreen)
-		c.rectStroke(50, 645, 495, 48, brand)
-		c.text(64, 674, 9, true, brand, "INTERNAL PLANNING DOCUMENT")
-		c.text(64, 657, 9, false, pdfDark, "Not intended for external customer distribution.")
+		bannerBottom := partyBoxTop - 48
+		c.rectFill(50, bannerBottom, 495, 48, pdfSoftGreen)
+		c.rectStroke(50, bannerBottom, 495, 48, brand)
+		c.text(64, partyBoxTop-20, 9, true, brand, "INTERNAL PLANNING DOCUMENT")
+		c.text(64, partyBoxTop-37, 9, false, pdfDark, "Not intended for external customer distribution.")
+		return c.itemsTableChunk(items, 1, p1InternalTableY, brand, hasDesc)
+	}
+
+	fromLines, toLines := partyLinesFor(q, extras)
+	maxLines := len(fromLines)
+	if len(toLines) > maxLines {
+		maxLines = len(toLines)
+	}
+	h := partyBoxHeight(maxLines)
+	c.partyBox(50, partyBoxTop, 220, h, "FROM", textOr(q.NurseryName, "-"), fromLines, brand)
+	c.partyBox(295, partyBoxTop, 250, h, "TO", textOr(q.RecipientName, "Customer details protected"), toLines, pdfMuted)
+
+	tableY := partyBoxTop - h - 50
+	return c.itemsTableChunk(items, 1, tableY, brand, hasDesc)
+}
+
+func (c *pdfCanvas) partyBox(x, top, w, h float64, label, name string, lines []string, labelColor pdfColor) {
+	bottom := top - h
+	c.rectFill(x, bottom, w, h, pdfLight)
+	c.rectStroke(x, bottom, w, h, pdfBorder)
+	c.text(x+16, top-23, 9, true, labelColor, label)
+	c.text(x+16, top-46, 13, true, pdfDark, truncatePDFText(name, 30))
+	y := top - 46
+	for _, line := range lines {
+		y -= 14
+		c.text(x+16, y, 8, false, pdfMuted, truncatePDFText(line, 46))
+	}
+}
+
+// ── Items table ───────────────────────────────────────────────────────────────
+
+func (c *pdfCanvas) itemsTableChunk(items []QuotationItem, startIndex int, y float64, brand pdfColor, hasDesc bool) float64 {
+	var xs []float64
+	var headers []string
+	qtyColRight, priceColRight := 379.0, 459.0
+	if hasDesc {
+		xs = []float64{50, 78, 300, 350, 395, 465}
+		headers = []string{"#", "PLANT / ITEM", "DESC", "QTY", "UNIT PRICE", "AMOUNT"}
+		qtyColRight = 389.0
 	} else {
-		c.partyBox(50, 610, 220, "FROM", textOr(q.NurseryName, "-"), textOr(q.NurseryPhone, ""), "Prepared by "+textOr(q.CreatedByName, "-"), brand)
-		c.partyBox(295, 610, 250, "TO", textOr(q.RecipientName, "Customer details protected"), textOr(q.RecipientMobile, ""), "", pdfMuted)
+		xs = []float64{50, 78, 340, 385, 465}
+		headers = []string{"#", "PLANT / ITEM", "QTY", "UNIT PRICE", "AMOUNT"}
+	}
+	// Right-align the three trailing numeric headers so they sit flush over their
+	// right-aligned data columns instead of hanging off the left edge.
+	headerRightX := map[string]float64{"QTY": qtyColRight, "UNIT PRICE": priceColRight, "AMOUNT": 539}
+
+	const hdrH = 30.0
+	c.rectFill(50, y, 495, hdrH, brand)
+	for i, h := range headers {
+		if rx, ok := headerRightX[h]; ok {
+			c.textRightAligned(rx, y+11, 8, true, pdfWhite, h)
+		} else {
+			c.text(xs[i]+6, y+11, 8, true, pdfWhite, h)
+		}
 	}
 
-	// ── Items table ───────────────────────────────────────────────────────────
-	tableY := 560.0
-	if strings.EqualFold(q.QuotationType, "INTERNAL") {
-		tableY = 585
+	rowY := y - itemHdrH
+	for i, item := range items {
+		rowH := itemRowH
+		if i%2 == 0 {
+			c.rectFill(50, rowY, 495, rowH, pdfWhite)
+		} else {
+			c.rectFill(50, rowY, 495, rowH, pdfLight)
+		}
+		c.rectStroke(50, rowY, 495, rowH, pdfBorder)
+		for _, x := range xs[1:] {
+			c.line(x, rowY, x, rowY+rowH, pdfBorder)
+		}
+		c.text(58, rowY+22, 9, false, pdfMuted, fmt.Sprintf("%d", startIndex+i))
+		if hasDesc {
+			c.text(86, rowY+23, 10, true, pdfDark, truncatePDFText(item.ScientificName, 29))
+			if item.CommonName != nil {
+				c.text(86, rowY+10, 8, false, pdfMuted, truncatePDFText(*item.CommonName, 29))
+			}
+			if item.Description != nil && strings.TrimSpace(*item.Description) != "" {
+				c.text(308, rowY+20, 9, false, pdfMuted, truncatePDFText(toPDFASCII(strings.TrimSpace(*item.Description)), 9))
+			}
+		} else {
+			c.text(86, rowY+23, 10, true, pdfDark, truncatePDFText(item.ScientificName, 40))
+			if item.CommonName != nil {
+				c.text(86, rowY+10, 8, false, pdfMuted, truncatePDFText(*item.CommonName, 40))
+			}
+		}
+		c.textRightAligned(qtyColRight, rowY+20, 10, false, pdfDark, formatPDFQty(item.Quantity))
+		c.textRightAligned(priceColRight, rowY+20, 10, false, pdfDark, FormatINR(item.UnitPrice))
+		c.textRightAligned(539, rowY+20, 10, true, pdfDark, FormatINR(item.TotalPrice))
+		rowY -= rowH
 	}
-	tableBottom := c.itemsTable(q, tableY, brand)
+	return rowY
+}
 
-	// ── Grand total ───────────────────────────────────────────────────────────
-	totalY := tableBottom - 52
+// ── Summary chain: total → notes → disclaimer → verification → terms ────────
+
+func drawSummaryChain(c *pdfCanvas, topY float64, q Quotation, brand pdfColor, verifyURL string) float64 {
+	totalY := topY - 52
 	c.rectFill(50, totalY, 495, 44, pdfSoftGreen)
 	c.rectStroke(50, totalY, 495, 44, brand)
 	c.text(62, totalY+28, 10, true, brand, "GRAND TOTAL")
-	c.text(430, totalY+26, 18, true, pdfDark, formatPDFMoney(q.TotalAmount))
-	c.text(430, totalY+10, 8, false, pdfMuted, amountInWords(q.TotalAmount)+" Only")
+	c.textRightAligned(533, totalY+26, 18, true, pdfDark, FormatINR(q.TotalAmount))
+	c.textRightAligned(533, totalY+10, 8, false, pdfMuted, amountInWords(q.TotalAmount)+" Only")
 
-	// ── Notes ─────────────────────────────────────────────────────────────────
 	nextY := totalY - 34
 	if q.Notes != nil && strings.TrimSpace(*q.Notes) != "" {
 		c.rectFill(50, nextY-34, 495, 42, pdfLight)
@@ -67,31 +323,58 @@ func buildQuotationPDF(q Quotation, verifyURL string) []byte {
 		nextY -= 54
 	}
 
-	// ── Price disclaimer ──────────────────────────────────────────────────────
 	c.rectFill(50, nextY-28, 495, 28, pdfAmberLight)
 	c.rectStroke(50, nextY-28, 495, 28, pdfAmber)
 	c.text(62, nextY-18, 8, true, pdfAmber, "!  Prices subject to availability. All prices are provided by the issuing nursery.")
 	nextY -= 40
 
-	// ── Document Verification section ─────────────────────────────────────────
-	if verifyURL != "" && nextY-128 > 90 {
+	if verifyURL != "" {
 		c.verificationSection(nextY-8, brand, q, verifyURL)
+		nextY -= verificationBoxH + 8
 	}
 
-	// ── Footer ────────────────────────────────────────────────────────────────
-	c.line(50, 76, 545, 76, pdfBorder)
-	c.text(50, 62, 8, false, pdfMuted, "Powered by GreenRoot - www.greenroot.app")
-	c.text(470, 62, 8, true, pdfMuted, "Page 1 of 1")
-	c.text(50, 50, 7, false, pdfMuted,
-		"GreenRoot provides quotation management software only. All quotation information is provided by the issuing nursery.")
+	nextY -= 12
+	return c.termsAndAuthBlock(nextY, brand, q)
+}
 
-	return wrapPDF(c.String())
+func (c *pdfCanvas) termsAndAuthBlock(topY float64, brand pdfColor, q Quotation) float64 {
+	const h = 130.0
+	const x = 50.0
+	const w = 495.0
+	bottom := topY - h
+	c.rectFill(x, bottom, w, h, pdfWhite)
+	c.rectStroke(x, bottom, w, h, pdfBorder)
+	colX := x + 315.0
+	c.line(colX, bottom, colX, topY, pdfBorder)
+
+	c.text(x+14, topY-16, 8, true, brand, "TERMS & CONDITIONS")
+	terms := []string{
+		"1. This quotation is valid until the date shown above.",
+		"2. Prices and quantities are subject to stock availability at confirmation.",
+		"3. Once sent, the quotation is locked; the nursery can recall it to make edits.",
+		"4. Accepted quotations may be converted into an order by the nursery.",
+		"5. Accepting or rejecting requires the buyer to be logged in (OTP verified).",
+		"6. System-generated document - a physical signature is not required.",
+	}
+	ty := topY - 30
+	for _, t := range terms {
+		c.text(x+14, ty, 7, false, pdfMuted, t)
+		ty -= 13
+	}
+
+	ax := colX + 16
+	c.text(ax, topY-16, 8, true, brand, "AUTHORIZED BY")
+	c.text(ax, topY-32, 10, true, pdfDark, textOr(q.CreatedByName, "-"))
+	c.text(ax, topY-46, 8, false, pdfMuted, "For "+textOr(q.NurseryName, "GreenRoot"))
+	c.text(ax, topY-62, 7, false, pdfMuted, "Digitally generated via GreenRoot")
+
+	return bottom
 }
 
 // ── Document Verification section ────────────────────────────────────────────
 
 func (c *pdfCanvas) verificationSection(topY float64, brand pdfColor, q Quotation, verifyURL string) {
-	const boxH = 120.0
+	const boxH = verificationBoxH
 	const x = 50.0
 	const w = 495.0
 
@@ -100,9 +383,10 @@ func (c *pdfCanvas) verificationSection(topY float64, brand pdfColor, q Quotatio
 	c.rectStroke(x, topY-boxH, w, boxH, pdfBorder)
 	c.rectFill(x, topY-boxH, 3, boxH, brand)
 
-	// Section title
-	c.text(x+14, topY-14, 8, true, brand, "DOCUMENT VERIFICATION")
+	// Section title + purpose line
+	c.text(x+14, topY-14, 8, true, brand, "VERIFY THIS QUOTATION")
 	c.line(x+14, topY-20, x+w-14, topY-20, pdfBorder)
+	c.text(x+14, topY-32, 7, false, pdfMuted, "Scan to confirm authenticity, check the live status, and download the original PDF.")
 
 	// QR code (left of the section)
 	const qrSize = 72.0
@@ -114,11 +398,12 @@ func (c *pdfCanvas) verificationSection(topY float64, brand pdfColor, q Quotatio
 
 	// Quote metadata (right of QR)
 	mx := qrX + qrSize + 14.0
-	c.text(mx, topY-30, 7, true, pdfMuted, "QUOTE ID")
-	c.text(mx, topY-42, 9, true, pdfDark, q.QuotationCode)
-	c.text(mx, topY-57, 7, true, pdfMuted, "CREATED")
-	c.text(mx, topY-69, 8, false, pdfDark, formatPDFDate(q.CreatedAt))
-	c.text(mx, topY-82, 7, false, pdfMuted, "Digitally generated - No physical signature required.")
+	c.text(mx, topY-50, 7, true, pdfMuted, "QUOTE ID")
+	c.text(mx, topY-62, 9, true, pdfDark, q.QuotationCode)
+	c.text(mx, topY-77, 7, true, pdfMuted, "ISSUED ON")
+	c.text(mx, topY-89, 8, false, pdfDark, formatPDFDate(q.CreatedAt))
+	c.text(mx, topY-104, 7, true, pdfMuted, "VALID UNTIL")
+	c.text(mx, topY-116, 8, false, pdfDark, validUntilText(q))
 
 	// Validated by (right column)
 	var validatorName, validatorRole string
@@ -139,12 +424,14 @@ func (c *pdfCanvas) verificationSection(topY float64, brand pdfColor, q Quotatio
 	}
 	if validatorName != "" {
 		vx := x + w/2 + 20
-		c.text(vx, topY-30, 7, true, pdfMuted, "VALIDATED BY")
-		c.text(vx, topY-42, 9, true, pdfDark, toPDFASCII(validatorName))
-		c.text(vx, topY-56, 8, false, pdfMuted, validatorRole)
+		c.text(vx, topY-50, 7, true, pdfMuted, "VALIDATED BY")
+		c.text(vx, topY-62, 9, true, pdfDark, toPDFASCII(validatorName))
+		c.text(vx, topY-76, 8, false, pdfMuted, validatorRole)
 		if !validatedAt.IsZero() {
-			c.text(vx, topY-68, 8, false, pdfMuted, formatPDFDate(validatedAt))
+			c.text(vx, topY-88, 8, false, pdfMuted, formatPDFDate(validatedAt))
 		}
+		c.text(vx, topY-104, 7, false, pdfMuted, "Digitally generated -")
+		c.text(vx, topY-114, 7, false, pdfMuted, "no physical signature required.")
 	}
 }
 
@@ -179,94 +466,32 @@ func (c *pdfCanvas) qrCode(x, y, size float64, content string) {
 	c.rectFill(x+ctr-3.5, y+ctr-3.5, 7, 7, pdfQRGreen)
 }
 
-// ── Items table ───────────────────────────────────────────────────────────────
+// ── Footer ────────────────────────────────────────────────────────────────────
 
-func (c *pdfCanvas) itemsTable(q Quotation, y float64, brand pdfColor) float64 {
-	// Only show DESC column when at least one item actually has a description.
-	hasDesc := false
-	for _, item := range q.Items {
-		if item.Description != nil && strings.TrimSpace(*item.Description) != "" {
-			hasDesc = true
-			break
-		}
-	}
-
-	var xs []float64
-	var headers []string
-	if hasDesc {
-		xs = []float64{50, 78, 323, 381, 433, 495}
-		headers = []string{"#", "PLANT / ITEM", "DESC", "QTY", "UNIT PRICE", "AMOUNT"}
-	} else {
-		xs = []float64{50, 78, 381, 433, 495}
-		headers = []string{"#", "PLANT / ITEM", "QTY", "UNIT PRICE", "AMOUNT"}
-	}
-
-	const hdrH = 30.0
-	c.rectFill(50, y, 495, hdrH, brand)
-	for i, h := range headers {
-		c.text(xs[i]+6, y+11, 8, true, pdfWhite, h)
-	}
-
-	rowY := y - (hdrH + 3)
-	for i, item := range q.Items {
-		rowH := 40.0
-		if rowY < 105 {
-			break
-		}
-		if i%2 == 0 {
-			c.rectFill(50, rowY, 495, rowH, pdfWhite)
-		} else {
-			c.rectFill(50, rowY, 495, rowH, pdfLight)
-		}
-		c.rectStroke(50, rowY, 495, rowH, pdfBorder)
-		for _, x := range xs[1:] {
-			c.line(x, rowY, x, rowY+rowH, pdfBorder)
-		}
-		c.text(58, rowY+22, 9, false, pdfMuted, fmt.Sprintf("%d", i+1))
-		if hasDesc {
-			c.text(86, rowY+23, 10, true, pdfDark, truncatePDFText(item.ScientificName, 34))
-			if item.CommonName != nil {
-				c.text(86, rowY+10, 8, false, pdfMuted, truncatePDFText(*item.CommonName, 34))
-			}
-			if item.Description != nil && strings.TrimSpace(*item.Description) != "" {
-				c.text(331, rowY+20, 9, false, pdfMuted, truncatePDFText(toPDFASCII(strings.TrimSpace(*item.Description)), 10))
-			}
-		} else {
-			// DESC column hidden — give extra width to plant name
-			c.text(86, rowY+23, 10, true, pdfDark, truncatePDFText(item.ScientificName, 46))
-			if item.CommonName != nil {
-				c.text(86, rowY+10, 8, false, pdfMuted, truncatePDFText(*item.CommonName, 46))
-			}
-		}
-		c.text(397, rowY+20, 10, false, pdfDark, formatPDFQty(item.Quantity))
-		c.text(448, rowY+20, 10, false, pdfDark, formatPDFMoney(item.UnitPrice))
-		c.text(504, rowY+20, 10, true, pdfDark, formatPDFMoney(item.TotalPrice))
-		rowY -= rowH
-	}
-	return rowY
+func drawFooter(c *pdfCanvas, pageNum, totalPages int) {
+	c.line(50, 76, 545, 76, pdfBorder)
+	c.leafMark(50, 58, 10, pdfForest)
+	c.text(66, 65, 8, true, pdfDark, "Powered by GreenRoot")
+	c.text(66, 54, 7, false, pdfMuted, "Plant Business Management Platform - www.greenroot.app")
+	c.textRightAligned(545, 65, 8, true, pdfMuted, fmt.Sprintf("Page %d of %d", pageNum, totalPages))
+	c.text(50, 42, 6.5, false, pdfMuted,
+		"GreenRoot provides quotation management software only. All quotation information is provided by the issuing nursery.")
 }
 
-// ── Party box ─────────────────────────────────────────────────────────────────
-
-func (c *pdfCanvas) partyBox(x, y, w float64, label, name, phone, foot string, labelColor pdfColor) {
-	c.rectFill(x, y, w, 84, pdfLight)
-	c.rectStroke(x, y, w, 84, pdfBorder)
-	c.text(x+16, y+61, 9, true, labelColor, label)
-	c.text(x+16, y+38, 13, true, pdfDark, truncatePDFText(name, 28))
-	if phone != "" {
-		c.text(x+16, y+22, 9, false, pdfMuted, phone)
-	}
-	if foot != "" {
-		c.text(x+16, y+8, 8, false, pdfMuted, truncatePDFText(foot, 36))
-	}
+// leafMark draws a small, restrained monochrome leaf silhouette (asymmetric almond
+// shape + a thin center vein) — safe to print in grayscale, never dominant.
+func (c *pdfCanvas) leafMark(x, y, size float64, color pdfColor) {
+	c.setFill(color)
+	w := size * 0.6
+	fmt.Fprintf(c, "%.2f %.2f m\n", x, y)
+	fmt.Fprintf(c, "%.2f %.2f %.2f %.2f %.2f %.2f c\n", x+w, y+size*0.15, x+w, y+size*0.85, x, y+size)
+	fmt.Fprintf(c, "%.2f %.2f %.2f %.2f %.2f %.2f c\n", x-w*0.3, y+size*0.85, x-w*0.3, y+size*0.15, x, y)
+	fmt.Fprintf(c, "f\n")
+	c.setStroke(pdfWhite)
+	fmt.Fprintf(c, "0.6 w\n%.2f %.2f m %.2f %.2f l S\n", x, y+size*0.12, x, y+size*0.88)
 }
 
 // ── Drawing primitives ────────────────────────────────────────────────────────
-
-func (c *pdfCanvas) meta(x, y float64, label, value string) {
-	c.text(x, y, 9, true, pdfMuted, label)
-	c.text(x+58, y, 9, true, pdfDark, value)
-}
 
 func (c *pdfCanvas) text(x, y, size float64, bold bool, color pdfColor, text string) {
 	if strings.TrimSpace(text) == "" {
@@ -278,6 +503,104 @@ func (c *pdfCanvas) text(x, y, size float64, bold bool, color pdfColor, text str
 	}
 	c.setFill(color)
 	fmt.Fprintf(c, "BT /%s %.1f Tf %.1f %.1f Td (%s) Tj ET\n", font, size, x, y, escapePDFText(toPDFASCII(text)))
+}
+
+// textRightAligned draws text ending at rightX, using an approximate Helvetica
+// average-char-width formula so long quotation codes never run off the page edge.
+func (c *pdfCanvas) textRightAligned(rightX, y, size float64, bold bool, color pdfColor, text string) {
+	c.text(rightX-estimateTextWidth(text, size, bold), y, size, bold, color, text)
+}
+
+// estimateTextWidth approximates rendered Helvetica text width. Digits/punctuation
+// run close to 0.55-0.6em; use a slightly generous factor so estimates never
+// undershoot and cause a column collision.
+func estimateTextWidth(text string, size float64, bold bool) float64 {
+	factor := 0.58
+	if bold {
+		factor = 0.64
+	}
+	return float64(len(toPDFASCII(text))) * size * factor
+}
+
+// roundedRectFill fills a rectangle with corner radius r using cubic-bezier corners
+// (kappa = 0.5523, the standard circle-approximation constant for a 90-degree arc).
+func (c *pdfCanvas) roundedRectFill(x, y, w, h, r float64, color pdfColor) {
+	if r > w/2 {
+		r = w / 2
+	}
+	if r > h/2 {
+		r = h / 2
+	}
+	const k = 0.55228475
+	c.setFill(color)
+	fmt.Fprintf(c, "%.2f %.2f m\n", x+r, y)
+	fmt.Fprintf(c, "%.2f %.2f l\n", x+w-r, y)
+	fmt.Fprintf(c, "%.2f %.2f %.2f %.2f %.2f %.2f c\n", x+w-r+k*r, y, x+w, y+r-k*r, x+w, y+r)
+	fmt.Fprintf(c, "%.2f %.2f l\n", x+w, y+h-r)
+	fmt.Fprintf(c, "%.2f %.2f %.2f %.2f %.2f %.2f c\n", x+w, y+h-r+k*r, x+w-r+k*r, y+h, x+w-r, y+h)
+	fmt.Fprintf(c, "%.2f %.2f l\n", x+r, y+h)
+	fmt.Fprintf(c, "%.2f %.2f %.2f %.2f %.2f %.2f c\n", x+r-k*r, y+h, x, y+h-r+k*r, x, y+h-r)
+	fmt.Fprintf(c, "%.2f %.2f l\n", x, y+r)
+	fmt.Fprintf(c, "%.2f %.2f %.2f %.2f %.2f %.2f c\n", x, y+r-k*r, x+r-k*r, y, x+r, y)
+	fmt.Fprintf(c, "f\n")
+}
+
+// statusBadge draws a right-aligned, uppercase, rounded-pill status label.
+// Colors are deliberately restrained (light fill + dark text or vice versa) so the
+// badge stays legible when the PDF is printed in grayscale.
+func (c *pdfCanvas) statusBadge(rightX, baselineY float64, label string) {
+	upper := strings.ToUpper(label)
+	bg, fg := statusBadgeColors(upper)
+	const h = 14.0
+	const padX = 8.0
+	w := estimateTextWidth(upper, 7, true) + padX*2
+	x := rightX - w
+	y := baselineY - 3
+	c.roundedRectFill(x, y, w, h, h/2, bg)
+	c.text(x+padX, y+4.5, 7, true, fg, upper)
+}
+
+// quotationStatusBadgeLabel maps the raw DB status (plus the computed valid_until
+// expiry, which is not itself a status column) to the short badge label.
+func quotationStatusBadgeLabel(q Quotation) string {
+	if q.ExpirySummary != nil && q.ExpirySummary.IsExpired && strings.EqualFold(q.Status, "CUSTOMER_SENT") {
+		return "EXPIRED"
+	}
+	switch strings.ToUpper(q.Status) {
+	case "INTERNAL_DRAFT", "CUSTOMER_DRAFT":
+		return "DRAFT"
+	case "CUSTOMER_SENT":
+		return "SENT"
+	case "CUSTOMER_ACCEPTED":
+		return "ACCEPTED"
+	case "CUSTOMER_REJECTED":
+		return "REJECTED"
+	case "CONVERTED":
+		return "CONVERTED"
+	default:
+		return strings.ToUpper(q.Status)
+	}
+}
+
+func statusBadgeColors(label string) (bg, fg pdfColor) {
+	switch label {
+	case "DRAFT":
+		return rgb(0xE5, 0xE7, 0xEB), rgb(0x37, 0x41, 0x51)
+	case "SENT":
+		return rgb(0xDC, 0xFC, 0xE7), pdfForest
+	case "ACCEPTED":
+		return pdfForest, pdfWhite
+	case "REJECTED":
+		return rgb(0xFE, 0xE2, 0xE2), rgb(0x99, 0x1B, 0x1B)
+	case "EXPIRED":
+		return rgb(0xE5, 0xE7, 0xEB), rgb(0x37, 0x41, 0x51)
+	case "CONVERTED":
+		return rgb(0xDB, 0xEA, 0xFE), rgb(0x1D, 0x4E, 0xD8)
+	case "RECALLED":
+		return pdfAmberLight, pdfAmber
+	default:
+		return pdfLight, pdfMuted
+	}
 }
 
 func (c *pdfCanvas) rectFill(x, y, w, h float64, color pdfColor) {
@@ -303,17 +626,40 @@ func (c *pdfCanvas) setStroke(color pdfColor) {
 	fmt.Fprintf(c, "%.3f %.3f %.3f RG\n", color.r, color.g, color.b)
 }
 
-// ── PDF structure ─────────────────────────────────────────────────────────────
+// ── PDF structure (multi-page) ────────────────────────────────────────────────
 
-func wrapPDF(stream string) []byte {
+func wrapMultiPagePDF(pages []string) []byte {
+	if len(pages) == 0 {
+		pages = []string{""}
+	}
+	n := len(pages)
+	const fontF1Obj = 3
+	const fontF2Obj = 4
+	const pageObjStart = 5
+	contentObjStart := pageObjStart + n
+
+	kids := make([]string, n)
+	for i := 0; i < n; i++ {
+		kids[i] = fmt.Sprintf("%d 0 R", pageObjStart+i)
+	}
+
 	objects := []string{
 		"<< /Type /Catalog /Pages 2 0 R >>",
-		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
+		fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), n),
 		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
 		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(stream), stream),
 	}
+	for i := 0; i < n; i++ {
+		objects = append(objects, fmt.Sprintf(
+			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 %d 0 R /F2 %d 0 R >> >> /Contents %d 0 R >>",
+			fontF1Obj, fontF2Obj, contentObjStart+i,
+		))
+	}
+	for i := 0; i < n; i++ {
+		stream := pages[i]
+		objects = append(objects, fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(stream), stream))
+	}
+
 	var out bytes.Buffer
 	out.WriteString("%PDF-1.4\n")
 	offsets := []int{0}
@@ -406,8 +752,41 @@ func toPDFASCII(text string) string {
 	return b.String()
 }
 
-func formatPDFMoney(amount float64) string {
-	return fmt.Sprintf("Rs.%.2f", amount)
+// FormatINR renders an amount using Indian digit grouping (lakh/crore) with a
+// "Rs." prefix and exactly two decimal places, e.g. FormatINR(101275) == "Rs.1,01,275.00".
+// A real "₹" glyph is intentionally avoided: this PDF is hand-written using only the
+// Standard-14 Helvetica fonts, which have no ₹ glyph (U+20B9) — rendering it would
+// require embedding a custom Unicode font.
+func FormatINR(amount float64) string {
+	sign := ""
+	if amount < 0 {
+		sign = "-"
+		amount = -amount
+	}
+	totalPaise := int64(math.Round(amount * 100))
+	rupees := totalPaise / 100
+	paise := totalPaise % 100
+	return fmt.Sprintf("%sRs.%s.%02d", sign, groupIndian(strconv.FormatInt(rupees, 10)), paise)
+}
+
+// groupIndian applies Indian digit grouping (last 3 digits, then groups of 2):
+// "101275" -> "1,01,275", "1234567" -> "12,34,567".
+func groupIndian(digits string) string {
+	n := len(digits)
+	if n <= 3 {
+		return digits
+	}
+	rest, last3 := digits[:n-3], digits[n-3:]
+	var groups []string
+	for len(rest) > 2 {
+		groups = append([]string{rest[len(rest)-2:]}, groups...)
+		rest = rest[:len(rest)-2]
+	}
+	if rest != "" {
+		groups = append([]string{rest}, groups...)
+	}
+	groups = append(groups, last3)
+	return strings.Join(groups, ",")
 }
 
 func formatPDFQty(qty float64) string {
@@ -481,8 +860,14 @@ func numberToWords(n int) string {
 		n %= 100
 	}
 	if n >= 20 {
-		parts = append(parts, tens[n/10])
+		tensWord := tens[n/10]
 		n %= 10
+		if n > 0 {
+			parts = append(parts, tensWord+"-"+ones[n])
+			n = 0
+		} else {
+			parts = append(parts, tensWord)
+		}
 	}
 	if n > 0 {
 		parts = append(parts, ones[n])

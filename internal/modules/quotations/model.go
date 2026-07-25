@@ -9,6 +9,15 @@ import (
 
 type ActorContext = authctx.ActorContext
 
+// PDFContactExtras carries nursery/recipient email and address for PDF rendering only —
+// it is never serialized into the JSON API response.
+type PDFContactExtras struct {
+	NurseryEmail     string
+	NurseryAddress   string
+	RecipientEmail   string
+	RecipientAddress string
+}
+
 const (
 	actionInsert = "INSERT"
 	actionUpdate = "UPDATE"

@@ -20,6 +20,7 @@ const (
 	BucketAttachments    = "attachments"
 	BucketMarketAds      = "market-ads"
 	BucketQuotationPDFs  = "quotation-pdfs"
+	BucketOrderPDFs      = "order-pdfs"
 	BucketNurseryLogos   = "nursery-logos"
 )
 
@@ -31,6 +32,7 @@ var validBuckets = map[string]bool{
 	BucketAttachments:    true,
 	BucketMarketAds:      true,
 	BucketQuotationPDFs:  true,
+	BucketOrderPDFs:      true,
 	BucketNurseryLogos:   true,
 }
 

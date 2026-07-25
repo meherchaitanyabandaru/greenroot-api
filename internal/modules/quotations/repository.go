@@ -59,6 +59,8 @@ type Repository interface {
 	GetVerificationByToken(ctx context.Context, token string) (*QuotationVerification, error)
 	CreateVerificationToken(ctx context.Context, quotationID int64, token string) (*QuotationVerification, error)
 	RevokeVerificationTokens(ctx context.Context, quotationID int64, revokedByUserID int64) error
+	// PDF rendering
+	GetPDFContactExtras(ctx context.Context, nurseryID *int64, customerUserID *int64) (PDFContactExtras, error)
 }
 
 type PostgresRepository struct {
@@ -371,6 +373,60 @@ func (r *PostgresRepository) GetUserMobile(ctx context.Context, userID int64) (s
 		userID,
 	).Scan(&mobile)
 	return mobile, err
+}
+
+// GetPDFContactExtras loads nursery and recipient email/address for the quotation PDF header.
+// customerUserID is expected to already be nil when the caller (RenderPDF) is manager-masked,
+// so this never leaks recipient contact details past the existing privacy rule.
+func (r *PostgresRepository) GetPDFContactExtras(ctx context.Context, nurseryID *int64, customerUserID *int64) (PDFContactExtras, error) {
+	var extras PDFContactExtras
+	if nurseryID != nil {
+		var email, line1, city, state, postal sql.NullString
+		err := r.db.QueryRowContext(ctx, `
+			SELECT n.email, na.address_line1, na.city, na.state, na.postal_code
+			FROM public.nurseries n
+			LEFT JOIN public.nursery_addresses na ON na.nursery_id = n.nursery_id AND na.is_primary = true
+			WHERE n.nursery_id = $1
+		`, *nurseryID).Scan(&email, &line1, &city, &state, &postal)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return extras, err
+		}
+		extras.NurseryEmail = email.String
+		extras.NurseryAddress = joinAddressParts(line1.String, city.String, state.String, postal.String)
+	}
+	if customerUserID != nil {
+		var email, line1, city, state, postal sql.NullString
+		err := r.db.QueryRowContext(ctx, `
+			SELECT u.email, ua.address_line1, ua.city, ua.state, ua.postal_code
+			FROM public.users u
+			LEFT JOIN public.user_addresses ua ON ua.user_id = u.user_id AND ua.is_default = true
+			WHERE u.user_id = $1
+		`, *customerUserID).Scan(&email, &line1, &city, &state, &postal)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return extras, err
+		}
+		extras.RecipientEmail = email.String
+		extras.RecipientAddress = joinAddressParts(line1.String, city.String, state.String, postal.String)
+	}
+	return extras, nil
+}
+
+func joinAddressParts(line1, city, state, postal string) string {
+	parts := make([]string, 0, 3)
+	for _, p := range []string{line1, city, state} {
+		if strings.TrimSpace(p) != "" {
+			parts = append(parts, strings.TrimSpace(p))
+		}
+	}
+	addr := strings.Join(parts, ", ")
+	if strings.TrimSpace(postal) != "" {
+		if addr != "" {
+			addr += " " + strings.TrimSpace(postal)
+		} else {
+			addr = strings.TrimSpace(postal)
+		}
+	}
+	return addr
 }
 
 func (r *PostgresRepository) GetPlantInfo(ctx context.Context, plantID int64) (string, string, error) {

@@ -9,6 +9,56 @@ import (
 
 type ActorContext = authctx.ActorContext
 
+// PDFNurseryExtras carries nursery email/address for PDF rendering only — it is
+// never serialized into the JSON API response.
+type PDFNurseryExtras struct {
+	Email   string
+	Phone   string
+	Address string
+}
+
+type OrderVerification struct {
+	VerificationID int64      `json:"verification_id"`
+	OrderID        int64      `json:"order_id"`
+	Token          string     `json:"token"`
+	Status         string     `json:"status"` // ACTIVE | REVOKED
+	CreatedAt      time.Time  `json:"created_at"`
+	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
+	RevokedBy      *int64     `json:"revoked_by,omitempty"`
+}
+
+type OrderDocument struct {
+	DocID           int64     `json:"doc_id"`
+	OrderID         int64     `json:"order_id"`
+	Version         int       `json:"version"`
+	ObjectKey       string    `json:"object_key"`
+	SHA256Hash      string    `json:"sha256_hash"`
+	MimeType        string    `json:"mime_type"`
+	FileSize        int64     `json:"file_size"`
+	GeneratedBy     *int64    `json:"generated_by,omitempty"`
+	GeneratedByName *string   `json:"generated_by_name,omitempty"`
+	IsCurrent       bool      `json:"is_current"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+// VerifyTokenResponse is returned when an owner/manager requests the QR token.
+type VerifyTokenResponse struct {
+	Token     string    `json:"token"`
+	VerifyURL string    `json:"verify_url"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// PublicVerifyResponse is the response for the unauthenticated public verification
+// endpoint. Never includes nursery name, buyer details, prices, or the SHA-256 hash.
+type PublicVerifyResponse struct {
+	OrderCode         string    `json:"order_code"`
+	Authenticity      string    `json:"authenticity"`       // VERIFIED | INVALID
+	OrderStatus       string    `json:"order_status"`       // matches order_status values, or UNKNOWN
+	DocumentIntegrity string    `json:"document_integrity"` // UNMODIFIED | UNVERIFIED
+	IssuedAt          time.Time `json:"issued_at"`
+	VerifiedAt        time.Time `json:"verified_at"`
+}
+
 type Order struct {
 	ID          int64  `json:"id"`
 	OrderCode   string `json:"order_code"`
