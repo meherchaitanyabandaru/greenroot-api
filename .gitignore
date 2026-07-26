@@ -20,6 +20,8 @@ logs/**
 !logs/.gitkeep
 test-log/**
 !test-log/.gitkeep
+reports/**
+!reports/.gitkeep
 *.log
 
 # OS/editor noise

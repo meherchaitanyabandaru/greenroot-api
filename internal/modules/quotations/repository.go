@@ -631,6 +631,14 @@ func (r *PostgresRepository) CreateOrderAndConvert(ctx context.Context, q *Quota
 		).Scan(&ownerID); scanErr == nil {
 			buyerUserID = sql.NullInt64{Int64: ownerID, Valid: true}
 		}
+	} else if q.RecipientMobile != nil && *q.RecipientMobile != "" {
+		var matchedUserID int64
+		if scanErr := tx.QueryRowContext(ctx,
+			`SELECT user_id FROM public.users WHERE mobile = $1 AND deleted_at IS NULL`,
+			*q.RecipientMobile,
+		).Scan(&matchedUserID); scanErr == nil {
+			buyerUserID = sql.NullInt64{Int64: matchedUserID, Valid: true}
+		}
 	}
 	var notes sql.NullString
 	if q.Notes != nil && *q.Notes != "" {
@@ -645,7 +653,7 @@ func (r *PostgresRepository) CreateOrderAndConvert(ctx context.Context, q *Quota
 			notes, order_date, created_at, updated_at, created_by, updated_by
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,'PENDING',0,$8,$9,$9,$9,$10,$10)
 		RETURNING order_id
-	`, orderCode, orderNumber, nurseryID, buyerNurseryID, buyerUserID, nullableInt64FromPtr(q.CustomerUserID), q.ID, notes, now, byUserID,
+	`, orderCode, orderNumber, nurseryID, buyerNurseryID, buyerUserID, buyerUserID, q.ID, notes, now, byUserID,
 	).Scan(&orderID); err != nil {
 		return 0, err
 	}

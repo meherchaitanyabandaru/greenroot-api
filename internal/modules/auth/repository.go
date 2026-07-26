@@ -481,7 +481,7 @@ func (r *PostgresRepository) GetWorkspaces(ctx context.Context, userID int64) ([
 		SELECT d.user_id, nd.nursery_id
 		FROM public.drivers d
 		LEFT JOIN public.nursery_drivers nd
-		    ON nd.driver_user_id = d.user_id AND nd.connection_status = 'CONNECTED'
+		    ON nd.driver_user_id = d.user_id AND nd.connection_status IN ('APPROVED', 'CONNECTED', 'ACTIVE')
 		WHERE d.user_id = $1 AND d.approval_status = 'APPROVED'
 		LIMIT 1
 	`

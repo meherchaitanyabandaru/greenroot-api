@@ -527,11 +527,11 @@ func (s *Service) StartLoading(ctx context.Context, actor ActorContext, orderID 
 	if err != nil {
 		return Order{}, err
 	}
-	if order.Status != "CONFIRMED" && order.Status != "DRAFT" {
-		return Order{}, ErrInvalidStatus
-	}
 	if err := s.canManage(ctx, actor, *order); err != nil {
 		return Order{}, err
+	}
+	if order.Status != "CONFIRMED" && order.Status != "DRAFT" {
+		return Order{}, ErrInvalidStatus
 	}
 	if !hasUsableDeliverySnapshot(order.DeliverySnapshot) {
 		return Order{}, ErrMissingDeliveryAddress
@@ -561,11 +561,11 @@ func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, order
 	if err != nil {
 		return Order{}, err
 	}
-	if order.Status != "LOADING" {
-		return Order{}, ErrInvalidStatus
-	}
 	if err := s.canManage(ctx, actor, *order); err != nil {
 		return Order{}, err
+	}
+	if order.Status != "LOADING" {
+		return Order{}, ErrInvalidStatus
 	}
 	finalStatus := "LOADED"
 	for _, item := range order.Items {
