@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -17,14 +20,27 @@ var (
 type Service struct {
 	repository Repository
 	auditSvc   *auditlog.Service
+	redis      redis.Cmdable
 }
 
-func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
-	return &Service{repository: repository, auditSvc: auditSvc}
+func NewService(repository Repository, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
+	var rdb redis.Cmdable
+	if len(redisClients) > 0 {
+		rdb = redisClients[0]
+	}
+	return &Service{repository: repository, auditSvc: auditSvc, redis: rdb}
 }
 
 func (s *Service) List(ctx context.Context, input ListPlantsRequest) ([]Plant, Pagination, error) {
 	input = normalizeListRequest(input)
+
+	// Global Search's "Plants" category (30-minute TTL -- a mostly-static
+	// catalog is an excellent cache candidate). Only the search path is
+	// cached; plain unfiltered browsing goes straight to Postgres as before.
+	if input.Search != "" {
+		return s.listSearchCached(ctx, input)
+	}
+
 	plants, total, err := s.repository.List(ctx, input)
 	if err != nil {
 		return nil, Pagination{}, err
@@ -35,6 +51,48 @@ func (s *Service) List(ctx context.Context, input ListPlantsRequest) ([]Plant, P
 		Total:      total,
 		TotalPages: totalPages(total, input.PerPage),
 	}, nil
+}
+
+type cachedPlantList struct {
+	Plants     []Plant    `json:"plants"`
+	Pagination Pagination `json:"pagination"`
+}
+
+// listSearchCached serves the plants.List search path through Redis. Plants
+// have no actor/RBAC scoping at all -- every caller sees the identical
+// catalog -- so a single shared cache key per query is correct and safe,
+// unlike orders/quotations/market ads, which are actor-personalized and
+// must never share a cache entry across users (see searchcache.go).
+func (s *Service) listSearchCached(ctx context.Context, input ListPlantsRequest) ([]Plant, Pagination, error) {
+	const module = "plants"
+	const sharedScope = 0
+	// Feeds Search Suggestions with real query popularity, independent of
+	// whether this particular request is a cache hit or miss.
+	redisutil.RecordSearchTerm(ctx, s.redis, nil, module, input.Search)
+	gen := redisutil.SearchGeneration(ctx, s.redis, nil, module, sharedScope)
+	key := redisutil.SearchCacheKey(module, sharedScope, gen,
+		input.Search, fmt.Sprint(input.Page), fmt.Sprint(input.PerPage),
+		fmt.Sprint(input.CategoryID), input.PlantType, input.LightRequirement,
+		input.WaterRequirement, input.SortBy, input.SortOrder)
+
+	if cached, ok := redisutil.GetCachedSearch[cachedPlantList](ctx, s.redis, nil, module, input.Search, key); ok {
+		return cached.Plants, cached.Pagination, nil
+	}
+
+	start := time.Now()
+	plants, total, err := s.repository.List(ctx, input)
+	if err != nil {
+		return nil, Pagination{}, err
+	}
+	pagination := Pagination{
+		Page:       input.Page,
+		PerPage:    input.PerPage,
+		Total:      total,
+		TotalPages: totalPages(total, input.PerPage),
+	}
+	redisutil.SetCachedSearch(ctx, s.redis, nil, module, input.Search, key,
+		cachedPlantList{Plants: plants, Pagination: pagination}, redisutil.SearchTTLPlants, time.Since(start))
+	return plants, pagination, nil
 }
 
 func (s *Service) GetNamesByLanguage(ctx context.Context, plantIDs []int64, langCode string) (map[int64]string, error) {

@@ -120,11 +120,50 @@ func NewService(repository Repository, auditSvc *auditlog.Service, storageCli *s
 	return &Service{repository: repository, auditSvc: auditSvc, storage: storageCli, redis: rdb}
 }
 
+// cachedQuotationList is the Global Search "Quotations" category's
+// cache-aside payload, keyed per-actor (see List) -- manager-only redaction
+// of customer contact details means the payload itself differs by role, so
+// this must never be shared across users.
+type cachedQuotationList struct {
+	Quotations []Quotation `json:"quotations"`
+	Pagination Pagination  `json:"pagination"`
+}
+
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListQuotationsRequest) ([]Quotation, Pagination, error) {
 	input = normalizeList(input)
 	if err := s.scopeList(ctx, actor, &input); err != nil {
 		return nil, Pagination{}, err
 	}
+
+	if input.Search == "" {
+		return s.listQuotations(ctx, actor, input)
+	}
+
+	// Global Search's "Quotations" category (short TTL -- status changes
+	// frequently). Key built from the fully RBAC-resolved input.
+	const module = "quotations"
+	redisutil.RecordSearchTerm(ctx, s.redis, nil, module, input.Search)
+	gen := redisutil.SearchGeneration(ctx, s.redis, nil, module, actor.UserID)
+	key := redisutil.SearchCacheKey(module, actor.UserID, gen,
+		input.Search, input.Status, fmt.Sprint(input.NurseryID), fmt.Sprint(input.BuyerNurseryID),
+		fmt.Sprint(input.Buying), fmt.Sprint(input.ManagerScopeUserID), fmt.Sprint(input.UnassignedOnly),
+		input.SortBy, input.SortOrder, fmt.Sprint(input.Page), fmt.Sprint(input.PerPage))
+
+	if cached, ok := redisutil.GetCachedSearch[cachedQuotationList](ctx, s.redis, nil, module, input.Search, key); ok {
+		return cached.Quotations, cached.Pagination, nil
+	}
+
+	start := time.Now()
+	qs, pagination, err := s.listQuotations(ctx, actor, input)
+	if err != nil {
+		return nil, Pagination{}, err
+	}
+	redisutil.SetCachedSearch(ctx, s.redis, nil, module, input.Search, key,
+		cachedQuotationList{Quotations: qs, Pagination: pagination}, redisutil.SearchTTLQuotations, time.Since(start))
+	return qs, pagination, nil
+}
+
+func (s *Service) listQuotations(ctx context.Context, actor ActorContext, input ListQuotationsRequest) ([]Quotation, Pagination, error) {
 	qs, total, err := s.repository.List(ctx, input)
 	if err != nil {
 		return nil, Pagination{}, err
@@ -257,7 +296,16 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQu
 	}
 	s.scheduleQuotationExpiry(ctx, q)
 	s.audit(ctx, actor, auditlog.EntityQuotation, q.ID, actionInsert, input)
+	s.bumpQuotationsSearchCache(ctx, actor.UserID)
 	return enrichQuotation(actor, *q), nil
+}
+
+// bumpQuotationsSearchCache invalidates the acting user's previously-cached
+// Global Search "Quotations" results (see List's cache-aside path). See
+// searchcache.go's package doc for why other affected actors instead rely
+// on the short TTL rather than a cross-actor invalidation fan-out.
+func (s *Service) bumpQuotationsSearchCache(ctx context.Context, userID int64) {
+	redisutil.BumpSearchGeneration(ctx, s.redis, nil, "quotations", userID)
 }
 
 func (s *Service) scheduleQuotationExpiry(ctx context.Context, q *Quotation) {
@@ -330,6 +378,7 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, inpu
 	}
 	s.scheduleQuotationExpiry(ctx, updated)
 	s.audit(ctx, actor, auditlog.EntityQuotation, id, actionUpdate, input)
+	s.bumpQuotationsSearchCache(ctx, actor.UserID)
 	return enrichQuotation(actor, *updated), nil
 }
 
@@ -495,6 +544,10 @@ func (s *Service) ConvertToOrder(ctx context.Context, actor ActorContext, quotat
 		return Quotation{}, err
 	}
 	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, actionUpdate, map[string]any{"status": "CONVERTED", "order_id": orderID})
+	s.bumpQuotationsSearchCache(ctx, actor.UserID)
+	// A new order was just created by this conversion -- invalidate this
+	// actor's cached "Orders" search results too, not just "Quotations".
+	redisutil.BumpSearchGeneration(ctx, s.redis, nil, "orders", actor.UserID)
 	return enrichQuotation(actor, *converted), nil
 }
 

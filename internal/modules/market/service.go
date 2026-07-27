@@ -74,7 +74,14 @@ func (s *Service) CreateAd(ctx context.Context, actor ActorContext, req CreateAd
 	if err != nil {
 		return Ad{}, err
 	}
+	s.bumpMarketSearchCache(ctx, actor.UserID)
 	return enrichAd(ad, nurseryID), nil
+}
+
+// bumpMarketSearchCache invalidates the acting user's previously-cached
+// Global Search "Market" results (see BrowseAds's cache-aside path).
+func (s *Service) bumpMarketSearchCache(ctx context.Context, userID int64) {
+	redisutil.BumpSearchGeneration(ctx, s.redis, nil, "market_ads", userID)
 }
 
 func (s *Service) GetAd(ctx context.Context, actor ActorContext, id int64) (Ad, error) {
@@ -102,6 +109,14 @@ func (s *Service) GetAd(ctx context.Context, actor ActorContext, id int64) (Ad, 
 	return enrichAd(ad, nurseryID), nil
 }
 
+// cachedAdsList is the Global Search "Market" category's cache-aside
+// payload. Ads are actor-personalized (IsSavedByMe), so unlike plants this
+// is always cached per-user (see BrowseAds), never shared across actors.
+type cachedAdsList struct {
+	Ads   []Ad `json:"ads"`
+	Total int  `json:"total"`
+}
+
 func (s *Service) BrowseAds(ctx context.Context, actor ActorContext, q AdsQuery) ([]Ad, int, error) {
 	if !canAccessMarket(actor) {
 		return nil, 0, ErrForbidden
@@ -112,6 +127,36 @@ func (s *Service) BrowseAds(ctx context.Context, actor ActorContext, q AdsQuery)
 	if q.PerPage < 1 || q.PerPage > 50 {
 		q.PerPage = 20
 	}
+
+	if q.Search == "" {
+		return s.browseAds(ctx, actor, q)
+	}
+
+	// Global Search's "Market" category (2-minute TTL). Cache key includes
+	// actor.UserID -- IsSavedByMe below is actor-personalized, so this must
+	// never be shared across users the way plants' cache is.
+	const module = "market_ads"
+	redisutil.RecordSearchTerm(ctx, s.redis, nil, module, q.Search)
+	gen := redisutil.SearchGeneration(ctx, s.redis, nil, module, actor.UserID)
+	key := redisutil.SearchCacheKey(module, actor.UserID, gen,
+		q.Search, q.Sort, q.Category, fmt.Sprint(q.MinPrice), fmt.Sprint(q.MaxPrice),
+		fmt.Sprint(q.Page), fmt.Sprint(q.PerPage))
+
+	if cached, ok := redisutil.GetCachedSearch[cachedAdsList](ctx, s.redis, nil, module, q.Search, key); ok {
+		return cached.Ads, cached.Total, nil
+	}
+
+	start := time.Now()
+	ads, total, err := s.browseAds(ctx, actor, q)
+	if err != nil {
+		return nil, 0, err
+	}
+	redisutil.SetCachedSearch(ctx, s.redis, nil, module, q.Search, key,
+		cachedAdsList{Ads: ads, Total: total}, redisutil.SearchTTLMarketAds, time.Since(start))
+	return ads, total, nil
+}
+
+func (s *Service) browseAds(ctx context.Context, actor ActorContext, q AdsQuery) ([]Ad, int, error) {
 	nurseryID, _ := s.actorNurseryID(ctx, actor)
 	ads, total, err := s.repo.ListPublished(ctx, q)
 	if err != nil {
@@ -194,6 +239,7 @@ func (s *Service) UpdateAd(ctx context.Context, actor ActorContext, id int64, re
 		return Ad{}, err
 	}
 	nurseryID, _ := s.actorNurseryID(ctx, actor)
+	s.bumpMarketSearchCache(ctx, actor.UserID)
 	return enrichAd(updated, nurseryID), nil
 }
 
@@ -264,6 +310,9 @@ func (s *Service) adTransition(ctx context.Context, actor ActorContext, id int64
 		return Ad{}, err
 	}
 	nurseryID, _ := s.actorNurseryID(ctx, actor)
+	// Publish/Pause/Resume/Archive all change whether this ad shows up in
+	// BrowseAds' published-only results -- an "update" for search purposes.
+	s.bumpMarketSearchCache(ctx, actor.UserID)
 	return enrichAd(updated, nurseryID), nil
 }
 

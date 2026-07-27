@@ -46,11 +46,52 @@ func NewService(repository Repository, auditSvc *auditlog.Service, storageCli *s
 	return &Service{repository: repository, auditSvc: auditSvc, storage: storageCli, redis: rdb}
 }
 
+// cachedOrderList is the Global Search "Orders" category's cache-aside
+// payload, keyed per-actor (see List) -- a buyer's and a seller's resolved
+// scope for the same raw query differ, and even two sellers can differ
+// (assigned-manager filtering), so this is never shared across users.
+type cachedOrderList struct {
+	Orders     []Order    `json:"orders"`
+	Pagination Pagination `json:"pagination"`
+}
+
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListOrdersRequest) ([]Order, Pagination, error) {
 	input = normalizeList(input)
 	if err := s.scopeList(ctx, actor, &input); err != nil {
 		return nil, Pagination{}, err
 	}
+
+	if input.Search == "" {
+		return s.listOrders(ctx, actor, input)
+	}
+
+	// Global Search's "Orders" category (short TTL -- orders change status
+	// frequently). Key is built from the fully RBAC-resolved input (post
+	// scopeList), so it already encodes exactly what this actor is allowed
+	// to see.
+	const module = "orders"
+	redisutil.RecordSearchTerm(ctx, s.redis, nil, module, input.Search)
+	gen := redisutil.SearchGeneration(ctx, s.redis, nil, module, actor.UserID)
+	key := redisutil.SearchCacheKey(module, actor.UserID, gen,
+		input.Search, input.Status, fmt.Sprint(input.NurseryID), fmt.Sprint(input.BuyerID),
+		fmt.Sprint(input.Buying), input.SortBy, input.SortOrder,
+		fmt.Sprint(input.Page), fmt.Sprint(input.PerPage))
+
+	if cached, ok := redisutil.GetCachedSearch[cachedOrderList](ctx, s.redis, nil, module, input.Search, key); ok {
+		return cached.Orders, cached.Pagination, nil
+	}
+
+	start := time.Now()
+	orders, pagination, err := s.listOrders(ctx, actor, input)
+	if err != nil {
+		return nil, Pagination{}, err
+	}
+	redisutil.SetCachedSearch(ctx, s.redis, nil, module, input.Search, key,
+		cachedOrderList{Orders: orders, Pagination: pagination}, redisutil.SearchTTLOrders, time.Since(start))
+	return orders, pagination, nil
+}
+
+func (s *Service) listOrders(ctx context.Context, actor ActorContext, input ListOrdersRequest) ([]Order, Pagination, error) {
 	orders, total, err := s.repository.List(ctx, input)
 	if err != nil {
 		return nil, Pagination{}, err
@@ -425,7 +466,18 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateOr
 	s.audit(ctx, actor, auditlog.EntityOrder, order.ID, auditlog.ActionCreate,
 		fmt.Sprintf("Order %s created", order.OrderNumber), nil, input)
 	s.enrichOrder(ctx, actor, order)
+	s.bumpOrdersSearchCache(ctx, actor.UserID)
 	return *order, nil
+}
+
+// bumpOrdersSearchCache invalidates the acting user's previously-cached
+// Global Search "Orders" results (see List's cache-aside path). Other
+// actors who can also see this order (e.g. the buyer on a seller-created
+// order) fall back to the short TTL rather than a cross-actor invalidation
+// fan-out -- see searchcache.go's package doc for why that's an
+// intentional tradeoff, not an oversight.
+func (s *Service) bumpOrdersSearchCache(ctx context.Context, userID int64) {
+	redisutil.BumpSearchGeneration(ctx, s.redis, nil, "orders", userID)
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID int64, input UpdateStatusRequest) (Order, error) {
@@ -470,6 +522,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID 
 		map[string]any{"status": current.Status},
 		map[string]any{"status": status})
 	s.enrichOrder(ctx, actor, order)
+	s.bumpOrdersSearchCache(ctx, actor.UserID)
 	return *order, nil
 }
 
@@ -661,6 +714,7 @@ func (s *Service) Cancel(ctx context.Context, actor ActorContext, orderID int64,
 		map[string]any{"status": order.Status},
 		map[string]any{"status": "CANCELLED", "reason": reason})
 	s.enrichOrder(ctx, actor, updated)
+	s.bumpOrdersSearchCache(ctx, actor.UserID)
 	return *updated, nil
 }
 
