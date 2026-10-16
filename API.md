@@ -18,7 +18,9 @@ REDIS_ADDR='localhost:6379' DATABASE_URL='postgres:///greenroot?host=/tmp' JWT_S
 ```
 
 Swagger: `http://localhost:8080/swagger/`  
-OpenAPI spec (source of truth): `docs/swagger/openapi.yaml`
+OpenAPI spec (source of truth): `docs/swagger/openapi.yaml` — every registered route is documented; `internal/app/openapi_test.go` fails CI if a route is added/removed without updating it or a `$ref` breaks.
+
+**CORS:** `CORS_ALLOWED_ORIGINS` is a comma-separated list of exact origins (`https://admin.example.com`, no path). Local dev servers are allowed by default only when `APP_ENV` is not `production`; in production the list must be set or browser clients are refused (startup warns). No credentials (bearer tokens only); `Content-Disposition`, `X-Subscription-Warning` and `X-Request-Id` are exposed to browser JS; preflights are cached 10 minutes. Native mobile apps send no `Origin` and are unaffected.
 
 Current registered route count from chi route definitions:
 
@@ -352,12 +354,13 @@ Only returns ads with a confirmed `pickup_location`. Combines with all existing 
 - [ ] Rate limiting on remaining high-risk routes
 - [ ] Request size limits
 - [ ] Security headers (HSTS, X-Frame-Options)
-- [ ] CORS policy review per environment
+- [x] CORS policy review per environment (2026-10-16: exact-origin list, prod-safe defaults, exposed headers, no credentials)
 - [ ] Login brute-force protection
 - [ ] Real FCM, S3, Razorpay/PayU integrations
 - [ ] Expand integration tests — edge cases + negative paths
 - [ ] CI/CD: `gofmt`, `go vet ./...`, `go test ./...`, `go build`, OpenAPI validation
-- [ ] Missing DB indexes review + slow-query logging
+- [x] Missing DB indexes review (2026-10-16: all 75 unindexed FKs checked against repository SQL; 4 indexes added in `greenroot-infra/db/postgresql/migrations/20261016_002_fk_lookup_indexes.sql`)
+- [ ] Slow-query logging
 - [ ] Request IDs on all responses + metrics endpoint
 - [ ] Production Docker config + Compose stack
 - [ ] PostgreSQL backup scripts

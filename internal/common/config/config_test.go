@@ -43,3 +43,15 @@ func TestLoadParsesCORSAllowedOrigins(t *testing.T) {
 		t.Fatalf("expected second localhost origin, got %q", cfg.HTTP.CORSAllowedOrigins[1])
 	}
 }
+
+func TestCORSDefaultsAreDevOnly(t *testing.T) {
+	t.Setenv("CORS_ALLOWED_ORIGINS", "")
+	t.Setenv("APP_ENV", "local")
+	if len(Load().HTTP.CORSAllowedOrigins) == 0 {
+		t.Fatal("local env should allow the dev servers by default")
+	}
+	t.Setenv("APP_ENV", "production")
+	if got := Load().HTTP.CORSAllowedOrigins; len(got) != 0 {
+		t.Fatalf("production must not default to localhost origins, got %v", got)
+	}
+}

@@ -68,6 +68,9 @@ func Bootstrap(ctx context.Context) (*App, error) {
 	if !smsProvider.Live() && cfg.App.Env == "production" {
 		logManager.Logger().Warn("SMS_PROVIDER is mock in production: OTP is the fixed dev code and no SMS is delivered")
 	}
+	if cfg.App.Env == "production" && len(cfg.HTTP.CORSAllowedOrigins) == 0 {
+		logManager.Logger().Warn("CORS_ALLOWED_ORIGINS is empty in production: browser clients (admin UI) cannot call the API")
+	}
 	emailProvider, err := platformemail.New(cfg.Email.Provider)
 	if err != nil {
 		_ = logManager.Close()

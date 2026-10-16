@@ -89,26 +89,35 @@ type RedisConfig struct {
 	DB       int
 }
 
+// devCORSOrigins are the local admin/web dev servers. They are never a
+// default in production, where CORS_ALLOWED_ORIGINS must be set explicitly.
+var devCORSOrigins = []string{
+	"http://localhost:5173", "http://127.0.0.1:5173",
+	"http://localhost:3000", "http://127.0.0.1:3000",
+	"http://localhost:4040", "http://127.0.0.1:4040",
+	"http://localhost:7080", "http://127.0.0.1:7080",
+}
+
 func Load() Config {
+	appEnv := getString("APP_ENV", "local")
+	defaultOrigins := devCORSOrigins
+	if appEnv == "production" {
+		defaultOrigins = nil
+	}
 	return Config{
 		App: AppConfig{
 			Name:    getString("APP_NAME", "greenroot-api"),
-			Env:     getString("APP_ENV", "local"),
+			Env:     appEnv,
 			Version: getString("APP_VERSION", "0.1.0"),
 		},
 		HTTP: HTTPConfig{
-			Host: getString("HTTP_HOST", "0.0.0.0"),
-			Port: getInt("HTTP_PORT", 8080),
-			CORSAllowedOrigins: getStringSlice("CORS_ALLOWED_ORIGINS", []string{
-				"http://localhost:5173", "http://127.0.0.1:5173",
-				"http://localhost:3000", "http://127.0.0.1:3000",
-				"http://localhost:4040", "http://127.0.0.1:4040",
-				"http://localhost:7080", "http://127.0.0.1:7080",
-			}),
-			ReadHeaderTimeout: getDuration("HTTP_READ_HEADER_TIMEOUT", 5*time.Second),
-			ReadTimeout:       getDuration("HTTP_READ_TIMEOUT", 15*time.Second),
-			WriteTimeout:      getDuration("HTTP_WRITE_TIMEOUT", 15*time.Second),
-			IdleTimeout:       getDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
+			Host:               getString("HTTP_HOST", "0.0.0.0"),
+			Port:               getInt("HTTP_PORT", 8080),
+			CORSAllowedOrigins: getStringSlice("CORS_ALLOWED_ORIGINS", defaultOrigins),
+			ReadHeaderTimeout:  getDuration("HTTP_READ_HEADER_TIMEOUT", 5*time.Second),
+			ReadTimeout:        getDuration("HTTP_READ_TIMEOUT", 15*time.Second),
+			WriteTimeout:       getDuration("HTTP_WRITE_TIMEOUT", 15*time.Second),
+			IdleTimeout:        getDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
 		},
 		Logging: LoggingConfig{
 			Dir:           getString("LOG_DIR", "logs"),
