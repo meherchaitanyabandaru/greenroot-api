@@ -47,6 +47,7 @@ const (
 	ModuleVehicles      Module = "VEHICLES"
 	ModuleInvites       Module = "INVITES"
 	ModuleNotifications Module = "NOTIFICATIONS"
+	ModuleSMS           Module = "SMS"
 )
 
 // Action is the operation performed on an entity.

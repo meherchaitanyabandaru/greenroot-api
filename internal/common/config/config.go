@@ -16,6 +16,7 @@ type Config struct {
 	JWT      JWTConfig
 	Storage  StorageConfig
 	Redis    RedisConfig
+	SMS      SMSConfig
 }
 
 type AppConfig struct {
@@ -67,6 +68,12 @@ type StorageConfig struct {
 	UseSSL          bool
 	Region          string
 	PublicURL       string // base URL for constructing permanent file URLs
+}
+
+// SMSConfig selects the outbound SMS gateway. DLT identifiers (PE ID, headers,
+// template IDs) are managed in the database via the admin UI, not here.
+type SMSConfig struct {
+	Provider string // "mock" (default) never sends
 }
 
 type RedisConfig struct {
@@ -127,6 +134,9 @@ func Load() Config {
 			Addr:     getString("REDIS_ADDR", ""),
 			Password: getString("REDIS_PASSWORD", ""),
 			DB:       getInt("REDIS_DB", 0),
+		},
+		SMS: SMSConfig{
+			Provider: getString("SMS_PROVIDER", "mock"),
 		},
 	}
 }

@@ -234,7 +234,7 @@ func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int6
 
 func baseSelect() string {
 	return `
-		SELECT p.payment_id, p.payment_code, p.payment_for, p.order_id, o.order_number, p.user_subscription_id,
+		SELECT p.payment_id, p.payment_code, p.payment_for, p.order_id, o.order_number, o.order_code, p.user_subscription_id,
 			sp.plan_name, p.payer_user_id, u.first_name, p.amount, p.payment_method::text,
 			p.transaction_reference, p.payment_status::text, p.payment_date, p.notes,
 			p.provider, p.provider_payment_id, p.provider_order_id, p.provider_signature,
@@ -340,7 +340,7 @@ func scanPaymentRows(rows *sql.Rows) (Payment, error) {
 func scanPayment(row interface{ Scan(dest ...any) error }) (Payment, error) {
 	var payment Payment
 	var orderID, subscriptionID, payerUserID sql.NullInt64
-	var orderNumber, planName, payerName, method, txRef, notes, provider, providerPaymentID, providerOrderID, providerSignature, raw sql.NullString
+	var orderNumber, orderCode, planName, payerName, method, txRef, notes, provider, providerPaymentID, providerOrderID, providerSignature, raw sql.NullString
 	var paymentDate sql.NullTime
 	if err := row.Scan(
 		&payment.ID,
@@ -348,6 +348,7 @@ func scanPayment(row interface{ Scan(dest ...any) error }) (Payment, error) {
 		&payment.PaymentFor,
 		&orderID,
 		&orderNumber,
+		&orderCode,
 		&subscriptionID,
 		&planName,
 		&payerUserID,
@@ -370,6 +371,7 @@ func scanPayment(row interface{ Scan(dest ...any) error }) (Payment, error) {
 	}
 	payment.OrderID = nullableInt64(orderID)
 	payment.OrderNumber = nullableString(orderNumber)
+	payment.OrderCode = nullableString(orderCode)
 	payment.UserSubscriptionID = nullableInt64(subscriptionID)
 	payment.SubscriptionPlan = nullableString(planName)
 	payment.PayerUserID = nullableInt64(payerUserID)

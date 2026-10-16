@@ -16,6 +16,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/market"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/notifications"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
+	platformsms "github.com/meherchaitanyabandaru/greenroot-api/platform/sms"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
 )
@@ -57,6 +58,16 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		return nil, err
 	}
 
+	smsProvider, err := platformsms.New(cfg.SMS.Provider)
+	if err != nil {
+		_ = logManager.Close()
+		_ = db.Close()
+		return nil, err
+	}
+	if !smsProvider.Live() && cfg.App.Env == "production" {
+		logManager.Logger().Warn("SMS_PROVIDER is mock in production: OTP is the fixed dev code and no SMS is delivered")
+	}
+
 	deps := Dependencies{
 		Config:     cfg,
 		Logger:     logManager.Logger(),
@@ -66,6 +77,7 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		Storage:    storageClient,
 		Audit:      auditlog.NewService(db, logManager.Logger()),
 		Redis:      connectRedis(ctx, cfg.Redis, logManager.Logger()),
+		SMS:        smsProvider,
 	}
 
 	// Sync suspension state into Redis before accepting any traffic.

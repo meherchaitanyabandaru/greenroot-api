@@ -179,6 +179,7 @@ See `BUSINESS_RULES.md` for the full rule set. Key enforcements:
 | me/workspaces | `GET /me/workspaces` — returns PERSONAL, OWNED_NURSERY, MANAGER_NURSERY, DRIVER workspaces |
 | market | `GET/POST /market/ads` · browse, mine, saved, publish/pause/resume/renew/archive · enquiries |
 | ratings | `GET /ratings` · `POST /ratings/app` · order + trip submit and fetch |
+| sms | `GET /sms/status` · entity, headers, templates (+ preview, test send), messages · `GET/PUT /sms/preferences/me` — TRAI DLT registry; see [`greenroot-infra/docs/sms.md`](../greenroot-infra/docs/sms.md) |
 
 ---
 
@@ -211,6 +212,7 @@ All module routes below are mounted under `/api/v1` unless noted.
 | Sourcing | 17 | `GET /api/v1/nurseries/{nurseryId}/sourcing-membership`, `POST /api/v1/nurseries/{nurseryId}/sourcing-membership`, `DELETE /api/v1/nurseries/{nurseryId}/sourcing-membership`, `GET /api/v1/nurseries/{nurseryId}/featured-plants`, `POST /api/v1/nurseries/{nurseryId}/featured-plants`, `PUT /api/v1/nurseries/{nurseryId}/featured-plants/{featuredId}`, `DELETE /api/v1/nurseries/{nurseryId}/featured-plants/{featuredId}`, `GET /api/v1/sourcing-network/nurseries`, `GET /api/v1/sourcing-network/nurseries/{nurseryId}`, `GET /api/v1/sourcing-posts`, `POST /api/v1/sourcing-posts`, `GET /api/v1/sourcing-posts/{id}`, `PUT /api/v1/sourcing-posts/{id}`, `DELETE /api/v1/sourcing-posts/{id}`, `GET /api/v1/sourcing-posts/{id}/responses`, `POST /api/v1/sourcing-posts/{id}/responses`, `PUT /api/v1/sourcing-posts/{id}/responses/{responseId}` |
 | Market | 20 | `GET /api/v1/market/ads`, `GET /api/v1/market/ads/mine`, `GET /api/v1/market/ads/saved`, `POST /api/v1/market/ads`, `GET /api/v1/market/ads/{id}`, `PATCH /api/v1/market/ads/{id}`, `POST /api/v1/market/ads/{id}/publish`, `pause`, `resume`, `renew`, `archive`, `save`, `report` · `POST /api/v1/market/ads/{id}/enquiries`, `GET /api/v1/market/enquiries`, `GET /api/v1/market/enquiries/{id}`, `POST /api/v1/market/enquiries/{id}/reply`, `close`, `cancel`, `link-quotation` |
 | Ratings | 6 | `GET /api/v1/ratings`, `POST /api/v1/ratings/app`, `POST /api/v1/ratings/order/{order_id}`, `GET /api/v1/ratings/order/{order_id}`, `POST /api/v1/ratings/trip/{dispatch_id}`, `GET /api/v1/ratings/trip/{dispatch_id}` |
+| SMS | 15 | `GET /api/v1/sms/status`, `GET /api/v1/sms/entity`, `PUT /api/v1/sms/entity`, `GET /api/v1/sms/headers`, `POST /api/v1/sms/headers`, `PUT /api/v1/sms/headers/{id}`, `GET /api/v1/sms/templates`, `POST /api/v1/sms/templates`, `POST /api/v1/sms/templates/preview`, `GET /api/v1/sms/templates/{id}`, `PUT /api/v1/sms/templates/{id}`, `POST /api/v1/sms/templates/{id}/test`, `GET /api/v1/sms/messages`, `GET /api/v1/sms/preferences/me`, `PUT /api/v1/sms/preferences/me` |
 | Storage | 1 | `POST /api/v1/storage/presign` |
 | Audit | 1 | `GET /api/v1/audit-logs` |
 
@@ -223,7 +225,7 @@ All module routes below are mounted under `/api/v1` unless noted.
 | FCM (Push notifications) | Mock — real credentials needed |
 | S3 File Storage | Mock — pre-signed URL logic pending |
 | Razorpay/PayU Payments | Mock — gateway capture pending |
-| OTP Provider | Mock — `123456` hardcoded |
+| SMS / OTP Provider | Mock (`SMS_PROVIDER=mock`): `123456` OTP, SMS logged as MOCKED. Live path built (random hashed OTP, per-number throttle, DLT-approved templates only) — needs a gateway in `platform/sms`. See `greenroot-infra/docs/sms.md` |
 
 ---
 

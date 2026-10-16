@@ -267,6 +267,14 @@ func writeAuthError(w http.ResponseWriter, err error) {
 		})
 	case errors.Is(err, ErrInvalidOTP):
 		response.Error(w, http.StatusUnauthorized, "invalid_otp", "invalid OTP")
+	case errors.Is(err, ErrInvalidMobile):
+		response.Error(w, http.StatusBadRequest, "invalid_mobile", "enter a valid 10-digit Indian mobile number")
+	case errors.Is(err, ErrOTPCooldown):
+		response.Error(w, http.StatusTooManyRequests, "otp_cooldown", "please wait 30 seconds before requesting another OTP")
+	case errors.Is(err, ErrOTPRateLimited):
+		response.Error(w, http.StatusTooManyRequests, "otp_rate_limited", "too many OTP requests for this number — try again in an hour")
+	case errors.Is(err, ErrOTPUnavailable):
+		response.Error(w, http.StatusServiceUnavailable, "otp_unavailable", "could not send the OTP right now — please try again shortly")
 	case errors.Is(err, ErrInvalidRefreshToken):
 		response.Error(w, http.StatusUnauthorized, "invalid_refresh_token", "invalid refresh token")
 	case errors.Is(err, ErrInvalidToken):

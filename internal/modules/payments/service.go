@@ -3,10 +3,13 @@ package payments
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sms"
 )
 
 var (
@@ -14,13 +17,25 @@ var (
 	ErrInvalidInput = apperrs.ErrInvalidInput
 )
 
+// SMSSender is the slice of the sms module payments needs for payer alerts.
+type SMSSender interface {
+	SendToUser(ctx context.Context, userID int64, req sms.SendRequest) (sms.SendResult, error)
+}
+
 type Service struct {
 	repository Repository
 	auditSvc   *auditlog.Service
+	sms        SMSSender
 }
 
 func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
 	return &Service{repository: repository, auditSvc: auditSvc}
+}
+
+// WithSMS enables payment SMS alerts to the payer.
+func (s *Service) WithSMS(sender SMSSender) *Service {
+	s.sms = sender
+	return s
 }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListPaymentsRequest) ([]Payment, Pagination, error) {
@@ -59,6 +74,7 @@ func (s *Service) CreateManual(ctx context.Context, actor ActorContext, input Ma
 		return Payment{}, err
 	}
 	s.audit(ctx, actor, payment.ID, actionInsert, normalized)
+	s.notifyPayer(*payment, "")
 	return *payment, nil
 }
 
@@ -74,6 +90,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, paymentI
 	if err := s.canManagePayment(ctx, actor, *current); err != nil {
 		return Payment{}, err
 	}
+	previousStatus := current.Status
 	updated, err := s.repository.UpdateStatus(ctx, paymentID, UpdatePaymentInput{
 		Status:               status,
 		TransactionReference: input.TransactionReference,
@@ -88,6 +105,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, paymentI
 		return Payment{}, err
 	}
 	s.audit(ctx, actor, updated.ID, actionUpdate, input)
+	s.notifyPayer(*updated, previousStatus)
 	return *updated, nil
 }
 
@@ -303,4 +321,53 @@ func (s *Service) audit(ctx context.Context, actor ActorContext, entityID int64,
 		IPAddress:  actor.IPAddress,
 		DeviceInfo: actor.UserAgent,
 	})
+}
+
+// paymentSMS maps a payment that just reached SUCCESS or FAILED to its alert
+// template; ok is false when no SMS applies.
+func paymentSMS(p Payment) (sms.SendRequest, bool) {
+	payParts := sms.CodeParts(p.PaymentCode)
+	if p.PayerUserID == nil || len(payParts) != 2 {
+		return sms.SendRequest{}, false
+	}
+	rupees, paise := sms.AmountParts(p.Amount)
+	values := map[string]string{"amount_rupees": rupees, "amount_paise": paise, "payment_date": payParts[0], "payment_seq": payParts[1]}
+	req := sms.SendRequest{Values: values, ReferenceType: "PAYMENT", ReferenceID: &p.ID}
+	switch {
+	case p.Status == "FAILED":
+		req.TemplateCode = sms.TemplatePaymentFailed
+	case p.Status == "SUCCESS" && p.PaymentFor == paymentForSubscription:
+		req.TemplateCode = sms.TemplatePaymentReceivedSubscription
+	case p.Status == "SUCCESS" && p.PaymentFor == paymentForOrder && p.OrderCode != nil:
+		orderParts := sms.CodeParts(*p.OrderCode)
+		if len(orderParts) != 2 {
+			return sms.SendRequest{}, false
+		}
+		req.TemplateCode = sms.TemplatePaymentReceivedOrder
+		values["order_date"], values["order_seq"] = orderParts[0], orderParts[1]
+	default:
+		return sms.SendRequest{}, false
+	}
+	return req, true
+}
+
+// notifyPayer sends the alert only on a transition into SUCCESS/FAILED, after
+// the payment is committed, detached from the request so SMS latency or
+// failure never affects the payment itself.
+func (s *Service) notifyPayer(p Payment, previousStatus string) {
+	if s.sms == nil || p.Status == previousStatus {
+		return
+	}
+	req, ok := paymentSMS(p)
+	if !ok {
+		return
+	}
+	payer := *p.PayerUserID
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if _, err := s.sms.SendToUser(ctx, payer, req); err != nil {
+			slog.Warn("payment sms not sent", "payment_id", p.ID, "template_code", req.TemplateCode, "error", err)
+		}
+	}()
 }

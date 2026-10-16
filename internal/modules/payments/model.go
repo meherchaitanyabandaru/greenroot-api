@@ -21,6 +21,7 @@ type Payment struct {
 	PaymentFor           string     `json:"payment_for"`
 	OrderID              *int64     `json:"order_id,omitempty"`
 	OrderNumber          *string    `json:"order_number,omitempty"`
+	OrderCode            *string    `json:"order_code,omitempty"`
 	UserSubscriptionID   *int64     `json:"user_subscription_id,omitempty"`
 	SubscriptionPlan     *string    `json:"subscription_plan,omitempty"`
 	PayerUserID          *int64     `json:"payer_user_id,omitempty"`

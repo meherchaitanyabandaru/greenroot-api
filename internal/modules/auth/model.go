@@ -5,6 +5,9 @@ import "time"
 const (
 	mockOTP              = "123456"
 	otpTTL               = 5 * time.Minute
+	otpResendCooldown    = 30 * time.Second
+	otpMaxPerHour        = 5
+	otpMaxVerifyAttempts = 5
 	defaultUserFirstName = "GreenRoot"
 	defaultUserRole      = "BUYER"
 	activityLogin        = "LOGIN"
