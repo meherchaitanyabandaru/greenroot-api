@@ -214,7 +214,14 @@ func (r *PostgresRepository) ListPublished(ctx context.Context, q AdsQuery) ([]A
 }
 
 func (r *PostgresRepository) ListByNursery(ctx context.Context, nurseryID int64, q AdsQuery) ([]Ad, int, error) {
-	return r.listAds(ctx, "ma.nursery_id = $1", "", q.Page, q.PerPage, []any{nurseryID})
+	// "mine" (not the public-browse default) -- a nursery managing its own
+	// ads needs to see what it just created/edited first. The default order
+	// sorts by published_at NULLS LAST, so a never-published DRAFT always
+	// sorts after every ad that has ever been published, regardless of how
+	// recently the draft was created; once a nursery accumulates >= one
+	// page of ever-published ads, new drafts fall off page 1 permanently
+	// (the My Ads screen has no "load more").
+	return r.listAds(ctx, "ma.nursery_id = $1", "mine", q.Page, q.PerPage, []any{nurseryID})
 }
 
 // listAds runs count + paginated SELECT. filterArgs are args for the WHERE clause only;
@@ -232,6 +239,8 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, p
 
 	orderBy := "ma.published_at DESC NULLS LAST, ma.created_at DESC"
 	switch sort {
+	case "mine":
+		orderBy = "ma.created_at DESC"
 	case "oldest":
 		orderBy = "ma.created_at ASC"
 	case "price_asc":
