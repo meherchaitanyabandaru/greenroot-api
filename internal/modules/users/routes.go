@@ -14,13 +14,16 @@ type Module struct {
 	handler *Handler
 }
 
-func NewModule(db *sql.DB, jwt *jwtplatform.Service, storage *platformstorage.Client, audit *auditlog.Service, rdb *redis.Client) Module {
+func NewModule(db *sql.DB, jwt *jwtplatform.Service, storage *platformstorage.Client, audit *auditlog.Service, rdb *redis.Client, emailSender EmailSender) Module {
 	repository := NewRepository(db)
 	var service *Service
 	if rdb != nil {
 		service = NewService(repository, storage, audit, rdb)
 	} else {
 		service = NewService(repository, storage, audit)
+	}
+	if emailSender != nil {
+		service.WithEmail(emailSender)
 	}
 	return Module{handler: NewHandler(service, jwt)}
 }
@@ -32,6 +35,8 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Post("/me/onboarding", m.handler.CompleteOnboarding)
 		r.Delete("/me", m.handler.DeleteAccount)
 		r.Post("/me/avatar", m.handler.UploadAvatar)
+		r.Post("/me/email/send-code", m.handler.SendEmailCode)
+		r.Post("/me/email/verify", m.handler.VerifyEmail)
 		r.Get("/{id}", m.handler.GetUser)
 		r.Get("/{id}/addresses", m.handler.ListAddresses)
 		r.Post("/{id}/addresses", m.handler.CreateAddress)

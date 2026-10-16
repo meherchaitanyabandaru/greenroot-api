@@ -171,16 +171,4 @@ func TestHelpers(t *testing.T) {
 	if _, ok := NormalizeMobile("1234567890"); ok {
 		t.Error("numbers starting 1-5 are not Indian mobiles")
 	}
-	if r, p := AmountParts(1250.5); r != "1250" || p != "50" {
-		t.Errorf("AmountParts(1250.5) = %s.%s", r, p)
-	}
-	if r, p := AmountParts(0.07); r != "0" || p != "07" {
-		t.Errorf("AmountParts(0.07) = %s.%s", r, p)
-	}
-	if r, p := AmountParts(19.999); r != "20" || p != "00" {
-		t.Errorf("AmountParts(19.999) = %s.%s", r, p)
-	}
-	if parts := CodeParts("ORD-20260725-0008"); len(parts) != 2 || parts[0] != "20260725" || parts[1] != "0008" {
-		t.Errorf("CodeParts = %v", parts)
-	}
 }

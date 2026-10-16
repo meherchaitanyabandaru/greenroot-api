@@ -15,7 +15,7 @@ type Module struct {
 	rdb     *redis.Client
 }
 
-func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, rdb *redis.Client, smsSender SMSSender) Module {
+func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, rdb *redis.Client, smsSender SMSSender, events EventNotifier) Module {
 	repository := NewRepository(db)
 	var service *Service
 	if rdb != nil {
@@ -25,6 +25,9 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, rd
 	}
 	if smsSender != nil {
 		service.WithSMS(smsSender)
+	}
+	if events != nil {
+		service.WithEvents(events)
 	}
 	return Module{handler: NewHandler(service), rdb: rdb}
 }

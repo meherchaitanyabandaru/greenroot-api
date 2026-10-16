@@ -260,6 +260,42 @@ func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, map[string]string{"message": "Account deleted. Your personal data has been removed."})
 }
 
+// SendEmailCode godoc: POST /users/me/email/send-code
+func (h *Handler) SendEmailCode(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	var req EmailCodeRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	resp, err := h.service.SendEmailCode(r.Context(), actor, req)
+	if err != nil {
+		writeUsersError(w, err)
+		return
+	}
+	response.OK(w, resp)
+}
+
+// VerifyEmail godoc: POST /users/me/email/verify
+func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	var req VerifyEmailRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	user, err := h.service.VerifyEmail(r.Context(), actor, req)
+	if err != nil {
+		writeUsersError(w, err)
+		return
+	}
+	response.OK(w, UserResponse{User: user})
+}
+
 func (h *Handler) actorAndPathUser(w http.ResponseWriter, r *http.Request) (ActorContext, int64, bool) {
 	actor, ok := h.actor(w, r)
 	if !ok {
@@ -317,6 +353,16 @@ func writeUsersError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusBadRequest, "invalid_address", "invalid address input")
 	case errors.Is(err, ErrAccountDeleted):
 		response.Error(w, http.StatusGone, "account_deleted", "this account has already been deleted")
+	case errors.Is(err, ErrEmailTaken):
+		response.Error(w, http.StatusConflict, "email_taken", "this email is already used by another account")
+	case errors.Is(err, ErrInvalidEmailCode):
+		response.Error(w, http.StatusBadRequest, "invalid_code", "the verification code is wrong or has expired")
+	case errors.Is(err, ErrEmailCooldown):
+		response.Error(w, http.StatusTooManyRequests, "email_code_cooldown", "please wait 30 seconds before requesting another code")
+	case errors.Is(err, ErrEmailRateLimited):
+		response.Error(w, http.StatusTooManyRequests, "email_code_rate_limited", "too many codes requested for this email — try again in an hour")
+	case errors.Is(err, ErrEmailUnavailable):
+		response.Error(w, http.StatusServiceUnavailable, "email_unavailable", "could not send the email right now — please try again shortly")
 	case errors.Is(err, ErrAccountDeletionBlocked):
 		response.Error(w, http.StatusConflict, "account_deletion_blocked", "close or transfer active nursery business before deleting this account")
 	default:

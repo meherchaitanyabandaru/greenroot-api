@@ -3,12 +3,11 @@ package payments
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/messaging"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sms"
 )
 
@@ -17,24 +16,24 @@ var (
 	ErrInvalidInput = apperrs.ErrInvalidInput
 )
 
-// SMSSender is the slice of the sms module payments needs for payer alerts.
-type SMSSender interface {
-	SendToUser(ctx context.Context, userID int64, req sms.SendRequest) (sms.SendResult, error)
+// EventNotifier fans payer alerts out to every messaging channel (SMS, email).
+type EventNotifier interface {
+	NotifyAsync(ev messaging.Event)
 }
 
 type Service struct {
 	repository Repository
 	auditSvc   *auditlog.Service
-	sms        SMSSender
+	events     EventNotifier
 }
 
 func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
 	return &Service{repository: repository, auditSvc: auditSvc}
 }
 
-// WithSMS enables payment SMS alerts to the payer.
-func (s *Service) WithSMS(sender SMSSender) *Service {
-	s.sms = sender
+// WithEvents enables payment alerts to the payer on every channel.
+func (s *Service) WithEvents(n EventNotifier) *Service {
+	s.events = n
 	return s
 }
 
@@ -323,51 +322,36 @@ func (s *Service) audit(ctx context.Context, actor ActorContext, entityID int64,
 	})
 }
 
-// paymentSMS maps a payment that just reached SUCCESS or FAILED to its alert
-// template; ok is false when no SMS applies.
-func paymentSMS(p Payment) (sms.SendRequest, bool) {
-	payParts := sms.CodeParts(p.PaymentCode)
-	if p.PayerUserID == nil || len(payParts) != 2 {
-		return sms.SendRequest{}, false
+// paymentEvent maps a payment that just reached SUCCESS or FAILED to its
+// alert event; ok is false when no alert applies. Values are semantic —
+// each channel derives what its templates need (see messaging.ExpandValues).
+func paymentEvent(p Payment) (messaging.Event, bool) {
+	if p.PayerUserID == nil || len(messaging.CodeParts(p.PaymentCode)) != 2 {
+		return messaging.Event{}, false
 	}
-	rupees, paise := sms.AmountParts(p.Amount)
-	values := map[string]string{"amount_rupees": rupees, "amount_paise": paise, "payment_date": payParts[0], "payment_seq": payParts[1]}
-	req := sms.SendRequest{Values: values, ReferenceType: "PAYMENT", ReferenceID: &p.ID}
+	values := map[string]string{"amount": messaging.FormatAmount(p.Amount), "payment_code": p.PaymentCode}
+	ev := messaging.Event{UserID: *p.PayerUserID, Values: values, ReferenceType: "PAYMENT", ReferenceID: &p.ID}
 	switch {
 	case p.Status == "FAILED":
-		req.TemplateCode = sms.TemplatePaymentFailed
+		ev.Code = sms.TemplatePaymentFailed
 	case p.Status == "SUCCESS" && p.PaymentFor == paymentForSubscription:
-		req.TemplateCode = sms.TemplatePaymentReceivedSubscription
-	case p.Status == "SUCCESS" && p.PaymentFor == paymentForOrder && p.OrderCode != nil:
-		orderParts := sms.CodeParts(*p.OrderCode)
-		if len(orderParts) != 2 {
-			return sms.SendRequest{}, false
-		}
-		req.TemplateCode = sms.TemplatePaymentReceivedOrder
-		values["order_date"], values["order_seq"] = orderParts[0], orderParts[1]
+		ev.Code = sms.TemplatePaymentReceivedSubscription
+	case p.Status == "SUCCESS" && p.PaymentFor == paymentForOrder && p.OrderCode != nil && len(messaging.CodeParts(*p.OrderCode)) == 2:
+		ev.Code = sms.TemplatePaymentReceivedOrder
+		values["order_code"] = *p.OrderCode
 	default:
-		return sms.SendRequest{}, false
+		return messaging.Event{}, false
 	}
-	return req, true
+	return ev, true
 }
 
-// notifyPayer sends the alert only on a transition into SUCCESS/FAILED, after
-// the payment is committed, detached from the request so SMS latency or
-// failure never affects the payment itself.
+// notifyPayer raises the alert only on a transition into SUCCESS/FAILED,
+// after the payment is committed; delivery is detached from the request.
 func (s *Service) notifyPayer(p Payment, previousStatus string) {
-	if s.sms == nil || p.Status == previousStatus {
+	if s.events == nil || p.Status == previousStatus {
 		return
 	}
-	req, ok := paymentSMS(p)
-	if !ok {
-		return
+	if ev, ok := paymentEvent(p); ok {
+		s.events.NotifyAsync(ev)
 	}
-	payer := *p.PayerUserID
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if _, err := s.sms.SendToUser(ctx, payer, req); err != nil {
-			slog.Warn("payment sms not sent", "payment_id", p.ID, "template_code", req.TemplateCode, "error", err)
-		}
-	}()
 }

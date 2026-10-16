@@ -15,6 +15,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/database"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/market"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/notifications"
+	platformemail "github.com/meherchaitanyabandaru/greenroot-api/platform/email"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 	platformsms "github.com/meherchaitanyabandaru/greenroot-api/platform/sms"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
@@ -67,6 +68,15 @@ func Bootstrap(ctx context.Context) (*App, error) {
 	if !smsProvider.Live() && cfg.App.Env == "production" {
 		logManager.Logger().Warn("SMS_PROVIDER is mock in production: OTP is the fixed dev code and no SMS is delivered")
 	}
+	emailProvider, err := platformemail.New(cfg.Email.Provider)
+	if err != nil {
+		_ = logManager.Close()
+		_ = db.Close()
+		return nil, err
+	}
+	if !emailProvider.Live() && cfg.App.Env == "production" {
+		logManager.Logger().Warn("EMAIL_PROVIDER is mock in production: no email is delivered")
+	}
 
 	deps := Dependencies{
 		Config:     cfg,
@@ -78,6 +88,7 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		Audit:      auditlog.NewService(db, logManager.Logger()),
 		Redis:      connectRedis(ctx, cfg.Redis, logManager.Logger()),
 		SMS:        smsProvider,
+		Email:      emailProvider,
 	}
 
 	// Sync suspension state into Redis before accepting any traffic.

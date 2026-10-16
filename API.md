@@ -179,6 +179,8 @@ See `BUSINESS_RULES.md` for the full rule set. Key enforcements:
 | me/workspaces | `GET /me/workspaces` — returns PERSONAL, OWNED_NURSERY, MANAGER_NURSERY, DRIVER workspaces |
 | market | `GET/POST /market/ads` · browse, mine, saved, publish/pause/resume/renew/archive · enquiries |
 | ratings | `GET /ratings` · `POST /ratings/app` · order + trip submit and fetch |
+| email | `GET /email/status` · sender, templates (+ preview, test send), messages · `POST /users/me/email/send-code`, `/users/me/email/verify` — see [`greenroot-infra/docs/messaging.md`](../greenroot-infra/docs/messaging.md) |
+| messaging (core) | No routes. `messaging.Notifier` fans business events (payments, welcome) out to the SMS and email channels; `internal/common/otp` is shared by login OTP and email verification |
 | sms | `GET /sms/status` · entity, headers, templates (+ preview, test send), messages · `GET/PUT /sms/preferences/me` — TRAI DLT registry; see [`greenroot-infra/docs/sms.md`](../greenroot-infra/docs/sms.md) |
 
 ---
@@ -213,6 +215,7 @@ All module routes below are mounted under `/api/v1` unless noted.
 | Market | 20 | `GET /api/v1/market/ads`, `GET /api/v1/market/ads/mine`, `GET /api/v1/market/ads/saved`, `POST /api/v1/market/ads`, `GET /api/v1/market/ads/{id}`, `PATCH /api/v1/market/ads/{id}`, `POST /api/v1/market/ads/{id}/publish`, `pause`, `resume`, `renew`, `archive`, `save`, `report` · `POST /api/v1/market/ads/{id}/enquiries`, `GET /api/v1/market/enquiries`, `GET /api/v1/market/enquiries/{id}`, `POST /api/v1/market/enquiries/{id}/reply`, `close`, `cancel`, `link-quotation` |
 | Ratings | 6 | `GET /api/v1/ratings`, `POST /api/v1/ratings/app`, `POST /api/v1/ratings/order/{order_id}`, `GET /api/v1/ratings/order/{order_id}`, `POST /api/v1/ratings/trip/{dispatch_id}`, `GET /api/v1/ratings/trip/{dispatch_id}` |
 | SMS | 15 | `GET /api/v1/sms/status`, `GET /api/v1/sms/entity`, `PUT /api/v1/sms/entity`, `GET /api/v1/sms/headers`, `POST /api/v1/sms/headers`, `PUT /api/v1/sms/headers/{id}`, `GET /api/v1/sms/templates`, `POST /api/v1/sms/templates`, `POST /api/v1/sms/templates/preview`, `GET /api/v1/sms/templates/{id}`, `PUT /api/v1/sms/templates/{id}`, `POST /api/v1/sms/templates/{id}/test`, `GET /api/v1/sms/messages`, `GET /api/v1/sms/preferences/me`, `PUT /api/v1/sms/preferences/me` |
+| Email | 12 | `GET /api/v1/email/status`, `GET /api/v1/email/sender`, `PUT /api/v1/email/sender`, `GET /api/v1/email/templates`, `POST /api/v1/email/templates`, `POST /api/v1/email/templates/preview`, `GET /api/v1/email/templates/{id}`, `PUT /api/v1/email/templates/{id}`, `POST /api/v1/email/templates/{id}/test`, `GET /api/v1/email/messages`, `POST /api/v1/users/me/email/send-code`, `POST /api/v1/users/me/email/verify` |
 | Storage | 1 | `POST /api/v1/storage/presign` |
 | Audit | 1 | `GET /api/v1/audit-logs` |
 
@@ -225,6 +228,7 @@ All module routes below are mounted under `/api/v1` unless noted.
 | FCM (Push notifications) | Mock — real credentials needed |
 | S3 File Storage | Mock — pre-signed URL logic pending |
 | Razorpay/PayU Payments | Mock — gateway capture pending |
+| Email Provider | Mock (`EMAIL_PROVIDER=mock`): verification code `123456`, emails logged as MOCKED. Live path built (random hashed code, verified sender/domain required) — needs a gateway in `platform/email`. See `greenroot-infra/docs/messaging.md` |
 | SMS / OTP Provider | Mock (`SMS_PROVIDER=mock`): `123456` OTP, SMS logged as MOCKED. Live path built (random hashed OTP, per-number throttle, DLT-approved templates only) — needs a gateway in `platform/sms`. See `greenroot-infra/docs/sms.md` |
 
 ---

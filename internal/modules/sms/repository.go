@@ -36,7 +36,6 @@ type Repository interface {
 	ListMessages(ctx context.Context, input ListMessagesRequest) ([]Message, int64, error)
 	GetPreferences(ctx context.Context, userID int64) (Preferences, error)
 	UpsertPreferences(ctx context.Context, userID int64, optIn bool, source string, at time.Time) (Preferences, error)
-	FindUserMobile(ctx context.Context, userID int64) (string, error)
 }
 
 type PostgresRepository struct{ db *sql.DB }
@@ -331,15 +330,6 @@ func (r *PostgresRepository) UpsertPreferences(ctx context.Context, userID int64
 			consent_source = EXCLUDED.consent_source,
 			updated_at = EXCLUDED.updated_at
 		RETURNING `+preferenceColumns, userID, optIn, source, at))
-}
-
-func (r *PostgresRepository) FindUserMobile(ctx context.Context, userID int64) (string, error) {
-	var mobile sql.NullString
-	err := r.db.QueryRowContext(ctx, "SELECT mobile FROM public.users WHERE user_id = $1", userID).Scan(&mobile)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && !mobile.Valid) {
-		return "", ErrNotFound
-	}
-	return mobile.String, err
 }
 
 func mapUnique(err error) error {

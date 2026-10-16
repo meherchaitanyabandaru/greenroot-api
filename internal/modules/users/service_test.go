@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,7 +53,13 @@ func (m *mockRepo) UpdateProfile(_ context.Context, userID int64, input UpdatePr
 	}
 	u.FirstName = input.FirstName
 	u.LastName = input.LastName
-	u.Email = input.Email
+	if input.Email != nil { // nil = unchanged, "" = clear
+		if *input.Email == "" {
+			u.Email = nil
+		} else {
+			u.Email = input.Email
+		}
+	}
 	u.Gender = input.Gender
 	u.ProfileImageURL = input.ProfileImageURL
 	return u, nil
@@ -116,6 +123,24 @@ func (m *mockRepo) CreateUserActivity(_ context.Context, _ CreateActivityInput) 
 
 func (m *mockRepo) GetAccountDeletionBlockers(_ context.Context, userID int64) (AccountDeletionBlockers, error) {
 	return m.blockers[userID], nil
+}
+
+func (m *mockRepo) EmailTakenByOther(_ context.Context, email string, userID int64) (bool, error) {
+	for id, u := range m.users {
+		if id != userID && u.Email != nil && strings.EqualFold(*u.Email, email) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (m *mockRepo) SetVerifiedEmail(_ context.Context, userID int64, email string, _ time.Time) (*User, error) {
+	u, ok := m.users[userID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	u.Email, u.EmailVerified = &email, true
+	return u, nil
 }
 
 func (m *mockRepo) SoftDeleteAccount(_ context.Context, userID int64) error {

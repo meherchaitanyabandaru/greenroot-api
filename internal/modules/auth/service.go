@@ -2,10 +2,6 @@ package auth
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +12,9 @@ import (
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/otp"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/messaging"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sms"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 	"github.com/redis/go-redis/v9"
@@ -53,8 +51,8 @@ var (
 	ErrInvalidToken        = errors.New("invalid token")
 	ErrForbidden           = apperrs.ErrForbidden
 	ErrInvalidMobile       = errors.New("invalid mobile")
-	ErrOTPCooldown         = errors.New("otp requested too soon")
-	ErrOTPRateLimited      = errors.New("too many otp requests")
+	ErrOTPCooldown         = otp.ErrCooldown
+	ErrOTPRateLimited      = otp.ErrRateLimited
 	ErrOTPUnavailable      = errors.New("otp delivery unavailable")
 )
 
@@ -64,12 +62,19 @@ type SMSSender interface {
 	Send(ctx context.Context, req sms.SendRequest) (sms.SendResult, error)
 }
 
+// EventNotifier raises cross-channel events (welcome SMS/email).
+type EventNotifier interface {
+	NotifyAsync(ev messaging.Event)
+}
+
 type Service struct {
 	repository Repository
 	jwt        *jwtplatform.Service
 	audit      *auditlog.Service
 	redis      redis.Cmdable
+	otps       *otp.Store
 	sms        SMSSender
+	events     EventNotifier
 }
 
 type ClientContext struct {
@@ -82,7 +87,19 @@ func NewService(repository Repository, jwt *jwtplatform.Service, audit *auditlog
 	if len(redisClients) > 0 {
 		rdb = redisClients[0]
 	}
-	return &Service{repository: repository, jwt: jwt, audit: audit, redis: rdb}
+	return &Service{repository: repository, jwt: jwt, audit: audit, redis: rdb, otps: otp.New(rdb, otp.Policy{
+		Prefix:      redisutil.KeyOTP,
+		TTL:         otpTTL,
+		Cooldown:    otpResendCooldown,
+		MaxPerHour:  otpMaxPerHour,
+		MaxAttempts: otpMaxVerifyAttempts,
+	})}
+}
+
+// WithEvents attaches the cross-channel notifier used for the welcome message.
+func (s *Service) WithEvents(n EventNotifier) *Service {
+	s.events = n
+	return s
 }
 
 // WithSMS attaches OTP/welcome SMS delivery. Without it (or with a mock
@@ -99,7 +116,9 @@ func (s *Service) liveOTP() bool { return s.sms != nil && s.sms.Live() }
 func (s *Service) SendOTP(ctx context.Context, req SendOTPRequest) (SendOTPResponse, error) {
 	mobile := otpMobile(req.Mobile)
 	if !s.liveOTP() {
-		s.storeOTP(ctx, mobile, mockOTP)
+		if err := s.otps.Save(ctx, mobile, mockOTP); err != nil {
+			slog.Warn("redis otp set failed; falling back to dev otp verification", "error", err)
+		}
 		// Logged as MOCKED; failures are irrelevant because the dev OTP is fixed.
 		_ = s.sendOTPSMS(ctx, mobile, mockOTP)
 		return SendOTPResponse{
@@ -108,26 +127,27 @@ func (s *Service) SendOTP(ctx context.Context, req SendOTPRequest) (SendOTPRespo
 		}, nil
 	}
 
-	if s.redis == nil {
+	if !s.otps.Enabled() {
 		slog.Error("live SMS OTP requires Redis; refusing to send")
 		return SendOTPResponse{}, ErrOTPUnavailable
 	}
 	if _, ok := sms.NormalizeMobile(mobile); !ok {
 		return SendOTPResponse{}, ErrInvalidMobile
 	}
-	if err := s.throttleOTP(ctx, mobile); err != nil {
+	// Per-number throttle protects the SMS budget; the per-IP middleware
+	// limit alone is bypassed by rotating IPs.
+	if err := s.otps.Throttle(ctx, mobile); err != nil {
 		return SendOTPResponse{}, err
 	}
-	code, err := generateOTP()
+	code, err := otp.Generate()
 	if err != nil {
 		return SendOTPResponse{}, err
 	}
-	if err := s.redis.Set(ctx, redisutil.KeyOTP+mobile, hashOTP(code), otpTTL).Err(); err != nil {
-		return SendOTPResponse{}, fmt.Errorf("store otp: %w", err)
+	if err := s.otps.Save(ctx, mobile, code); err != nil {
+		return SendOTPResponse{}, err
 	}
-	s.redis.Del(ctx, otpAttemptsKey(mobile))
 	if err := s.sendOTPSMS(ctx, mobile, code); err != nil {
-		s.redis.Del(ctx, redisutil.KeyOTP+mobile)
+		s.otps.Delete(ctx, mobile)
 		slog.Error("otp sms failed", "error", err)
 		return SendOTPResponse{}, ErrOTPUnavailable
 	}
@@ -158,46 +178,6 @@ func (s *Service) sendOTPSMS(ctx context.Context, mobile, code string) error {
 	return err
 }
 
-// throttleOTP protects the SMS budget per number: one send per cooldown and
-// a cap per hour. The per-IP middleware limit alone is bypassed by rotating IPs.
-func (s *Service) throttleOTP(ctx context.Context, mobile string) error {
-	ok, err := s.redis.SetNX(ctx, redisutil.KeyOTP+"cooldown:"+mobile, 1, otpResendCooldown).Result()
-	if err != nil {
-		return fmt.Errorf("otp throttle: %w", err)
-	}
-	if !ok {
-		return ErrOTPCooldown
-	}
-	hourKey := redisutil.KeyOTP + "hourly:" + mobile
-	count, err := s.redis.Incr(ctx, hourKey).Result()
-	if err != nil {
-		return fmt.Errorf("otp throttle: %w", err)
-	}
-	if count == 1 {
-		s.redis.Expire(ctx, hourKey, time.Hour)
-	}
-	if count > otpMaxPerHour {
-		return ErrOTPRateLimited
-	}
-	return nil
-}
-
-func generateOTP() (string, error) {
-	var b [4]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	n := (uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])) % 1000000
-	return fmt.Sprintf("%06d", n), nil
-}
-
-func hashOTP(code string) string {
-	sum := sha256.Sum256([]byte(code))
-	return hex.EncodeToString(sum[:])
-}
-
-func otpAttemptsKey(mobile string) string { return redisutil.KeyOTP + "attempts:" + mobile }
-
 // otpMobile keys OTPs by the normalized 10-digit number so "+91 98..." and
 // "98..." share one OTP; anything else is used as typed.
 func otpMobile(raw string) string {
@@ -208,7 +188,12 @@ func otpMobile(raw string) string {
 }
 
 func (s *Service) VerifyOTP(ctx context.Context, req VerifyOTPRequest, client ClientContext) (AuthResponse, error) {
-	if !s.consumeOTP(ctx, otpMobile(req.Mobile), strings.TrimSpace(req.OTP)) {
+	// The fixed dev OTP is accepted only in mock mode.
+	devCode := mockOTP
+	if s.liveOTP() {
+		devCode = ""
+	}
+	if !s.otps.Verify(ctx, otpMobile(req.Mobile), strings.TrimSpace(req.OTP), devCode) {
 		return AuthResponse{}, ErrInvalidOTP
 	}
 
@@ -225,7 +210,7 @@ func (s *Service) VerifyOTP(ctx context.Context, req VerifyOTPRequest, client Cl
 			return AuthResponse{}, err
 		}
 		user.Roles, _ = s.repository.GetUserRoles(ctx, user.ID)
-		s.sendWelcomeSMS(user.ID, user.Mobile)
+		s.raiseWelcome(user.ID, user.Mobile)
 	} else if err != nil {
 		return AuthResponse{}, err
 	}
@@ -304,70 +289,19 @@ func (s *Service) VerifyOTP(ctx context.Context, req VerifyOTPRequest, client Cl
 	}, nil
 }
 
-func (s *Service) storeOTP(ctx context.Context, mobile string, code string) {
-	if s.redis == nil || mobile == "" {
+// raiseWelcome fans the welcome out to every channel with an ACCOUNT_WELCOME
+// template; it runs detached so a slow gateway never delays login.
+func (s *Service) raiseWelcome(userID int64, mobile string) {
+	if s.events == nil {
 		return
 	}
-	if err := s.redis.Set(ctx, redisutil.KeyOTP+mobile, hashOTP(code), otpTTL).Err(); err != nil {
-		slog.Warn("redis otp set failed; falling back to dev otp verification", "mobile", mobile, "error", err)
-	}
-}
-
-// consumeOTP verifies and burns an OTP. The fixed dev OTP fallback exists
-// only in mock mode; with live SMS a missing key or Redis error is a failure.
-func (s *Service) consumeOTP(ctx context.Context, mobile string, code string) bool {
-	live := s.liveOTP()
-	devFallback := func() bool { return !live && code == mockOTP }
-	if s.redis == nil {
-		return devFallback()
-	}
-	key := redisutil.KeyOTP + mobile
-	stored, err := s.redis.Get(ctx, key).Result()
-	if errors.Is(err, redis.Nil) {
-		return devFallback()
-	}
-	if err != nil {
-		slog.Warn("redis otp get failed", "mobile", mobile, "error", err)
-		return devFallback()
-	}
-	if subtle.ConstantTimeCompare([]byte(stored), []byte(hashOTP(code))) != 1 {
-		// Burn the OTP after too many wrong guesses so it cannot be brute-forced
-		// from many IPs within its TTL.
-		attempts, _ := s.redis.Incr(ctx, otpAttemptsKey(mobile)).Result()
-		if attempts == 1 {
-			s.redis.Expire(ctx, otpAttemptsKey(mobile), otpTTL)
-		}
-		if attempts >= otpMaxVerifyAttempts {
-			s.redis.Del(ctx, key, otpAttemptsKey(mobile))
-		}
-		return false
-	}
-	if err := s.redis.Del(ctx, key, otpAttemptsKey(mobile)).Err(); err != nil {
-		slog.Warn("redis otp delete failed", "mobile", mobile, "error", err)
-	}
-	return true
-}
-
-// sendWelcomeSMS runs detached so a slow gateway never delays login.
-func (s *Service) sendWelcomeSMS(userID int64, mobile string) {
-	if s.sms == nil || len(mobile) < 4 {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		_, err := s.sms.Send(ctx, sms.SendRequest{
-			TemplateCode:  sms.TemplateAccountWelcome,
-			Mobile:        mobile,
-			UserID:        &userID,
-			Values:        map[string]string{"mobile_last4": mobile[len(mobile)-4:]},
-			ReferenceType: "USER",
-			ReferenceID:   &userID,
-		})
-		if err != nil {
-			slog.Warn("welcome sms not sent", "user_id", userID, "error", err)
-		}
-	}()
+	s.events.NotifyAsync(messaging.Event{
+		Code:          sms.TemplateAccountWelcome,
+		UserID:        userID,
+		Values:        map[string]string{"mobile": mobile},
+		ReferenceType: "USER",
+		ReferenceID:   &userID,
+	})
 }
 
 func (s *Service) RefreshToken(ctx context.Context, req RefreshTokenRequest) (AuthResponse, error) {

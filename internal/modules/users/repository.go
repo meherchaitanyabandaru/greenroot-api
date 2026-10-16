@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
+
+	"github.com/jackc/pgx/v5/pgconn"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"time"
 )
@@ -23,6 +26,8 @@ type Repository interface {
 	CreateUserActivity(ctx context.Context, input CreateActivityInput) error
 	GetAccountDeletionBlockers(ctx context.Context, userID int64) (AccountDeletionBlockers, error)
 	SoftDeleteAccount(ctx context.Context, userID int64) error
+	EmailTakenByOther(ctx context.Context, email string, userID int64) (bool, error)
+	SetVerifiedEmail(ctx context.Context, userID int64, email string, at time.Time) (*User, error)
 }
 
 type AccountDeletionBlockers struct {
@@ -67,7 +72,11 @@ func (r *PostgresRepository) UpdateProfile(ctx context.Context, userID int64, in
 		SET first_name = $2,
 			last_name = NULLIF($3, ''),
 			gender = $4::public.gender_type,
-			email = NULLIF($5, ''),
+			-- NULL $5 = leave unchanged, '' = clear; a changed address loses its
+			-- verified flag (SET expressions see the old row).
+			email = CASE WHEN $5::text IS NULL THEN email ELSE NULLIF($5::text, '') END,
+			email_verified = CASE WHEN $5::text IS NULL OR lower(email) IS NOT DISTINCT FROM lower(NULLIF($5::text, ''))
+				THEN email_verified ELSE false END,
 			profile_image_url = NULLIF($6, ''),
 			updated_at = $7,
 			updated_by = $1
@@ -83,7 +92,7 @@ func (r *PostgresRepository) UpdateProfile(ctx context.Context, userID int64, in
 		input.FirstName,
 		stringOrEmpty(input.LastName),
 		nullableStringValue(input.Gender),
-		stringOrEmpty(input.Email),
+		input.Email,
 		stringOrEmpty(input.ProfileImageURL),
 		at,
 	))
@@ -91,10 +100,43 @@ func (r *PostgresRepository) UpdateProfile(ctx context.Context, userID int64, in
 		return nil, ErrNotFound
 	}
 	if err != nil {
-		return nil, err
+		return nil, mapEmailUnique(err)
 	}
 	user.Roles, _ = r.ListRoles(ctx, user.ID)
 	return user, nil
+}
+
+func (r *PostgresRepository) EmailTakenByOther(ctx context.Context, email string, userID int64) (bool, error) {
+	var taken bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM public.users WHERE lower(email) = lower($1) AND user_id <> $2)`, email, userID).Scan(&taken)
+	return taken, err
+}
+
+// SetVerifiedEmail stores the address the user just proved they own.
+func (r *PostgresRepository) SetVerifiedEmail(ctx context.Context, userID int64, email string, at time.Time) (*User, error) {
+	user, err := scanUserRow(r.db.QueryRowContext(ctx, `
+		UPDATE public.users SET email = $2, email_verified = true, updated_at = $3, updated_by = $1
+		WHERE user_id = $1 AND deleted_at IS NULL
+		RETURNING user_id, user_code, first_name, last_name, gender::text, mobile, email, profile_image_url,
+			mobile_verified, email_verified, onboarding_completed, initial_activity, onboarding_completed_at,
+			status::text, last_login_at, created_at, updated_at`, userID, email, at))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, mapEmailUnique(err)
+	}
+	user.Roles, _ = r.ListRoles(ctx, user.ID)
+	return user, nil
+}
+
+func mapEmailUnique(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" && strings.Contains(pgErr.ConstraintName, "email") {
+		return ErrEmailTaken
+	}
+	return err
 }
 
 func (r *PostgresRepository) CompleteOnboarding(ctx context.Context, userID int64, initialActivity string, at time.Time) (*User, error) {

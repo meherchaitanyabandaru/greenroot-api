@@ -13,8 +13,10 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/otp"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/revocation"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/email"
 	platformstorage "github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
 )
@@ -36,6 +38,8 @@ type Service struct {
 	storage    *platformstorage.Client
 	auditSvc   *auditlog.Service
 	redis      redis.Cmdable
+	email      EmailSender
+	emailOTPs  *otp.Store
 }
 
 func NewService(repository Repository, storage *platformstorage.Client, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
@@ -54,6 +58,19 @@ func (s *Service) UpdateMe(ctx context.Context, actor ActorContext, input Update
 	input.FirstName = trimString(input.FirstName)
 	if input.FirstName == "" {
 		return User{}, ErrInvalidInput
+	}
+	// Email: nil leaves it unchanged, "" clears it. Addresses are stored
+	// lower-cased so the unique index and verification agree; a changed
+	// address loses its verified flag (see UpdateProfile SQL).
+	if input.Email != nil && trimString(*input.Email) == "" {
+		empty := ""
+		input.Email = &empty
+	} else if input.Email != nil {
+		addr, ok := email.NormalizeAddress(*input.Email)
+		if !ok {
+			return User{}, ErrInvalidInput
+		}
+		input.Email = &addr
 	}
 	if input.Gender != nil {
 		*input.Gender = strings.ToUpper(trimString(*input.Gender))

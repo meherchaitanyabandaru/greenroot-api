@@ -169,12 +169,6 @@ func (r *fakeRepo) UpsertPreferences(_ context.Context, userID int64, optIn bool
 	r.prefs[userID] = p
 	return p, nil
 }
-func (r *fakeRepo) FindUserMobile(_ context.Context, userID int64) (string, error) {
-	if m, ok := r.mobiles[userID]; ok {
-		return m, nil
-	}
-	return "", ErrNotFound
-}
 
 var admin = ActorContext{UserID: 1, Roles: []string{"ADMIN"}}
 

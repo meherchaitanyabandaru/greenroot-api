@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/messaging"
 	platformsms "github.com/meherchaitanyabandaru/greenroot-api/platform/sms"
 )
 
@@ -81,21 +82,33 @@ func NormalizeMobile(raw string) (string, bool) {
 	return m, mobileRe.MatchString(m)
 }
 
-// AmountParts splits a rupee amount into whole rupees and two-digit paise, since
-// {#numeric#} admits digits only ("Rs.{#numeric#}.{#numeric#}").
-func AmountParts(amount float64) (rupees string, paise string) {
-	total := int64(math.Round(amount * 100))
-	return fmt.Sprintf("%d", total/100), fmt.Sprintf("%02d", total%100)
-}
+// Name identifies SMS as a messaging channel.
+func (s *Service) Name() string { return "SMS" }
 
-// CodeParts splits a public code like "ORD-20260725-0008" into its numeric
-// parts ("20260725", "0008"); the prefix is fixed text in the template.
-func CodeParts(code string) []string {
-	parts := strings.Split(code, "-")
-	if len(parts) <= 1 {
-		return nil
+// Deliver is the messaging.Channel entry point: it skips users without a
+// mobile and events with no active SMS template, otherwise sends.
+func (s *Service) Deliver(ctx context.Context, msg messaging.Message) (messaging.Result, error) {
+	if msg.Recipient.Mobile == "" {
+		return messaging.Result{}, messaging.ErrSkipped
 	}
-	return parts[1:]
+	tpl, err := s.repo.FindTemplateByCode(ctx, msg.TemplateCode)
+	if errors.Is(err, ErrNotFound) || (err == nil && !tpl.IsActive) {
+		return messaging.Result{}, messaging.ErrSkipped
+	}
+	if err != nil {
+		return messaging.Result{}, err
+	}
+	userID := msg.Recipient.UserID
+	res, err := s.Send(ctx, SendRequest{
+		TemplateCode:  msg.TemplateCode,
+		Mobile:        msg.Recipient.Mobile,
+		UserID:        &userID,
+		Values:        msg.Values,
+		Sensitive:     msg.Sensitive,
+		ReferenceType: msg.ReferenceType,
+		ReferenceID:   msg.ReferenceID,
+	})
+	return messaging.Result{MessageID: res.MessageID, Status: res.Status}, err
 }
 
 // Send renders and delivers one templated SMS, recording every attempt
@@ -227,17 +240,6 @@ func (s *Service) record(ctx context.Context, msg *Message) {
 		return
 	}
 	msg.ID = id
-}
-
-// SendToUser looks up the user's mobile and sends; used for alerts where the
-// caller only knows the user ID.
-func (s *Service) SendToUser(ctx context.Context, userID int64, req SendRequest) (SendResult, error) {
-	mobile, err := s.repo.FindUserMobile(ctx, userID)
-	if err != nil {
-		return SendResult{}, err
-	}
-	req.Mobile, req.UserID = mobile, &userID
-	return s.Send(ctx, req)
 }
 
 // ── Admin: status ───────────────────────────────────────────────────────────

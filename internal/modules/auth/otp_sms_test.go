@@ -10,6 +10,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/messaging"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sms"
 	"github.com/redis/go-redis/v9"
 )
@@ -186,24 +187,36 @@ func TestSendOTP_MockModeKeepsDevOTPAndLogsSMS(t *testing.T) {
 	}
 }
 
-func TestVerifyOTP_NewUserGetsWelcomeSMS(t *testing.T) {
-	sender := &fakeSMS{}
-	s := NewService(newMock(), testJWT(), nil).WithSMS(sender)
+type fakeEvents struct {
+	mu     sync.Mutex
+	events []messaging.Event
+}
+
+func (f *fakeEvents) NotifyAsync(ev messaging.Event) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, ev)
+}
+
+func TestVerifyOTP_NewUserRaisesWelcomeEvent(t *testing.T) {
+	events := &fakeEvents{}
+	repo := newMock()
+	repo.seedUser(1, "9000000000", "BUYER")
+	s := NewService(repo, testJWT(), nil).WithSMS(&fakeSMS{}).WithEvents(events)
+
+	if _, err := s.VerifyOTP(context.Background(), VerifyOTPRequest{Mobile: "9000000000", OTP: mockOTP}, ClientContext{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(events.events) != 0 {
+		t.Fatalf("existing user must not get a welcome, got %+v", events.events)
+	}
 	if _, err := s.VerifyOTP(context.Background(), VerifyOTPRequest{Mobile: "9876543210", OTP: mockOTP}, ClientContext{}); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		sender.mu.Lock()
-		n := len(sender.reqs)
-		sender.mu.Unlock()
-		if n > 0 {
-			if got := sender.last(t); got.TemplateCode != sms.TemplateAccountWelcome || got.Values["mobile_last4"] != "3210" {
-				t.Fatalf("welcome sms = %+v", got)
-			}
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	if len(events.events) != 1 {
+		t.Fatalf("want one welcome event, got %d", len(events.events))
 	}
-	t.Fatal("welcome SMS not sent for new user")
+	if ev := events.events[0]; ev.Code != sms.TemplateAccountWelcome || ev.Values["mobile"] != "9876543210" || ev.UserID == 0 {
+		t.Fatalf("welcome event = %+v", ev)
+	}
 }

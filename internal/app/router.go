@@ -16,10 +16,12 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/auth"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/dispatches"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/drivers"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/email"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/health"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/inventory"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/invites"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/market"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/messaging"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/notifications"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/nurseries"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/orders"
@@ -70,9 +72,16 @@ func NewRouter(deps Dependencies) chi.Router {
 		}
 		r.Use(appmiddleware.AuditContext) // must come after EnrichActorMiddleware
 
+		// Messaging: each channel registers its admin routes; the notifier fans
+		// business events out to every channel (SMS to mobile, email to a
+		// verified address).
 		smsModule := sms.NewModule(deps.DB, deps.JWT, deps.Audit, deps.SMS)
 		smsModule.RegisterRoutes(r)
-		auth.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis, smsModule.Service()).RegisterRoutes(r)
+		emailModule := email.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Email)
+		emailModule.RegisterRoutes(r)
+		notifier := messaging.NewNotifier(messaging.NewUserRecipients(deps.DB), smsModule.Service(), emailModule.Service())
+
+		auth.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis, smsModule.Service(), notifier).RegisterRoutes(r)
 		admin.NewModule(deps.DB, deps.JWT, redisClients...).RegisterRoutes(r)
 		attachments.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		audit.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
@@ -86,7 +95,7 @@ func NewRouter(deps Dependencies) chi.Router {
 		nurseries.NewModuleWithTrial(deps.DB, deps.JWT, deps.Audit, subModule.Service(), redisClients...).RegisterRoutes(r)
 		orders.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, redisClients...).RegisterRoutes(r)
 		quotations.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, redisClients...).RegisterRoutes(r)
-		payments.NewModule(deps.DB, deps.JWT, deps.Audit, smsModule.Service()).RegisterRoutes(r)
+		payments.NewModule(deps.DB, deps.JWT, deps.Audit, notifier).RegisterRoutes(r)
 		plants.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...).RegisterRoutes(r)
 		plantrequests.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		ratings.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
@@ -96,7 +105,7 @@ func NewRouter(deps Dependencies) chi.Router {
 		subModule.RegisterRoutes(r)
 		tracking.NewModule(deps.DB, deps.JWT, redisClients...).RegisterRoutes(r)
 		vehicles.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
-		users.NewModule(deps.DB, deps.JWT, deps.Storage, deps.Audit, deps.Redis).RegisterRoutes(r)
+		users.NewModule(deps.DB, deps.JWT, deps.Storage, deps.Audit, deps.Redis, emailModule.Service()).RegisterRoutes(r)
 	})
 
 	return router

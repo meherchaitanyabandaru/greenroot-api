@@ -17,6 +17,7 @@ type Config struct {
 	Storage  StorageConfig
 	Redis    RedisConfig
 	SMS      SMSConfig
+	Email    EmailConfig
 }
 
 type AppConfig struct {
@@ -73,6 +74,12 @@ type StorageConfig struct {
 // SMSConfig selects the outbound SMS gateway. DLT identifiers (PE ID, headers,
 // template IDs) are managed in the database via the admin UI, not here.
 type SMSConfig struct {
+	Provider string // "mock" (default) never sends
+}
+
+// EmailConfig selects the outbound email gateway. Sender identity and
+// templates are managed in the database via the admin UI.
+type EmailConfig struct {
 	Provider string // "mock" (default) never sends
 }
 
@@ -137,6 +144,9 @@ func Load() Config {
 		},
 		SMS: SMSConfig{
 			Provider: getString("SMS_PROVIDER", "mock"),
+		},
+		Email: EmailConfig{
+			Provider: getString("EMAIL_PROVIDER", "mock"),
 		},
 	}
 }
