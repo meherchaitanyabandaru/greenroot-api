@@ -38,8 +38,8 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Post("/", m.handler.Create)
 		r.Get("/mine", m.handler.Mine) // nurseries where user is manager
 		r.Route("/owned", func(r chi.Router) {
-			r.Get("/", m.handler.OwnedNursery)       // GET  /owned   — nursery user owns
-			r.Post("/resubmit", m.handler.Resubmit)  // POST /owned/resubmit — resubmit rejected application
+			r.Get("/", m.handler.OwnedNursery)      // GET  /owned   — nursery user owns
+			r.Post("/resubmit", m.handler.Resubmit) // POST /owned/resubmit — resubmit rejected application
 		})
 		r.Get("/{id}", m.handler.Get)
 		r.Put("/{id}", m.handler.Update)

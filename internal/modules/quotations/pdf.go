@@ -23,10 +23,10 @@ type pdfCanvas struct {
 // drawn below that.
 
 const (
-	partyBoxTop       = 674.0 // fixed top edge of the FROM/TO boxes (page 1 only) -- just below the header divider
-	p1InternalTableY  = 566.0 // item table Y for INTERNAL-type quotations (banner instead of party boxes)
-	contTableY        = 630.0 // item table Y on continuation pages
-	contLabelY        = 670.0 // "ITEMS - CONTINUED" baseline on continuation pages
+	partyBoxTop       = 674.0            // fixed top edge of the FROM/TO boxes (page 1 only) -- just below the header divider
+	p1InternalTableY  = 566.0            // item table Y for INTERNAL-type quotations (banner instead of party boxes)
+	contTableY        = 630.0            // item table Y on continuation pages
+	contLabelY        = 670.0            // "ITEMS - CONTINUED" baseline on continuation pages
 	summaryOnlyTableY = 630.0 - itemHdrH // where a dedicated summary-only page starts its content
 	itemRowH          = 40.0
 	itemHdrH          = 33.0 // 30pt header bar + 3pt gap before first row

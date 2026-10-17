@@ -235,6 +235,17 @@ All module routes below are mounted under `/api/v1` unless noted.
 
 ---
 
+## Production safety & migrations
+
+- **Startup validation** (`internal/common/config/validate.go`): with `APP_ENV=production` the API refuses to start, listing every problem, if any of these hold:
+  - `JWT_SECRET` is the default or shorter than 32 bytes;
+  - `DATABASE_URL`, `REDIS_ADDR` or `CORS_ALLOWED_ORIGINS` is missing;
+  - storage keys are the MinIO defaults;
+  - SMS or email is mock — unless `ALLOW_MOCK_PROVIDERS=true`, which is for a closed beta only.
+- **Body limits:** 1 MB for JSON (`HTTP_MAX_BODY_BYTES`), 12 MB for multipart uploads (`HTTP_MAX_UPLOAD_BYTES`). A declared oversize body gets `413 payload_too_large`.
+- **Migrations:** `internal/database/migrations` is the only place schema changes live. Run `go run ./cmd/migrate status|up|baseline` (or `make migrate-up`). In production the API refuses to start while migrations are pending. Details: `internal/database/migrations/README.md`.
+- **CI** (`.github/workflows/ci.yml`, on `master`): gofmt, vet, `go test -race` (excluding `./tests/...`, which need a running API), and builds. The OpenAPI drift test runs as part of `internal/app`.
+
 ## Testing
 
 | Layer | Command | Notes |
@@ -359,7 +370,7 @@ Only returns ads with a confirmed `pickup_location`. Combines with all existing 
 - [ ] Real FCM, S3, Razorpay/PayU integrations
 - [ ] Expand integration tests — edge cases + negative paths
 - [ ] CI/CD: `gofmt`, `go vet ./...`, `go test ./...`, `go build`, OpenAPI validation
-- [x] Missing DB indexes review (2026-10-16: all 75 unindexed FKs checked against repository SQL; 4 indexes added in `greenroot-infra/db/postgresql/migrations/20261016_002_fk_lookup_indexes.sql`)
+- [x] Missing DB indexes review (2026-10-16: all 75 unindexed FKs checked against repository SQL; 4 indexes added in `internal/database/migrations/20261016_02_fk_lookup_indexes.up.sql`)
 - [ ] Slow-query logging
 - [ ] Request IDs on all responses + metrics endpoint
 - [ ] Production Docker config + Compose stack

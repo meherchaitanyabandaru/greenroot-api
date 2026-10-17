@@ -32,13 +32,13 @@ integration:
 	./scripts/integration-test.sh
 
 migrate-up:
-	@echo "SQL migrations are squashed for development. Use ../greenroot-infra/scripts/reset-dbs.sh"
+	go run ./cmd/migrate up
 
 migrate-down:
-	@echo "SQL migrations are squashed for development. Use ../greenroot-infra/scripts/reset-dbs.sh"
+	@echo "No automatic rollback: apply the matching .down.sql by hand (see internal/database/migrations/README.md)"
 
 migrate-status:
-	@echo "SQL migrations are squashed for development. Canonical schema: ../greenroot-infra/db/postgresql/schema.sql"
+	go run ./cmd/migrate status
 
 clean:
 	rm -rf bin coverage.out

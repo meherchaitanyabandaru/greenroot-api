@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
@@ -13,6 +15,8 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/revocation"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/database"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/database/migrate"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/database/migrations"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/market"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/notifications"
 	platformemail "github.com/meherchaitanyabandaru/greenroot-api/platform/email"
@@ -29,6 +33,10 @@ type App struct {
 
 func Bootstrap(ctx context.Context) (*App, error) {
 	cfg := config.Load()
+	// Refuse to start with settings that are only safe for local development.
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 
 	logManager, err := logger.NewManager(cfg.Logging)
 	if err != nil {
@@ -43,6 +51,25 @@ func Bootstrap(ctx context.Context) (*App, error) {
 	if err != nil {
 		_ = logManager.Close()
 		return nil, err
+	}
+
+	// The schema must match the code: pending migrations refuse a production
+	// start and warn elsewhere. Apply them with `go run ./cmd/migrate up`.
+	if cfg.Database.URL != "" {
+		all, err := migrate.Load(migrations.FS)
+		if err != nil {
+			_ = logManager.Close()
+			_ = db.Close()
+			return nil, err
+		}
+		if pending, err := migrate.New(db, all).CheckCurrent(ctx); err != nil {
+			if !errors.Is(err, migrate.ErrPending) || cfg.IsProduction() {
+				_ = logManager.Close()
+				_ = db.Close()
+				return nil, fmt.Errorf("%w: %s (run cmd/migrate up)", err, versions(pending))
+			}
+			logManager.Logger().Warn("database has pending migrations; run `go run ./cmd/migrate up`", "pending", versions(pending))
+		}
 	}
 
 	storageClient, err := storage.New(storage.Config{
@@ -65,11 +92,8 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	if !smsProvider.Live() && cfg.App.Env == "production" {
-		logManager.Logger().Warn("SMS_PROVIDER is mock in production: OTP is the fixed dev code and no SMS is delivered")
-	}
-	if cfg.App.Env == "production" && len(cfg.HTTP.CORSAllowedOrigins) == 0 {
-		logManager.Logger().Warn("CORS_ALLOWED_ORIGINS is empty in production: browser clients (admin UI) cannot call the API")
+	if cfg.IsProduction() && !smsProvider.Live() {
+		logManager.Logger().Warn("ALLOW_MOCK_PROVIDERS: SMS is mock in production; OTP is the fixed dev code 123456 for every account")
 	}
 	emailProvider, err := platformemail.New(cfg.Email.Provider)
 	if err != nil {
@@ -77,8 +101,8 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	if !emailProvider.Live() && cfg.App.Env == "production" {
-		logManager.Logger().Warn("EMAIL_PROVIDER is mock in production: no email is delivered")
+	if cfg.IsProduction() && !emailProvider.Live() {
+		logManager.Logger().Warn("ALLOW_MOCK_PROVIDERS: email is mock in production; nothing is delivered")
 	}
 
 	deps := Dependencies{
@@ -207,4 +231,12 @@ func expireSubscriptions(ctx context.Context, deps Dependencies) {
 	if n, _ := res.RowsAffected(); n > 0 {
 		slog.Info("subscription expiry job: marked expired", "count", n)
 	}
+}
+
+func versions(ms []migrate.Migration) string {
+	out := make([]string, len(ms))
+	for i, m := range ms {
+		out[i] = m.Version
+	}
+	return strings.Join(out, ", ")
 }

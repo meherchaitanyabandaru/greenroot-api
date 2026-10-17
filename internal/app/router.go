@@ -47,6 +47,7 @@ func NewRouter(deps Dependencies) chi.Router {
 	router.Use(middleware.RequestID)
 	router.Use(middleware.RealIP)
 	router.Use(appmiddleware.CORS(deps.Config.HTTP.CORSAllowedOrigins))
+	router.Use(appmiddleware.BodyLimit(deps.Config.HTTP.MaxBodyBytes, deps.Config.HTTP.MaxUploadBytes))
 	router.Use(appmiddleware.Recovery(deps.Logger))
 	router.Use(appmiddleware.SecurityHeaders)
 	router.Use(appmiddleware.RequestLogger(deps.Logger))

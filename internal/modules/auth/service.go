@@ -217,7 +217,12 @@ func (s *Service) VerifyOTP(ctx context.Context, req VerifyOTPRequest, client Cl
 
 	if user.Status == "SUSPENDED" {
 		return AuthResponse{}, &SuspendedError{
-			Reason:      func() string { if user.SuspensionReason != nil { return *user.SuspensionReason }; return "" }(),
+			Reason: func() string {
+				if user.SuspensionReason != nil {
+					return *user.SuspensionReason
+				}
+				return ""
+			}(),
 			SuspendedAt: user.SuspendedAt,
 		}
 	}

@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/config"
-	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 	platformemail "github.com/meherchaitanyabandaru/greenroot-api/platform/email"
+	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 	platformsms "github.com/meherchaitanyabandaru/greenroot-api/platform/sms"
 	yaml "go.yaml.in/yaml/v3"
 )

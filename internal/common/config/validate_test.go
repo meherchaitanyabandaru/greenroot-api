@@ -1,0 +1,85 @@
+package config
+
+import (
+	"errors"
+	"strings"
+	"testing"
+)
+
+func safeProduction() Config {
+	return Config{
+		App:      AppConfig{Env: "production"},
+		HTTP:     HTTPConfig{CORSAllowedOrigins: []string{"https://admin.greenroot.in"}, MaxBodyBytes: 1 << 20, MaxUploadBytes: 12 << 20},
+		Database: DatabaseConfig{URL: "postgres://prod"},
+		JWT:      JWTConfig{Secret: strings.Repeat("s", 40)},
+		Storage:  StorageConfig{AccessKeyID: "prod-key", SecretAccessKey: "prod-secret"},
+		Redis:    RedisConfig{Addr: "redis:6379"},
+		SMS:      SMSConfig{Provider: "msg91"},
+		Email:    EmailConfig{Provider: "ses"},
+	}
+}
+
+func TestValidate_SafeProductionPasses(t *testing.T) {
+	if err := safeProduction().Validate(); err != nil {
+		t.Fatalf("safe production config rejected: %v", err)
+	}
+}
+
+func TestValidate_LocalDefaultsAllowed(t *testing.T) {
+	t.Setenv("APP_ENV", "local")
+	if err := Load().Validate(); err != nil {
+		t.Fatalf("local defaults must start: %v", err)
+	}
+}
+
+func TestValidate_EachUnsafeSetting(t *testing.T) {
+	cases := map[string]struct {
+		mutate func(*Config)
+		want   string
+	}{
+		"default jwt secret": {func(c *Config) { c.JWT.Secret = devJWTSecret }, "JWT_SECRET"},
+		"short jwt secret":   {func(c *Config) { c.JWT.Secret = "short" }, "JWT_SECRET"},
+		"no database":        {func(c *Config) { c.Database.URL = "" }, "DATABASE_URL"},
+		"no redis":           {func(c *Config) { c.Redis.Addr = "" }, "REDIS_ADDR"},
+		"no cors":            {func(c *Config) { c.HTTP.CORSAllowedOrigins = nil }, "CORS_ALLOWED_ORIGINS"},
+		"no body limit":      {func(c *Config) { c.HTTP.MaxBodyBytes = 0 }, "HTTP_MAX_BODY_BYTES"},
+		"minio defaults":     {func(c *Config) { c.Storage.SecretAccessKey = devStorageSecret }, "STORAGE_"},
+		"mock sms":           {func(c *Config) { c.SMS.Provider = "mock" }, "SMS_PROVIDER"},
+		"mock email":         {func(c *Config) { c.Email.Provider = "" }, "EMAIL_PROVIDER"},
+	}
+	for name, tc := range cases {
+		cfg := safeProduction()
+		tc.mutate(&cfg)
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: want error mentioning %s, got %v", name, tc.want, err)
+		}
+	}
+}
+
+func TestValidate_ListsAllProblemsAndAllowsMockOnlyWhenOptedIn(t *testing.T) {
+	cfg := safeProduction()
+	cfg.JWT.Secret, cfg.SMS.Provider, cfg.Email.Provider = devJWTSecret, "mock", "mock"
+	var unsafe *UnsafeConfigError
+	if err := cfg.Validate(); !errors.As(err, &unsafe) || len(unsafe.Problems) != 3 {
+		t.Fatalf("want 3 problems in one error, got %v", err)
+	}
+
+	cfg.App.AllowMockProviders = true
+	err := cfg.Validate()
+	if !errors.As(err, &unsafe) || len(unsafe.Problems) != 1 || !strings.Contains(err.Error(), "JWT_SECRET") {
+		t.Fatalf("opt-in must allow mock providers but never a weak JWT secret, got %v", err)
+	}
+	cfg.JWT.Secret = strings.Repeat("s", 40)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("closed beta with mock providers should start: %v", err)
+	}
+}
+
+func TestIsProduction(t *testing.T) {
+	for env, want := range map[string]bool{"production": true, "PROD": true, " prod ": true, "staging": false, "local": false} {
+		if got := (Config{App: AppConfig{Env: env}}).IsProduction(); got != want {
+			t.Errorf("IsProduction(%q) = %v", env, got)
+		}
+	}
+}

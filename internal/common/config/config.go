@@ -24,6 +24,8 @@ type AppConfig struct {
 	Name    string
 	Env     string
 	Version string
+	// AllowMockProviders permits mock SMS/email in production (closed beta only).
+	AllowMockProviders bool
 }
 
 type HTTPConfig struct {
@@ -34,6 +36,8 @@ type HTTPConfig struct {
 	ReadTimeout        time.Duration
 	WriteTimeout       time.Duration
 	IdleTimeout        time.Duration
+	MaxBodyBytes       int64 // JSON and other bodies
+	MaxUploadBytes     int64 // multipart uploads (avatar, quotation PDF)
 }
 
 func (c HTTPConfig) Addr() string {
@@ -109,6 +113,8 @@ func Load() Config {
 			Name:    getString("APP_NAME", "greenroot-api"),
 			Env:     appEnv,
 			Version: getString("APP_VERSION", "0.1.0"),
+
+			AllowMockProviders: getBool("ALLOW_MOCK_PROVIDERS", false),
 		},
 		HTTP: HTTPConfig{
 			Host:               getString("HTTP_HOST", "0.0.0.0"),
@@ -118,6 +124,8 @@ func Load() Config {
 			ReadTimeout:        getDuration("HTTP_READ_TIMEOUT", 15*time.Second),
 			WriteTimeout:       getDuration("HTTP_WRITE_TIMEOUT", 15*time.Second),
 			IdleTimeout:        getDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
+			MaxBodyBytes:       int64(getInt("HTTP_MAX_BODY_BYTES", 1<<20)),    // 1 MB
+			MaxUploadBytes:     int64(getInt("HTTP_MAX_UPLOAD_BYTES", 12<<20)), // 10 MB PDF + form overhead
 		},
 		Logging: LoggingConfig{
 			Dir:           getString("LOG_DIR", "logs"),
