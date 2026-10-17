@@ -23,6 +23,8 @@ OpenAPI spec (source of truth): `docs/swagger/openapi.yaml` — every registered
 
 **CORS:** `CORS_ALLOWED_ORIGINS` is a comma-separated list of exact origins (`https://admin.example.com`, no path). Local dev servers are allowed by default only when `APP_ENV` is not `production`; in production the list must be set or browser clients are refused (startup warns). No credentials (bearer tokens only); `Content-Disposition`, `X-Subscription-Warning` and `X-Request-Id` are exposed to browser JS; preflights are cached 10 minutes. Native mobile apps send no `Origin` and are unaffected.
 
+**Client IP:** `internal/common/clientip` resolves it once per request; everything (rate limits, sessions, audit, document-verify logs, request logs) reads `clientip.From(r)` — never `r.RemoteAddr` or headers. `X-Forwarded-For` / `X-Real-IP` count only when the TCP peer is in `TRUSTED_PROXIES` (CIDRs/IPs); the chain is walked right-to-left to the first untrusted hop. Empty (default) = the peer address, port stripped. A malformed value stops startup in every environment. **Behind a load balancer, set it** — otherwise every client shares the balancer's rate-limit bucket.
+
 Current registered route count from chi route definitions:
 
 | Scope | Count |
@@ -273,7 +275,7 @@ Dev / integration test users (OTP `123456` for all):
 
 Results: `test-log/smoke/results.log` and `test-log/integration/`.
 
-API integration tests (`tests/api`, run in CI): start the API on `:8080`, then `go test -count=1 ./tests/...`. They seed their own fixtures and need only `schema.sql` + `seed-master.sql` + `seed-dev-admin.sql` (do **not** load `seed-dev-data.sql`; its mobiles clash with the fixtures). `tests/test-api.sh` still needs dev data and is not a CI gate — it becomes Go tests in Phase 3.
+API integration tests (`tests/api`, run in CI): start the API on `:8080`, then `go test -count=1 ./tests/...`. They seed their own fixtures and need only `schema.sql` + `seed-master.sql` + `seed-dev-admin.sql` (do **not** load `seed-dev-data.sql`; its mobiles clash with the fixtures). Rate-limit buckets (`rl:*`) are cleared before each login by the test helper (all tests log in from 127.0.0.1); `ratelimit_test.go` proves the limits themselves (429 after 10 verifies with forged headers, after 5 sends per mobile). Current result: 72 pass, 3 skip (fixtures; see the standards doc §6). `tests/test-api.sh` still needs dev data and is not a CI gate — it becomes Go tests in Phase 3.
 
 ---
 
@@ -373,6 +375,7 @@ Only returns ads with a confirmed `pickup_location`. Combines with all existing 
 ## Pre-Production Hardening Backlog
 
 - [x] Rate limiting on OTP endpoints (Redis)
+- [x] Rate limits cannot be bypassed (2026-10-17): client IP from trusted proxies only, no port in the key; send-otp keyed on the body's `mobile` (it read the URL query, so it never applied)
 - [ ] Rate limiting on remaining high-risk routes
 - [x] Request size limits (2026-10-17: 1 MB JSON / 12 MB multipart, 413)
 - [ ] Security headers (HSTS, X-Frame-Options)
@@ -420,3 +423,6 @@ Retention: `LOG_RETENTION_DAYS` (default 90 days).
 | Tracking history readable by any signed-in user (IDOR, 2026-10-17) | Per-subject access checks in `tracking/service.go`; 403 without leaking existence; authz-matrix unit test |
 | `GET /me/owner-dashboard` showed 0 orders/inventory/drivers/customers and a wrong quote breakdown (2026-10-17) | Sell orders by `seller_nursery_id`, inventory by `inventory_status`, drivers from `nursery_drivers`; query errors are returned instead of swallowed; status mapping unit-tested |
 | `POST /orders/{id}/cancel` and quotation record-download silently ignored malformed JSON | Body stays optional (empty is fine); malformed JSON now returns `400 invalid_json` |
+| Per-IP rate limits bypassable: chi `RealIP` trusted any client's `X-Forwarded-For`, the key included the source port (new connection = new bucket), and `PublicVerify` trusted `X-Real-IP` (2026-10-17) | `internal/common/clientip` + `TRUSTED_PROXIES`; verified live: 10 verify-otp attempts with forged headers, then 429 |
+| send-otp limit never applied: read `mobile` from the URL query, body is JSON (2026-10-17) | Reads the JSON body (first 4 KB) and restores it for the handler; verified live: 5 sends, then 429 |
+| Expiry worker hot-looped when a quotation/subscription update failed (ids re-read forever) (2026-10-17) | Stops when a batch removes nothing; failed ids retry next tick; regression test proven to fail on old code |

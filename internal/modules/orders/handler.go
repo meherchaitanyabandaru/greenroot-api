@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/clientip"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
@@ -132,11 +133,7 @@ func (h *Handler) PublicVerify(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "invalid_token", "verification token is required")
 		return
 	}
-	remoteIP := r.RemoteAddr
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		remoteIP = ip
-	}
-	resp, err := h.service.PublicVerify(r.Context(), token, remoteIP)
+	resp, err := h.service.PublicVerify(r.Context(), token, clientip.From(r))
 	if err != nil {
 		writeOrdersError(w, err)
 		return

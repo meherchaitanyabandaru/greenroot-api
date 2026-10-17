@@ -509,7 +509,7 @@ func (r *PostgresRepository) GetOwnerDashboard(ctx context.Context, userID int64
 		WHERE owner_user_id = $1 AND COALESCE(status::text,'') <> 'DELETED'
 		LIMIT 1
 	`, userID).Scan(&nurseryID, &nurseryName)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	if err == nil {

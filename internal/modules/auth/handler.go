@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 	"regexp"
 	"strings"
 
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/clientip"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/validator"
 )
@@ -243,12 +243,8 @@ func bearerToken(r *http.Request) string {
 }
 
 func clientContext(r *http.Request) ClientContext {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
 	return ClientContext{
-		IPAddress: host,
+		IPAddress: clientip.From(r),
 		UserAgent: r.UserAgent(),
 	}
 }

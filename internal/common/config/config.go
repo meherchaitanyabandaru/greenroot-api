@@ -38,6 +38,9 @@ type HTTPConfig struct {
 	IdleTimeout        time.Duration
 	MaxBodyBytes       int64 // JSON and other bodies
 	MaxUploadBytes     int64 // multipart uploads (avatar, quotation PDF)
+	// TrustedProxies lists the load balancers / reverse proxies (CIDRs or IPs)
+	// whose X-Forwarded-For header is believed. Empty = trust no proxy header.
+	TrustedProxies []string
 }
 
 func (c HTTPConfig) Addr() string {
@@ -126,6 +129,7 @@ func Load() Config {
 			IdleTimeout:        getDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
 			MaxBodyBytes:       int64(getInt("HTTP_MAX_BODY_BYTES", 1<<20)),    // 1 MB
 			MaxUploadBytes:     int64(getInt("HTTP_MAX_UPLOAD_BYTES", 12<<20)), // 10 MB PDF + form overhead
+			TrustedProxies:     getStringSlice("TRUSTED_PROXIES", nil),
 		},
 		Logging: LoggingConfig{
 			Dir:           getString("LOG_DIR", "logs"),

@@ -3,12 +3,12 @@ package authctx
 import (
 	"context"
 	"log/slog"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/clientip"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/revocation"
@@ -114,8 +114,7 @@ func FromRequest(w http.ResponseWriter, r *http.Request, jwt *jwtplatform.Servic
 		response.Error(w, http.StatusUnauthorized, "invalid_token", "invalid access token")
 		return Actor{}, false
 	}
-	host, _, _ := net.SplitHostPort(r.RemoteAddr)
-	return actorFromClaims(claims, host, r.UserAgent()), true
+	return actorFromClaims(claims, clientip.From(r), r.UserAgent()), true
 }
 
 func BearerToken(r *http.Request) string {
@@ -209,8 +208,7 @@ func EnrichActorMiddleware(jwt *jwtplatform.Service, redisClients ...redis.Cmdab
 				return
 			}
 
-			host, _, _ := net.SplitHostPort(r.RemoteAddr)
-			actor := actorFromClaims(claims, host, r.UserAgent())
+			actor := actorFromClaims(claims, clientip.From(r), r.UserAgent())
 
 			// Redis nursery suspension — patches actor status so handlers see current state
 			// even when the JWT still carries the pre-suspension NurseryStatus.

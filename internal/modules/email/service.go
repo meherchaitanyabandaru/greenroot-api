@@ -143,7 +143,7 @@ func (s *Service) Send(ctx context.Context, req SendRequest) (SendResult, error)
 	if err != nil {
 		msg.Status, msg.ErrorCode, msg.ErrorMessage = MessageFailed, optional("provider_error"), optional(err.Error())
 		s.record(ctx, &msg)
-		return SendResult{MessageID: msg.ID, Status: msg.Status}, fmt.Errorf("%w: %v", ErrDelivery, err)
+		return SendResult{MessageID: msg.ID, Status: msg.Status}, fmt.Errorf("%w: %w", ErrDelivery, err)
 	}
 	now := s.now()
 	msg.Status, msg.ProviderMessageID, msg.SentAt = MessageSent, optional(res.ProviderMessageID), &now

@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"strings"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/clientip"
 )
 
 // Defaults that are only acceptable for local development. Validate rejects
@@ -22,15 +24,38 @@ func (c Config) IsProduction() bool {
 }
 
 // Validate returns every unsafe setting for production, so one failed start
-// lists all of them. Outside production it returns nil: local and test
-// setups keep their convenient defaults.
+// lists all of them. Outside production only malformed values are rejected:
+// local and test setups keep their convenient defaults.
 //
 // Mock SMS/email can be allowed explicitly with ALLOW_MOCK_PROVIDERS=true
 // (e.g. a closed beta before DLT registration). Nothing else is overridable.
 func (c Config) Validate() error {
-	if !c.IsProduction() {
+	var errs []error
+	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
+
+	// A typo here would silently trust nobody (or the wrong network), so it is
+	// an error in every environment.
+	if _, err := clientip.ParsePrefixes(c.HTTP.TrustedProxies); err != nil {
+		add("TRUSTED_PROXIES: %v", err)
+	}
+	if c.IsProduction() {
+		errs = append(errs, c.productionProblems()...)
+	}
+	if len(errs) == 0 {
 		return nil
 	}
+	label := "invalid configuration"
+	if c.IsProduction() {
+		label = "unsafe production configuration"
+	}
+	lines := make([]string, len(errs))
+	for i, err := range errs {
+		lines[i] = "  - " + err.Error()
+	}
+	return &UnsafeConfigError{Problems: errs, msg: label + ":\n" + strings.Join(lines, "\n")}
+}
+
+func (c Config) productionProblems() []error {
 	var errs []error
 	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
 
@@ -60,14 +85,7 @@ func (c Config) Validate() error {
 			add("EMAIL_PROVIDER is mock: no email is delivered (set ALLOW_MOCK_PROVIDERS=true only for a closed beta)")
 		}
 	}
-	if len(errs) == 0 {
-		return nil
-	}
-	lines := make([]string, len(errs))
-	for i, err := range errs {
-		lines[i] = "  - " + err.Error()
-	}
-	return &UnsafeConfigError{Problems: errs, msg: "unsafe production configuration:\n" + strings.Join(lines, "\n")}
+	return errs
 }
 
 // UnsafeConfigError lists every problem found by Validate.

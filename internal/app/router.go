@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/clientip"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	appmiddleware "github.com/meherchaitanyabandaru/greenroot-api/internal/middleware"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/admin"
@@ -45,7 +46,16 @@ func NewRouter(deps Dependencies) chi.Router {
 	router := chi.NewRouter()
 
 	router.Use(middleware.RequestID)
-	router.Use(middleware.RealIP)
+	// Resolves the client IP once; proxy headers are believed only from
+	// TRUSTED_PROXIES. Replaces chi's RealIP, which trusts any client's
+	// X-Forwarded-For and so let callers dodge per-IP rate limits.
+	trustedProxies, err := clientip.ParsePrefixes(deps.Config.HTTP.TrustedProxies)
+	if err != nil {
+		// Unreachable after config.Validate; fail closed by trusting no proxy.
+		deps.Logger.Error("ignoring invalid TRUSTED_PROXIES", "error", err)
+		trustedProxies = nil
+	}
+	router.Use(clientip.Middleware(trustedProxies))
 	router.Use(appmiddleware.CORS(deps.Config.HTTP.CORSAllowedOrigins))
 	router.Use(appmiddleware.BodyLimit(deps.Config.HTTP.MaxBodyBytes, deps.Config.HTTP.MaxUploadBytes))
 	router.Use(appmiddleware.Recovery(deps.Logger))

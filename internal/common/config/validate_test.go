@@ -83,3 +83,26 @@ func TestIsProduction(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_TrustedProxies(t *testing.T) {
+	local := Config{App: AppConfig{Env: "local"}}
+
+	local.HTTP.TrustedProxies = []string{"10.0.0.0/8", "127.0.0.1"}
+	if err := local.Validate(); err != nil {
+		t.Fatalf("valid TRUSTED_PROXIES rejected: %v", err)
+	}
+
+	// A typo is rejected in every environment, not only production.
+	local.HTTP.TrustedProxies = []string{"10.0.0.0/33"}
+	err := local.Validate()
+	if err == nil || !strings.Contains(err.Error(), "TRUSTED_PROXIES") {
+		t.Fatalf("malformed TRUSTED_PROXIES in local: err = %v", err)
+	}
+
+	prod := safeProduction()
+	prod.HTTP.TrustedProxies = []string{"not-an-ip"}
+	err = prod.Validate()
+	if err == nil || !strings.Contains(err.Error(), "TRUSTED_PROXIES") {
+		t.Fatalf("malformed TRUSTED_PROXIES in production: err = %v", err)
+	}
+}

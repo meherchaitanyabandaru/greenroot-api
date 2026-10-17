@@ -119,10 +119,12 @@ func processRedisExpiries(ctx context.Context, deps Dependencies) {
 func processDueExpirySet(ctx context.Context, deps Dependencies, key string, expire func(context.Context, Dependencies, int64) error) error {
 	now := strconv.FormatInt(time.Now().Unix(), 10)
 	for {
-		ids, err := deps.Redis.ZRangeByScore(ctx, key, &redis.ZRangeBy{
-			Min:   "0",
-			Max:   now,
-			Count: 100,
+		ids, err := deps.Redis.ZRangeArgs(ctx, redis.ZRangeArgs{
+			Key:     key,
+			Start:   "0",
+			Stop:    now,
+			ByScore: true,
+			Count:   100,
 		}).Result()
 		if err != nil {
 			deps.Logger.Warn("redis expiry read failed", "key", key, "error", err)
@@ -131,11 +133,16 @@ func processDueExpirySet(ctx context.Context, deps Dependencies, key string, exp
 		if len(ids) == 0 {
 			return nil
 		}
+		// An id whose update fails stays in the set for the next tick. Stop when
+		// a batch removes nothing, or the same failing ids would be re-read forever.
+		removed := 0
 		for _, rawID := range ids {
 			id, err := strconv.ParseInt(rawID, 10, 64)
 			if err != nil {
 				deps.Logger.Warn("redis expiry invalid id", "key", key, "id", rawID, "error", err)
-				_ = deps.Redis.ZRem(ctx, key, rawID).Err()
+				if deps.Redis.ZRem(ctx, key, rawID).Err() == nil {
+					removed++
+				}
 				continue
 			}
 			if err := expire(ctx, deps, id); err != nil {
@@ -144,7 +151,12 @@ func processDueExpirySet(ctx context.Context, deps Dependencies, key string, exp
 			}
 			if err := deps.Redis.ZRem(ctx, key, rawID).Err(); err != nil {
 				deps.Logger.Warn("redis expiry remove failed", "key", key, "id", id, "error", err)
+				continue
 			}
+			removed++
+		}
+		if removed == 0 {
+			return nil
 		}
 	}
 }

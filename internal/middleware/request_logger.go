@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/clientip"
 )
 
 type statusRecorder struct {
@@ -54,7 +55,7 @@ func RequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 				slog.String("path", r.URL.Path),
 				slog.Int("status", status),
 				slog.Int("bytes", recorder.bytes),
-				slog.String("remote_addr", r.RemoteAddr),
+				slog.String("client_ip", clientip.From(r)),
 				slog.Duration("duration", time.Since(startedAt)),
 			)
 		})

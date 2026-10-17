@@ -9,10 +9,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -201,6 +203,38 @@ func getWorkspaces(t *testing.T, token string) []testWorkspace {
 	return workspaces
 }
 
+// testRedis is the API's Redis (REDIS_ADDR / REDIS_DB), or nil when the API
+// runs without Redis — then there are no rate limits to reset.
+var testRedis = func() *redis.Client {
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		return nil
+	}
+	db, _ := strconv.Atoi(os.Getenv("REDIS_DB"))
+	return redis.NewClient(&redis.Options{Addr: addr, Password: os.Getenv("REDIS_PASSWORD"), DB: db})
+}()
+
+// resetRateLimits clears the per-IP / per-mobile rate-limit buckets. Every
+// test logs in from 127.0.0.1, so without this the real limits (10 verifies
+// per IP, 5 sends per mobile) would fail unrelated tests. The limits
+// themselves are tested in ratelimit_test.go.
+func resetRateLimits(t *testing.T) {
+	t.Helper()
+	if testRedis == nil {
+		return
+	}
+	ctx := context.Background()
+	iter := testRedis.Scan(ctx, 0, "rl:*", 100).Iterator()
+	for iter.Next(ctx) {
+		if err := testRedis.Del(ctx, iter.Val()).Err(); err != nil {
+			t.Fatalf("reset rate limit %s: %v", iter.Val(), err)
+		}
+	}
+	if err := iter.Err(); err != nil {
+		t.Fatalf("reset rate limits: %v", err)
+	}
+}
+
 func login(t *testing.T, mobile string) string {
 	t.Helper()
 
@@ -222,6 +256,7 @@ func login(t *testing.T, mobile string) string {
 
 func sendOTP(t *testing.T, mobile string) {
 	t.Helper()
+	resetRateLimits(t)
 	body := map[string]string{"mobile": mobile}
 	resp := post(t, "/api/v1/auth/send-otp", body, "")
 	if resp.StatusCode != http.StatusOK {
