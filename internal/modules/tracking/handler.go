@@ -100,24 +100,24 @@ func (h *Handler) NearbyLiveDrivers(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, NearbyLiveDriversResponse{Drivers: drivers})
 }
 func (h *Handler) ListDispatch(w http.ResponseWriter, r *http.Request) {
-	h.list(w, r, "dispatch_id", "dispatchId")
+	h.list(w, r, SubjectDispatch, "dispatchId")
 }
 func (h *Handler) LatestDispatch(w http.ResponseWriter, r *http.Request) {
-	h.latest(w, r, "dispatch_id", "dispatchId")
+	h.latest(w, r, SubjectDispatch, "dispatchId")
 }
 func (h *Handler) ListDriver(w http.ResponseWriter, r *http.Request) {
-	h.list(w, r, "driver_id", "driverId")
+	h.list(w, r, SubjectDriver, "driverId")
 }
 func (h *Handler) LatestDriver(w http.ResponseWriter, r *http.Request) {
-	h.latest(w, r, "driver_id", "driverId")
+	h.latest(w, r, SubjectDriver, "driverId")
 }
 func (h *Handler) ListVehicle(w http.ResponseWriter, r *http.Request) {
-	h.list(w, r, "vehicle_id", "vehicleId")
+	h.list(w, r, SubjectVehicle, "vehicleId")
 }
 func (h *Handler) LatestVehicle(w http.ResponseWriter, r *http.Request) {
-	h.latest(w, r, "vehicle_id", "vehicleId")
+	h.latest(w, r, SubjectVehicle, "vehicleId")
 }
-func (h *Handler) list(w http.ResponseWriter, r *http.Request, col, key string) {
+func (h *Handler) list(w http.ResponseWriter, r *http.Request, subject Subject, key string) {
 	a, ok := h.actor(w, r)
 	if !ok {
 		return
@@ -126,14 +126,14 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, col, key string) 
 	if !ok {
 		return
 	}
-	rows, err := h.service.List(r.Context(), a, col, id)
+	rows, err := h.service.List(r.Context(), a, subject, id)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	response.OK(w, ListResponse{Tracking: rows})
 }
-func (h *Handler) latest(w http.ResponseWriter, r *http.Request, col, key string) {
+func (h *Handler) latest(w http.ResponseWriter, r *http.Request, subject Subject, key string) {
 	a, ok := h.actor(w, r)
 	if !ok {
 		return
@@ -142,7 +142,7 @@ func (h *Handler) latest(w http.ResponseWriter, r *http.Request, col, key string
 	if !ok {
 		return
 	}
-	p, err := h.service.Latest(r.Context(), a, col, id)
+	p, err := h.service.Latest(r.Context(), a, subject, id)
 	if err != nil {
 		writeErr(w, err)
 		return

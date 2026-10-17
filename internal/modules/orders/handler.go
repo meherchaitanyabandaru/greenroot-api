@@ -3,6 +3,7 @@ package orders
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -381,9 +382,11 @@ func (h *Handler) CancelOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Reason string `json:"reason"`
 	}
-	// reason is optional — ignore decode errors (empty body is fine)
-	_ = json.NewDecoder(r.Body).Decode(&req)
-	r.Body.Close()
+	// The body is optional: an empty body is fine, malformed JSON is not.
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid request body")
+		return
+	}
 	order, err := h.service.Cancel(r.Context(), actor, orderID, req.Reason)
 	if err != nil {
 		writeOrdersError(w, err)

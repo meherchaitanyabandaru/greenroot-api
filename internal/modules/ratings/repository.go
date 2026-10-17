@@ -108,6 +108,7 @@ func (r *PostgresRepository) List(ctx context.Context, input ListRatingsRequest)
 	offset := (input.Page - 1) * input.PerPage
 	args = append(args, input.PerPage, offset)
 	n := len(args)
+	// #nosec G201 -- selectCols() is a constant column list; values are bound $n args.
 	query := fmt.Sprintf(
 		"SELECT %s FROM public.ratings WHERE %s ORDER BY rating_id DESC LIMIT $%d OFFSET $%d",
 		selectCols(), where, n-1, n,
@@ -129,6 +130,7 @@ func (r *PostgresRepository) List(ctx context.Context, input ListRatingsRequest)
 }
 
 func (r *PostgresRepository) GetApp(ctx context.Context, userID int64) (*Rating, error) {
+	// #nosec G202 -- selectCols() is a constant column list; values are bound $n args.
 	row := r.db.QueryRowContext(ctx,
 		"SELECT "+selectCols()+" FROM public.ratings WHERE rating_type = 'APP' AND rated_by_user_id = $1 LIMIT 1",
 		userID)
@@ -140,6 +142,7 @@ func (r *PostgresRepository) GetApp(ctx context.Context, userID int64) (*Rating,
 }
 
 func (r *PostgresRepository) GetTrip(ctx context.Context, userID int64, dispatchID int64) (*Rating, error) {
+	// #nosec G202 -- selectCols() is a constant column list; values are bound $n args.
 	row := r.db.QueryRowContext(ctx,
 		"SELECT "+selectCols()+" FROM public.ratings WHERE rating_type = 'TRIP' AND rated_by_user_id = $1 AND dispatch_id = $2 LIMIT 1",
 		userID, dispatchID)
@@ -151,6 +154,7 @@ func (r *PostgresRepository) GetTrip(ctx context.Context, userID int64, dispatch
 }
 
 func (r *PostgresRepository) GetOrder(ctx context.Context, userID int64, orderID int64) (*Rating, error) {
+	// #nosec G202 -- selectCols() is a constant column list; values are bound $n args.
 	row := r.db.QueryRowContext(ctx,
 		"SELECT "+selectCols()+" FROM public.ratings WHERE rating_type = 'ORDER' AND rated_by_user_id = $1 AND order_id = $2 LIMIT 1",
 		userID, orderID)
@@ -162,6 +166,7 @@ func (r *PostgresRepository) GetOrder(ctx context.Context, userID int64, orderID
 }
 
 func (r *PostgresRepository) findByID(ctx context.Context, id int64) (*Rating, error) {
+	// #nosec G202 -- selectCols() is a constant column list; values are bound $n args.
 	row := r.db.QueryRowContext(ctx,
 		"SELECT "+selectCols()+" FROM public.ratings WHERE rating_id = $1", id)
 	rt, err := scanRating(row)

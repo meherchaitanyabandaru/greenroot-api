@@ -359,6 +359,7 @@ func (r *PostgresRepository) BatchActiveDispatchForOrders(ctx context.Context, o
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = id
 	}
+	// #nosec G201 -- IN list is generated $n placeholders; ids are bound args.
 	query := fmt.Sprintf(`
 		SELECT DISTINCT ON (order_id) order_id, dispatch_id, dispatch_status::text
 		FROM public.dispatches

@@ -6,16 +6,22 @@ on:
   pull_request:
     branches: [master, main]
 
+permissions:
+  contents: read
+
+env:
+  GOVULNCHECK_VERSION: v1.1.4
+  GOSEC_VERSION: v2.22.5
+  GITLEAKS_VERSION: v8.21.2
+
 jobs:
-  test:
+  unit:
+    name: Unit, lint & security
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
@@ -32,10 +38,17 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      # Unit tests only. ./tests/... and test-api.sh drive a running API with a
-      # seeded database and run outside CI (see API.md "Testing").
-      # internal/app includes the OpenAPI drift test (every route documented).
-      - name: Test
+      # Fails on any known vulnerability reachable from our code.
+      - name: Vulnerability scan (govulncheck)
+        run: go run golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION} ./...
+
+      # Every exception is an inline "#nosec <rule> -- <reason>".
+      - name: Security lint (gosec)
+        run: go run github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} -quiet -exclude-dir=tests ./...
+
+      # Unit tests. ./tests/... needs a running API and runs in the
+      # integration job. internal/app includes the OpenAPI drift test.
+      - name: Unit tests
         run: go test -race $(go list ./... | grep -v '/tests/')
 
       - name: Build
@@ -44,3 +57,87 @@ jobs:
           go build ./cmd/migrate
           go build ./cmd/smoke
           go build ./cmd/integration
+
+  integration:
+    name: Integration (PostGIS + Redis)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_USER: greenroot
+          POSTGRES_PASSWORD: greenroot
+          POSTGRES_DB: greenroot
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U greenroot"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgres://greenroot:greenroot@localhost:5432/greenroot?sslmode=disable
+      REDIS_ADDR: localhost:6379
+      JWT_SECRET: ci-only-secret-not-used-anywhere-else-0123456789
+      LOG_DIR: /tmp/gr-logs
+    steps:
+      - uses: actions/checkout@v4
+
+      # The fresh-install schema and seeds live in greenroot-infra.
+      - uses: actions/checkout@v4
+        with:
+          repository: meherchaitanyabandaru/greenroot-infra
+          path: infra
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # schema.sql uses psql 17 meta-commands (\restrict), so load it with the
+      # psql that ships in the PostGIS image rather than the runner's client.
+      - name: Load schema and seeds
+        run: |
+          for f in schema.sql seed-master.sql seed-dev-admin.sql; do
+            echo "loading $f"
+            docker run --rm --network host -v "$PWD/infra/db/postgresql:/sql:ro" \
+              -e PGPASSWORD=greenroot postgis/postgis:17-3.5 \
+              psql -h localhost -U greenroot -d greenroot -v ON_ERROR_STOP=1 -q -f "/sql/$f"
+          done
+
+      # schema.sql records the applied migrations; any new migration in this
+      # change is applied here, proving it runs on a fresh-install database.
+      - name: Apply migrations
+        run: go run ./cmd/migrate up
+
+      - name: Start API
+        run: |
+          go build -o /tmp/greenroot-api ./cmd/api
+          /tmp/greenroot-api > /tmp/api.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8080/health && exit 0
+            sleep 1
+          done
+          echo "API did not become healthy"; cat /tmp/api.log; exit 1
+
+      - name: API integration tests
+        run: go test -count=1 ./tests/...
+
+      - name: API log (on failure)
+        if: failure()
+        run: tail -200 /tmp/api.log
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gitleaks (full history)
+        run: go run github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION} git --no-banner --redact --exit-code 1 .

@@ -49,6 +49,7 @@ func (r *PostgresRepository) List(ctx context.Context, input ListPlantsRequest) 
 
 	offset := (input.Page - 1) * input.PerPage
 	args = append(args, input.PerPage, offset)
+	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
 	query := fmt.Sprintf(`
 		SELECT DISTINCT p.plant_id, p.plant_code, p.scientific_name, p.common_name, p.english_description,
 			p.plant_type, p.light_requirement, p.water_requirement, p.is_active, p.created_at, p.updated_at
@@ -442,6 +443,7 @@ func (r *PostgresRepository) GetNamesByLanguage(ctx context.Context, plantIDs []
 		placeholders[i] = fmt.Sprintf("$%d", i+2)
 		args[i+1] = id
 	}
+	// #nosec G201 -- IN list is generated $n placeholders; ids are bound args.
 	query := fmt.Sprintf(`
 		SELECT pn.plant_id, pn.plant_name
 		FROM public.plant_names pn
@@ -522,6 +524,7 @@ func (r *PostgresRepository) attachPlantRelations(ctx context.Context, plants []
 	inClause := strings.Join(placeholders, ",")
 
 	// Batch-fetch categories
+	// #nosec G201 -- IN list is generated $n placeholders; ids are bound args.
 	catQuery := fmt.Sprintf(`
 		SELECT pcm.plant_id, c.category_id, c.category_name, c.is_active, c.created_at, c.updated_at
 		FROM public.plant_category_mapping pcm
@@ -547,6 +550,7 @@ func (r *PostgresRepository) attachPlantRelations(ctx context.Context, plants []
 	}
 
 	// Batch-fetch images
+	// #nosec G201 -- IN list is generated $n placeholders; ids are bound args.
 	imgQuery := fmt.Sprintf(`
 		SELECT image_id, plant_id, image_url, alt_text, display_order, is_primary, created_at, updated_at
 		FROM public.plant_images

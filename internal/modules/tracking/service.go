@@ -144,17 +144,47 @@ func (s *Service) NearbyLiveDrivers(ctx context.Context, a ActorContext, latitud
 	}
 	return out, nil
 }
-func (s *Service) List(ctx context.Context, a ActorContext, col string, id int64) ([]TrackingPoint, error) {
-	if id <= 0 {
-		return nil, ErrInvalidInput
+func (s *Service) List(ctx context.Context, a ActorContext, subject Subject, id int64) ([]TrackingPoint, error) {
+	if err := s.canView(ctx, a, subject, id); err != nil {
+		return nil, err
 	}
-	return s.repository.ListBy(ctx, col, id)
+	return s.repository.ListBy(ctx, subject, id)
 }
-func (s *Service) Latest(ctx context.Context, a ActorContext, col string, id int64) (*TrackingPoint, error) {
-	if id <= 0 {
-		return nil, ErrInvalidInput
+func (s *Service) Latest(ctx context.Context, a ActorContext, subject Subject, id int64) (*TrackingPoint, error) {
+	if err := s.canView(ctx, a, subject, id); err != nil {
+		return nil, err
 	}
-	return s.repository.LatestBy(ctx, col, id)
+	return s.repository.LatestBy(ctx, subject, id)
+}
+
+// canView guards GPS history, which is personal location data. Admins see
+// everything; vehicles have no nursery link, so their history is admin-only;
+// drivers and dispatches are visible to the people involved. A missing
+// record is reported as forbidden so IDs cannot be probed.
+func (s *Service) canView(ctx context.Context, a ActorContext, subject Subject, id int64) error {
+	if id <= 0 {
+		return ErrInvalidInput
+	}
+	if hasAnyRole(a, "ADMIN", "SUPER_ADMIN") {
+		return nil
+	}
+	var (
+		ok  bool
+		err error
+	)
+	switch subject {
+	case SubjectDriver:
+		ok, err = s.repository.CanViewDriver(ctx, id, a.UserID)
+	case SubjectDispatch:
+		ok, err = s.repository.CanViewDispatch(ctx, id, a.UserID)
+	}
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrForbidden
+	}
+	return nil
 }
 func toLiveLocation(loc *redisgeo.Location) *LiveDriverLocation {
 	if loc == nil {

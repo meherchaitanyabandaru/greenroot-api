@@ -6,11 +6,12 @@
 
 ## Stack
 
-Go · chi router · PostgreSQL + PostGIS · Redis (optional) · JWT/OTP auth (mobile + `123456` mock OTP in dev)
+Go 1.26.9 · chi router · PostgreSQL + PostGIS · Redis (optional) · JWT/OTP auth (mobile + `123456` mock OTP in dev)
 
 Run locally (port 8080):
 ```bash
 cd greenroot-api
+DATABASE_URL='postgres:///greenroot?host=/tmp' go run ./cmd/migrate up   # apply pending migrations first
 DATABASE_URL='postgres:///greenroot?host=/tmp' JWT_SECRET='local-dev-change-me' LOG_DIR='/tmp/gr-logs' go run ./cmd/api
 
 # With Redis rate-limiting (optional):
@@ -122,12 +123,14 @@ Dev credentials:
 | Vehicles | — | global write | — | — | assigned | — |
 | Drivers | — | global write | — | — | own profile | — |
 | Dispatches | — | global | own nursery | own nursery | assigned | own orders |
-| Tracking | — | global | own nursery | own nursery | assigned | own orders |
+| Tracking | — | global (vehicle history: admin only) | connected drivers + own nursery's dispatches | same as owner | own history + assigned dispatches | own orders' dispatches |
 | Notifications | — | global/templates | own | own | own | own |
 | Audit | — | ✅ | — | — | — | — |
 | Admin | — | ✅ | — | — | — | — |
 
 **Authorization lives in the service layer.** Handlers only extract actor context.
+
+**Tracking history** (`GET /vehicles|drivers|dispatches/{id}/tracking[/latest]`, fixed 2026-10-17 — before this any signed-in user could read any GPS history): a forbidden caller gets `403` whether or not the record exists. Rules live in `tracking/service.go` `canView` + `tracking/repository.go` `CanViewDriver` / `CanViewDispatch` and mirror the dispatches module (owner or active `nursery_users` member; driver connection `CONNECTED`/`APPROVED`; buyer via `orders.buyer_user_id`).
 
 ### Lifecycle Capabilities
 
@@ -244,7 +247,13 @@ All module routes below are mounted under `/api/v1` unless noted.
   - SMS or email is mock — unless `ALLOW_MOCK_PROVIDERS=true`, which is for a closed beta only.
 - **Body limits:** 1 MB for JSON (`HTTP_MAX_BODY_BYTES`), 12 MB for multipart uploads (`HTTP_MAX_UPLOAD_BYTES`). A declared oversize body gets `413 payload_too_large`.
 - **Migrations:** `internal/database/migrations` is the only place schema changes live. Run `go run ./cmd/migrate status|up|baseline` (or `make migrate-up`). In production the API refuses to start while migrations are pending. Details: `internal/database/migrations/README.md`.
-- **CI** (`.github/workflows/ci.yml`, on `master`): gofmt, vet, `go test -race` (excluding `./tests/...`, which need a running API), and builds. The OpenAPI drift test runs as part of `internal/app`.
+- **CI** (`.github/workflows/ci.yml`, on `master` and PRs). Three jobs, all must pass:
+  - **unit:** gofmt, vet, `govulncheck` (no reachable vulnerabilities), `gosec` (every exception is an inline `#nosec <rule> -- <reason>`), `go test -race` (excluding `./tests/...`), builds of all four commands. The OpenAPI drift test runs as part of `internal/app`.
+  - **integration:** PostGIS 17 + Redis 7 services; loads `greenroot-infra` `schema.sql` + `seed-master.sql` + `seed-dev-admin.sql`, runs `cmd/migrate up`, starts the API, runs `go test ./tests/...`.
+  - **secrets:** `gitleaks` over the full git history.
+- **Dependabot** (`.github/dependabot.yml`): weekly Go module updates, monthly Actions updates.
+- **Pull requests** use `.github/pull_request_template.md` (Definition of Done from `greenroot-docs/06-decisions/enterprise-engineering-standards.md`); `CODEOWNERS` covers migrations, `internal/common`, `internal/app`, swagger and `.github`.
+- **Accepted risk:** `golang.org/x/crypto` GO-2026-5932 has no fixed release and is not reachable from our code (govulncheck confirms).
 
 ## Testing
 
@@ -263,6 +272,8 @@ Dev / integration test users (OTP `123456` for all):
 | DRIVER | `9400000000` | Raju Driver |
 
 Results: `test-log/smoke/results.log` and `test-log/integration/`.
+
+API integration tests (`tests/api`, run in CI): start the API on `:8080`, then `go test -count=1 ./tests/...`. They seed their own fixtures and need only `schema.sql` + `seed-master.sql` + `seed-dev-admin.sql` (do **not** load `seed-dev-data.sql`; its mobiles clash with the fixtures). `tests/test-api.sh` still needs dev data and is not a CI gate — it becomes Go tests in Phase 3.
 
 ---
 
@@ -363,15 +374,17 @@ Only returns ads with a confirmed `pickup_location`. Combines with all existing 
 
 - [x] Rate limiting on OTP endpoints (Redis)
 - [ ] Rate limiting on remaining high-risk routes
-- [ ] Request size limits
+- [x] Request size limits (2026-10-17: 1 MB JSON / 12 MB multipart, 413)
 - [ ] Security headers (HSTS, X-Frame-Options)
 - [x] CORS policy review per environment (2026-10-16: exact-origin list, prod-safe defaults, exposed headers, no credentials)
 - [ ] Login brute-force protection
 - [ ] Real FCM, S3, Razorpay/PayU integrations
 - [ ] Expand integration tests — edge cases + negative paths
-- [ ] CI/CD: `gofmt`, `go vet ./...`, `go test ./...`, `go build`, OpenAPI validation
+- [x] CI: gofmt, vet, race tests, builds, OpenAPI drift, govulncheck, gosec, gitleaks, integration job (2026-10-17). CD/deploy still pending.
 - [x] Missing DB indexes review (2026-10-16: all 75 unindexed FKs checked against repository SQL; 4 indexes added in `internal/database/migrations/20261016_02_fk_lookup_indexes.up.sql`)
 - [ ] Slow-query logging
+- [ ] Branch protection on `master` (GitHub settings — owner action)
+- [ ] Enterprise roadmap Phases 1–4 (`greenroot-docs/06-decisions/enterprise-engineering-standards.md`): coverage ≥ 70%, version columns, idempotency keys, money type, `timestamptz`, `sqlc`, problem+json, policy layer, RLS, token rotation, OpenTelemetry
 - [ ] Request IDs on all responses + metrics endpoint
 - [ ] Production Docker config + Compose stack
 - [ ] PostgreSQL backup scripts
@@ -404,3 +417,6 @@ Retention: `LOG_RETENTION_DAYS` (default 90 days).
 | Missing quotation endpoints | Added explicit `POST /quotations/:id/send`; `POST /quotations/:id/approve` remains an alias |
 | `GET /auth/me` returns 404 | Handler was implemented but never wired into `auth/routes.go`; added `r.Get("/me", m.handler.Me)` |
 | `inventory/create` fails on second run | Plain INSERT hit `uq_inventory(nursery_id,plant_id,size_id)`; made `Create` an upsert with `ON CONFLICT DO UPDATE` |
+| Tracking history readable by any signed-in user (IDOR, 2026-10-17) | Per-subject access checks in `tracking/service.go`; 403 without leaking existence; authz-matrix unit test |
+| `GET /me/owner-dashboard` showed 0 orders/inventory/drivers/customers and a wrong quote breakdown (2026-10-17) | Sell orders by `seller_nursery_id`, inventory by `inventory_status`, drivers from `nursery_drivers`; query errors are returned instead of swallowed; status mapping unit-tested |
+| `POST /orders/{id}/cancel` and quotation record-download silently ignored malformed JSON | Body stays optional (empty is fine); malformed JSON now returns `400 invalid_json` |

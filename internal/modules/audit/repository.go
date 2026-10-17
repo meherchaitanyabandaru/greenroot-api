@@ -25,6 +25,7 @@ func (r *PostgresRepository) List(ctx context.Context, in ListRequest) ([]AuditL
 	}
 	off := (in.Page - 1) * in.PerPage
 	args = append(args, in.PerPage, off)
+	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
 	q := fmt.Sprintf(`
 		SELECT audit_id, COALESCE(module,''), COALESCE(entity_type,''),
 		       record_id, action_type,
@@ -103,6 +104,7 @@ func (r *PostgresRepository) ListSecurity(ctx context.Context, in ListSecurityRe
 	}
 	off := (in.Page - 1) * in.PerPage
 	args = append(args, in.PerPage, off)
+	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
 	q := fmt.Sprintf(`
 		SELECT id, event_type, description,
 		       user_id, nursery_id, request_id,

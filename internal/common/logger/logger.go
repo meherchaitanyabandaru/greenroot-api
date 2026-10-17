@@ -22,16 +22,19 @@ type Manager struct {
 
 func NewManager(cfg config.LoggingConfig) (*Manager, error) {
 	logDir := datedLogDir(cfg.Dir, time.Now())
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
+	// Logs contain personal data (mobile numbers): files are owner-only.
+	if err := os.MkdirAll(logDir, 0o750); err != nil {
 		return nil, err
 	}
 
-	appFile, err := os.OpenFile(filepath.Join(logDir, "app.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	// #nosec G304 -- path is built from LOG_DIR config, not request input.
+	appFile, err := os.OpenFile(filepath.Join(logDir, "app.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, err
 	}
 
-	errorFile, err := os.OpenFile(filepath.Join(logDir, "errors.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	// #nosec G304 -- path is built from LOG_DIR config, not request input.
+	errorFile, err := os.OpenFile(filepath.Join(logDir, "errors.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		_ = appFile.Close()
 		return nil, err

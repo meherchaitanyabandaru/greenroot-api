@@ -33,6 +33,7 @@ func (r *PostgresRepository) List(ctx context.Context, input ListRequest) ([]Att
 	}
 	offset := (input.Page - 1) * input.PerPage
 	args = append(args, input.PerPage, offset)
+	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
 	query := fmt.Sprintf(`SELECT attachment_id, attachment_code, entity_type, entity_id, file_name, file_url, file_type, file_size, uploaded_by, uploaded_at FROM public.attachments %s ORDER BY attachment_id DESC LIMIT $%d OFFSET $%d`, where, len(args)-1, len(args))
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {

@@ -227,6 +227,7 @@ func (r *PostgresRepository) ListByNursery(ctx context.Context, nurseryID int64,
 // listAds runs count + paginated SELECT. filterArgs are args for the WHERE clause only;
 // LIMIT and OFFSET are appended here so parameter indices are always correct.
 func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, page, perPage int, filterArgs []any) ([]Ad, int, error) {
+	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
 	countQ := fmt.Sprintf(`
 		SELECT COUNT(*) FROM public.market_ads ma
 		JOIN public.nurseries n ON n.nursery_id = ma.nursery_id
@@ -261,6 +262,7 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, p
 	limitIdx := len(listArgs) - 1
 	offsetIdx := len(listArgs)
 
+	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
 	listQ := fmt.Sprintf(`
 		SELECT ma.ad_id, ma.ad_code, ma.nursery_id, n.nursery_name,
 		       (n.status IN ('ACTIVE', 'APPROVED')) AS nursery_verified, n.mobile AS nursery_mobile,
@@ -369,6 +371,7 @@ func (r *PostgresRepository) UpdateAd(ctx context.Context, id, userID int64, req
 		add("pickup_confirmed_at", *req.PickupConfirmedAt)
 	}
 	args = append(args, id)
+	// #nosec G201 -- SET columns are code literals; values are bound $n args.
 	q := fmt.Sprintf(`UPDATE public.market_ads SET %s WHERE ad_id = $%d`,
 		strings.Join(setClauses, ", "), len(args))
 	if _, err := r.db.ExecContext(ctx, q, args...); err != nil {

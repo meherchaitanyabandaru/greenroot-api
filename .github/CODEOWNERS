@@ -1,0 +1,7 @@
+# Changes to these paths need the owner's review (enterprise-engineering-standards.md §4).
+*                              @meherchaitanyabandaru
+/internal/database/migrations/ @meherchaitanyabandaru
+/internal/common/              @meherchaitanyabandaru
+/internal/app/                 @meherchaitanyabandaru
+/docs/swagger/                 @meherchaitanyabandaru
+/.github/                      @meherchaitanyabandaru

@@ -3,6 +3,7 @@ package inventory
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 
@@ -162,7 +163,7 @@ func listRequest(r *http.Request) ListInventoryRequest {
 		Search:    query.Get("search"),
 		NurseryID: int64Query(query.Get("nursery_id")),
 		PlantID:   int64Query(query.Get("plant_id")),
-		SizeID:    int16(intQuery(query.Get("size_id"))),
+		SizeID:    int16Query(query.Get("size_id")),
 		Status:    query.Get("inventory_status"),
 		SortBy:    query.Get("sort_by"),
 		SortOrder: query.Get("sort_order"),
@@ -208,4 +209,14 @@ func writeInventoryError(w http.ResponseWriter, err error) {
 	default:
 		response.Error(w, http.StatusInternalServerError, "inventory_error", "inventory request failed")
 	}
+}
+
+// int16Query parses a smallint filter; out-of-range or invalid values are
+// ignored (0), like other malformed numeric query parameters.
+func int16Query(v string) int16 {
+	n := intQuery(v)
+	if n < 0 || n > math.MaxInt16 {
+		return 0
+	}
+	return int16(n)
 }

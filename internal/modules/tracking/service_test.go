@@ -12,10 +12,33 @@ import (
 type mockRepo struct {
 	points     []TrackingPoint
 	dispatches map[int64]DispatchAccess
-	nextID     int64
+	// who may view a driver's / dispatch's history (the DB derives this from
+	// drivers, nursery_drivers, nursery_users and dispatches)
+	driverViewers   map[int64][]int64
+	dispatchViewers map[int64][]int64
+	nextID          int64
 }
 
-func newMock() *mockRepo { return &mockRepo{dispatches: map[int64]DispatchAccess{}, nextID: 100} }
+func newMock() *mockRepo {
+	return &mockRepo{dispatches: map[int64]DispatchAccess{}, driverViewers: map[int64][]int64{}, dispatchViewers: map[int64][]int64{}, nextID: 100}
+}
+
+func contains(ids []int64, id int64) bool {
+	for _, v := range ids {
+		if v == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *mockRepo) CanViewDriver(_ context.Context, driverID, userID int64) (bool, error) {
+	return contains(m.driverViewers[driverID], userID), nil
+}
+
+func (m *mockRepo) CanViewDispatch(_ context.Context, dispatchID, userID int64) (bool, error) {
+	return contains(m.dispatchViewers[dispatchID], userID), nil
+}
 
 func (m *mockRepo) Create(_ context.Context, in CreateRequest) (*TrackingPoint, error) {
 	m.nextID++
@@ -41,19 +64,19 @@ func (m *mockRepo) DispatchAccess(_ context.Context, dispatchID int64) (*Dispatc
 	return &access, nil
 }
 
-func (m *mockRepo) ListBy(_ context.Context, col string, id int64) ([]TrackingPoint, error) {
+func (m *mockRepo) ListBy(_ context.Context, col Subject, id int64) ([]TrackingPoint, error) {
 	var result []TrackingPoint
 	for _, p := range m.points {
 		switch col {
-		case "vehicle_id":
+		case SubjectVehicle:
 			if p.VehicleID != nil && *p.VehicleID == id {
 				result = append(result, p)
 			}
-		case "driver_id":
+		case SubjectDriver:
 			if p.DriverID != nil && *p.DriverID == id {
 				result = append(result, p)
 			}
-		case "dispatch_id":
+		case SubjectDispatch:
 			if p.DispatchID != nil && *p.DispatchID == id {
 				result = append(result, p)
 			}
@@ -62,7 +85,7 @@ func (m *mockRepo) ListBy(_ context.Context, col string, id int64) ([]TrackingPo
 	return result, nil
 }
 
-func (m *mockRepo) LatestBy(_ context.Context, col string, id int64) (*TrackingPoint, error) {
+func (m *mockRepo) LatestBy(_ context.Context, col Subject, id int64) (*TrackingPoint, error) {
 	pts, _ := m.ListBy(context.Background(), col, id)
 	if len(pts) == 0 {
 		return nil, nil
@@ -250,7 +273,7 @@ func TestList_ByVehicle(t *testing.T) {
 		{ID: 2, VehicleID: &v, Latitude: 12.98, Longitude: 77.60},
 	}
 
-	pts, err := svc(repo).List(context.Background(), adminActor(1), "vehicle_id", 5)
+	pts, err := svc(repo).List(context.Background(), adminActor(1), SubjectVehicle, 5)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -265,8 +288,9 @@ func TestList_ByDriver(t *testing.T) {
 	repo.points = []TrackingPoint{
 		{ID: 1, DriverID: &d, Latitude: 12.97, Longitude: 77.59},
 	}
+	repo.driverViewers[7] = []int64{70} // driver 7 is user 70
 
-	pts, err := svc(repo).List(context.Background(), driverActor(7), "driver_id", 7)
+	pts, err := svc(repo).List(context.Background(), driverActor(70), SubjectDriver, 7)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -276,7 +300,7 @@ func TestList_ByDriver(t *testing.T) {
 }
 
 func TestList_EmptyResult(t *testing.T) {
-	pts, err := svc(newMock()).List(context.Background(), adminActor(1), "vehicle_id", 999)
+	pts, err := svc(newMock()).List(context.Background(), adminActor(1), SubjectVehicle, 999)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -289,14 +313,14 @@ func TestList_EmptyResult(t *testing.T) {
 }
 
 func TestList_ZeroIDInvalid(t *testing.T) {
-	_, err := svc(newMock()).List(context.Background(), adminActor(1), "vehicle_id", 0)
+	_, err := svc(newMock()).List(context.Background(), adminActor(1), SubjectVehicle, 0)
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("want ErrInvalidInput for id=0, got %v", err)
 	}
 }
 
 func TestList_NegativeIDInvalid(t *testing.T) {
-	_, err := svc(newMock()).List(context.Background(), adminActor(1), "vehicle_id", -1)
+	_, err := svc(newMock()).List(context.Background(), adminActor(1), SubjectVehicle, -1)
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("want ErrInvalidInput for id=-1, got %v", err)
 	}
@@ -311,7 +335,7 @@ func TestLatest_ReturnsPoint(t *testing.T) {
 		{ID: 1, VehicleID: &v, Latitude: 12.97, Longitude: 77.59},
 	}
 
-	p, err := svc(repo).Latest(context.Background(), adminActor(1), "vehicle_id", 5)
+	p, err := svc(repo).Latest(context.Background(), adminActor(1), SubjectVehicle, 5)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -324,7 +348,7 @@ func TestLatest_ReturnsPoint(t *testing.T) {
 }
 
 func TestLatest_ReturnsNilWhenNone(t *testing.T) {
-	p, err := svc(newMock()).Latest(context.Background(), adminActor(1), "vehicle_id", 5)
+	p, err := svc(newMock()).Latest(context.Background(), adminActor(1), SubjectVehicle, 5)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -334,15 +358,70 @@ func TestLatest_ReturnsNilWhenNone(t *testing.T) {
 }
 
 func TestLatest_ZeroIDInvalid(t *testing.T) {
-	_, err := svc(newMock()).Latest(context.Background(), adminActor(1), "vehicle_id", 0)
+	_, err := svc(newMock()).Latest(context.Background(), adminActor(1), SubjectVehicle, 0)
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("want ErrInvalidInput for id=0, got %v", err)
 	}
 }
 
 func TestLatest_NegativeIDInvalid(t *testing.T) {
-	_, err := svc(newMock()).Latest(context.Background(), adminActor(1), "driver_id", -5)
+	_, err := svc(newMock()).Latest(context.Background(), adminActor(1), SubjectDriver, -5)
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("want ErrInvalidInput for id=-5, got %v", err)
+	}
+}
+
+// ─── Read authorization (GPS history is personal location data) ──────────────
+
+func TestTrackingReads_RequireAConnection(t *testing.T) {
+	repo := newMock()
+	d, dsp, v := int64(7), int64(30), int64(5)
+	repo.points = []TrackingPoint{{ID: 1, DriverID: &d, DispatchID: &dsp, VehicleID: &v, Latitude: 12.9, Longitude: 77.5}}
+	repo.driverViewers[d] = []int64{70, 80}     // the driver (70) and a connected nursery owner (80)
+	repo.dispatchViewers[dsp] = []int64{70, 90} // the driver and the receiving customer (90)
+	s := svc(repo)
+	ctx := context.Background()
+
+	cases := []struct {
+		name    string
+		actor   ActorContext
+		subject Subject
+		id      int64
+		allowed bool
+	}{
+		{"admin sees vehicle", adminActor(1), SubjectVehicle, v, true},
+		{"super admin sees driver", ActorContext{UserID: 2, Roles: []string{"SUPER_ADMIN"}}, SubjectDriver, d, true},
+		{"driver sees own history", driverActor(70), SubjectDriver, d, true},
+		{"connected owner sees driver", ownerActor(80), SubjectDriver, d, true},
+		{"customer sees own dispatch", buyerActor(90), SubjectDispatch, dsp, true},
+		{"unrelated buyer cannot see driver", buyerActor(99), SubjectDriver, d, false},
+		{"unrelated buyer cannot see dispatch", buyerActor(99), SubjectDispatch, dsp, false},
+		{"unconnected owner cannot see driver", ownerActor(81), SubjectDriver, d, false},
+		{"other driver cannot see driver", driverActor(71), SubjectDriver, d, false},
+		{"non-admin cannot see vehicle", ownerActor(80), SubjectVehicle, v, false},
+		{"unknown driver id is forbidden, not 404", buyerActor(99), SubjectDriver, 12345, false},
+	}
+	for _, c := range cases {
+		_, listErr := s.List(ctx, c.actor, c.subject, c.id)
+		_, latestErr := s.Latest(ctx, c.actor, c.subject, c.id)
+		for _, err := range []error{listErr, latestErr} {
+			if c.allowed && err != nil {
+				t.Errorf("%s: want allowed, got %v", c.name, err)
+			}
+			if !c.allowed && !errors.Is(err, ErrForbidden) {
+				t.Errorf("%s: want ErrForbidden, got %v", c.name, err)
+			}
+		}
+	}
+}
+
+func TestSubjectColumnAllowlist(t *testing.T) {
+	for _, s := range []Subject{SubjectVehicle, SubjectDriver, SubjectDispatch, subjectPoint} {
+		if _, err := s.column(); err != nil {
+			t.Errorf("%s rejected", s)
+		}
+	}
+	if _, err := Subject("1=1; DROP TABLE users; --").column(); !errors.Is(err, ErrInvalidInput) {
+		t.Fatal("arbitrary column text must be rejected")
 	}
 }

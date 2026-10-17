@@ -135,6 +135,7 @@ func (r *PostgresRepository) ListNearby(ctx context.Context, q NearbyQuery) ([]N
 		distanceExpr = "NULL::float8"
 	}
 
+	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
 	countQ := fmt.Sprintf(`
 		SELECT COUNT(DISTINCT snm.nursery_id)
 		FROM public.sourcing_network_members snm
@@ -156,6 +157,7 @@ func (r *PostgresRepository) ListNearby(ctx context.Context, q NearbyQuery) ([]N
 	offset := (page - 1) * perPage
 	args = append(args, perPage, offset)
 
+	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
 	dataQ := fmt.Sprintf(`
 		SELECT DISTINCT ON (snm.nursery_id)
 			snm.nursery_id, n.nursery_name, na.city, %s AS distance_km,

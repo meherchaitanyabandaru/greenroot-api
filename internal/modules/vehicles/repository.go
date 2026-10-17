@@ -39,6 +39,7 @@ func (r *PostgresRepository) List(ctx context.Context, input ListVehiclesRequest
 	}
 	offset := (input.Page - 1) * input.PerPage
 	args = append(args, input.PerPage, offset)
+	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
 	query := fmt.Sprintf(`
 		SELECT v.vehicle_id, v.vehicle_code, v.vehicle_number, v.vehicle_type, v.capacity_kg, v.owner_name, v.mobile,
 			linked_driver.driver_id, linked_driver.driver_name, linked_driver.driver_mobile, linked_driver.driver_approval_status,

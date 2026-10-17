@@ -5,7 +5,9 @@ import (
 	"strings"
 )
 
-// Defaults that are only acceptable for local development.
+// Defaults that are only acceptable for local development. Validate rejects
+// them in production; they are not secrets.
+// #nosec G101 -- known public dev defaults, used only to detect misconfiguration.
 const (
 	devJWTSecret      = "local-dev-change-me"
 	devStorageKey     = "greenroot"

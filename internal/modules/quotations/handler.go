@@ -277,9 +277,12 @@ func (h *Handler) RecordDownload(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Masked bool `json:"masked"`
 	}
-	// Body is optional — ignore decode errors (empty body is valid; masked defaults to false).
-	_ = json.NewDecoder(r.Body).Decode(&req)
-	r.Body.Close()
+	// The body is optional (masked defaults to false): an empty body is fine,
+	// malformed JSON is not.
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid request body")
+		return
+	}
 	if err := h.service.RecordDownload(r.Context(), actor, id, req.Masked); err != nil {
 		writeError(w, err)
 		return

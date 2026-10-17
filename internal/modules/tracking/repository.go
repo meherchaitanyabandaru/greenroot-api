@@ -9,9 +9,31 @@ import (
 type Repository interface {
 	Create(context.Context, CreateRequest) (*TrackingPoint, error)
 	DispatchAccess(context.Context, int64) (*DispatchAccess, error)
-	ListBy(context.Context, string, int64) ([]TrackingPoint, error)
-	LatestBy(context.Context, string, int64) (*TrackingPoint, error)
+	ListBy(context.Context, Subject, int64) ([]TrackingPoint, error)
+	LatestBy(context.Context, Subject, int64) (*TrackingPoint, error)
+	CanViewDriver(ctx context.Context, driverID, userID int64) (bool, error)
+	CanViewDispatch(ctx context.Context, dispatchID, userID int64) (bool, error)
 }
+
+// Subject is the vehicle_tracking column a query filters on. Only these
+// values exist, so a column name can never come from request input.
+type Subject string
+
+const (
+	SubjectVehicle  Subject = "vehicle_id"
+	SubjectDriver   Subject = "driver_id"
+	SubjectDispatch Subject = "dispatch_id"
+	subjectPoint    Subject = "tracking_id"
+)
+
+func (s Subject) column() (string, error) {
+	switch s {
+	case SubjectVehicle, SubjectDriver, SubjectDispatch, subjectPoint:
+		return string(s), nil
+	}
+	return "", ErrInvalidInput
+}
+
 type PostgresRepository struct{ db *sql.DB }
 
 type DispatchAccess struct {
@@ -27,7 +49,7 @@ func (r *PostgresRepository) Create(ctx context.Context, in CreateRequest) (*Tra
 	if err != nil {
 		return nil, err
 	}
-	return r.LatestBy(ctx, "tracking_id", id)
+	return r.LatestBy(ctx, subjectPoint, id)
 }
 func (r *PostgresRepository) DispatchAccess(ctx context.Context, dispatchID int64) (*DispatchAccess, error) {
 	var access DispatchAccess
@@ -47,7 +69,12 @@ func (r *PostgresRepository) DispatchAccess(ctx context.Context, dispatchID int6
 	access.DriverUserID = nullableInt64(driverUserID)
 	return &access, nil
 }
-func (r *PostgresRepository) ListBy(ctx context.Context, col string, id int64) ([]TrackingPoint, error) {
+func (r *PostgresRepository) ListBy(ctx context.Context, subject Subject, id int64) ([]TrackingPoint, error) {
+	col, err := subject.column()
+	if err != nil {
+		return nil, err
+	}
+	// #nosec G202 -- col comes from Subject.column(), a closed allowlist.
 	rows, err := r.db.QueryContext(ctx, `SELECT tracking_id,vehicle_id,driver_id,dispatch_id,latitude,longitude,tracked_at,notes FROM public.vehicle_tracking WHERE `+col+`=$1 ORDER BY tracked_at DESC LIMIT 100`, id)
 	if err != nil {
 		return nil, err
@@ -63,7 +90,12 @@ func (r *PostgresRepository) ListBy(ctx context.Context, col string, id int64) (
 	}
 	return out, rows.Err()
 }
-func (r *PostgresRepository) LatestBy(ctx context.Context, col string, id int64) (*TrackingPoint, error) {
+func (r *PostgresRepository) LatestBy(ctx context.Context, subject Subject, id int64) (*TrackingPoint, error) {
+	col, err := subject.column()
+	if err != nil {
+		return nil, err
+	}
+	// #nosec G202 -- col comes from Subject.column(), a closed allowlist.
 	p, err := scan(r.db.QueryRowContext(ctx, `SELECT tracking_id,vehicle_id,driver_id,dispatch_id,latitude,longitude,tracked_at,notes FROM public.vehicle_tracking WHERE `+col+`=$1 ORDER BY tracked_at DESC LIMIT 1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -73,6 +105,52 @@ func (r *PostgresRepository) LatestBy(ctx context.Context, col string, id int64)
 	}
 	return &p, nil
 }
+
+// nurseryMember matches the same people as dispatches.IsNurseryMember: an
+// active nursery_users member, or the owner of a nursery that is not deleted.
+// $2 is the viewer; nurseryExpr names the nursery id column.
+func nurseryMember(nurseryExpr string) string {
+	return `EXISTS (
+		SELECT 1 FROM public.nursery_users nu
+		WHERE nu.nursery_id = ` + nurseryExpr + ` AND nu.user_id = $2 AND COALESCE(nu.is_active, true) = true
+		UNION ALL
+		SELECT 1 FROM public.nurseries n
+		WHERE n.nursery_id = ` + nurseryExpr + ` AND n.owner_user_id = $2 AND COALESCE(n.status::text, '') <> 'DELETED')`
+}
+
+// CanViewDriver: the driver themself, or staff of a nursery the driver is
+// connected to.
+func (r *PostgresRepository) CanViewDriver(ctx context.Context, driverID, userID int64) (bool, error) {
+	var ok bool
+	// #nosec G202 -- nurseryMember only interpolates a fixed column name.
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM public.drivers dr
+			WHERE dr.driver_id = $1 AND (
+				dr.user_id = $2 OR EXISTS (
+					SELECT 1 FROM public.nursery_drivers nd
+					WHERE nd.driver_user_id = dr.user_id
+					  AND nd.connection_status IN ('CONNECTED', 'APPROVED')
+					  AND `+nurseryMember("nd.nursery_id")+`)))`, driverID, userID).Scan(&ok)
+	return ok, err
+}
+
+// CanViewDispatch mirrors dispatches.Service.canAccess: the trip's driver,
+// the order's buyer, or staff of the selling nursery.
+func (r *PostgresRepository) CanViewDispatch(ctx context.Context, dispatchID, userID int64) (bool, error) {
+	var ok bool
+	// #nosec G202 -- nurseryMember only interpolates a fixed column name.
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM public.dispatches d
+			JOIN public.orders o ON o.order_id = d.order_id
+			LEFT JOIN public.drivers dr ON dr.driver_id = d.driver_id
+			WHERE d.dispatch_id = $1 AND (
+				d.driver_user_id = $2 OR dr.user_id = $2 OR o.buyer_user_id = $2
+				OR `+nurseryMember("o.seller_nursery_id")+`))`, dispatchID, userID).Scan(&ok)
+	return ok, err
+}
+
 func scan(row interface{ Scan(...any) error }) (TrackingPoint, error) {
 	var p TrackingPoint
 	var v, d, di sql.NullInt64

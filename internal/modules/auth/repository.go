@@ -517,129 +517,106 @@ func (r *PostgresRepository) GetOwnerDashboard(ctx context.Context, userID int64
 		d.NurseryName = &nurseryName
 	}
 
-	// Sell orders (nursery is seller)
-	if nurseryID > 0 {
-		rows, _ := r.db.QueryContext(ctx, `
-			SELECT COALESCE(order_status,'PENDING'), COUNT(*) FROM public.orders
-			WHERE nursery_id = $1 GROUP BY order_status
-		`, nurseryID)
-		if rows != nil {
-			for rows.Next() {
-				var status string
-				var cnt int
-				if err := rows.Scan(&status, &cnt); err == nil {
-					d.SellOrders.Total += cnt
-					switch status {
-					case "PENDING":
-						d.SellOrders.Pending += cnt
-					case "CONFIRMED":
-						d.SellOrders.Confirmed += cnt
-					case "DELIVERED":
-						d.SellOrders.Delivered += cnt
-					case "CANCELLED":
-						d.SellOrders.Cancelled += cnt
-					}
-				}
-			}
-			rows.Close()
+	if nurseryID == 0 {
+		return d, nil
+	}
+
+	sellOrders, err := r.statusCounts(ctx, `SELECT COALESCE(order_status::text,'PENDING'), COUNT(*) FROM public.orders WHERE seller_nursery_id = $1 AND deleted_at IS NULL GROUP BY 1`, nurseryID)
+	if err != nil {
+		return nil, err
+	}
+	buyOrders, err := r.statusCounts(ctx, `SELECT COALESCE(order_status::text,'PENDING'), COUNT(*) FROM public.orders WHERE buyer_nursery_id = $1 AND deleted_at IS NULL GROUP BY 1`, nurseryID)
+	if err != nil {
+		return nil, err
+	}
+	sellQuotes, err := r.statusCounts(ctx, `SELECT COALESCE(status::text,''), COUNT(*) FROM public.quotations WHERE nursery_id = $1 AND deleted_at IS NULL GROUP BY 1`, nurseryID)
+	if err != nil {
+		return nil, err
+	}
+	buyQuotes, err := r.statusCounts(ctx, `SELECT COALESCE(status::text,''), COUNT(*) FROM public.quotations WHERE buyer_nursery_id = $1 AND deleted_at IS NULL GROUP BY 1`, nurseryID)
+	if err != nil {
+		return nil, err
+	}
+	fillOrders(&d.SellOrders, sellOrders)
+	fillOrders(&d.BuyOrders, buyOrders)
+	fillQuotes(&d.SellQuotes, sellQuotes)
+	fillQuotes(&d.BuyQuotes, buyQuotes)
+
+	scalars := []struct {
+		query string
+		dest  []any
+	}{
+		// Was `status`, a column that does not exist: the error was swallowed
+		// and owners always saw 0 inventory.
+		{`SELECT COUNT(*), COALESCE(SUM(CASE WHEN inventory_status = 'AVAILABLE' THEN 1 ELSE 0 END), 0)
+			FROM public.nursery_inventory WHERE nursery_id = $1`, []any{&d.Inventory.TotalItems, &d.Inventory.Available}},
+		// nursery_users.role is the populated source of truth today; invites
+		// leave nursery_role_id NULL (tracked as a data-ownership fix).
+		{`SELECT COUNT(*) FROM public.nursery_users WHERE nursery_id = $1 AND role = 'MANAGER' AND status = 'ACTIVE'`, []any{&d.Connections.Managers}},
+		// Orders and dispatches carry the selling nursery in orders.seller_nursery_id;
+		// orders.nursery_id and dispatches.nursery_id are not populated.
+		{`SELECT COUNT(*) FROM public.nursery_drivers WHERE nursery_id = $1 AND connection_status IN ('CONNECTED', 'APPROVED')`, []any{&d.Connections.Drivers}},
+		{`SELECT COUNT(DISTINCT buyer_user_id) FROM public.orders WHERE seller_nursery_id = $1 AND buyer_user_id IS NOT NULL AND deleted_at IS NULL`, []any{&d.Connections.Customers}},
+	}
+	for _, q := range scalars {
+		if err := r.db.QueryRowContext(ctx, q.query, nurseryID).Scan(q.dest...); err != nil {
+			return nil, err
 		}
-
-		// Buy orders (nursery is buyer)
-		rows2, _ := r.db.QueryContext(ctx, `
-			SELECT COALESCE(order_status,'PENDING'), COUNT(*) FROM public.orders
-			WHERE buyer_nursery_id = $1 GROUP BY order_status
-		`, nurseryID)
-		if rows2 != nil {
-			for rows2.Next() {
-				var status string
-				var cnt int
-				if err := rows2.Scan(&status, &cnt); err == nil {
-					d.BuyOrders.Total += cnt
-					switch status {
-					case "PENDING":
-						d.BuyOrders.Pending += cnt
-					case "CONFIRMED":
-						d.BuyOrders.Confirmed += cnt
-					case "DELIVERED":
-						d.BuyOrders.Delivered += cnt
-					case "CANCELLED":
-						d.BuyOrders.Cancelled += cnt
-					}
-				}
-			}
-			rows2.Close()
-		}
-
-		// Sell quotations
-		rows3, _ := r.db.QueryContext(ctx, `
-			SELECT COALESCE(status,'PENDING'), COUNT(*) FROM public.quotations
-			WHERE nursery_id = $1 GROUP BY status
-		`, nurseryID)
-		if rows3 != nil {
-			for rows3.Next() {
-				var status string
-				var cnt int
-				if err := rows3.Scan(&status, &cnt); err == nil {
-					d.SellQuotes.Total += cnt
-					switch status {
-					case "PENDING", "SENT":
-						d.SellQuotes.Pending += cnt
-					case "APPROVED":
-						d.SellQuotes.Approved += cnt
-					case "REJECTED":
-						d.SellQuotes.Rejected += cnt
-					}
-				}
-			}
-			rows3.Close()
-		}
-
-		// Buy quotations
-		rows4, _ := r.db.QueryContext(ctx, `
-			SELECT COALESCE(status,'PENDING'), COUNT(*) FROM public.quotations
-			WHERE buyer_nursery_id = $1 GROUP BY status
-		`, nurseryID)
-		if rows4 != nil {
-			for rows4.Next() {
-				var status string
-				var cnt int
-				if err := rows4.Scan(&status, &cnt); err == nil {
-					d.BuyQuotes.Total += cnt
-					switch status {
-					case "PENDING", "SENT":
-						d.BuyQuotes.Pending += cnt
-					case "APPROVED":
-						d.BuyQuotes.Approved += cnt
-					case "REJECTED":
-						d.BuyQuotes.Rejected += cnt
-					}
-				}
-			}
-			rows4.Close()
-		}
-
-		// Inventory
-		_ = r.db.QueryRowContext(ctx, `
-			SELECT COUNT(*), COALESCE(SUM(CASE WHEN COALESCE(status::text,'') = 'AVAILABLE' THEN 1 ELSE 0 END), 0)
-			FROM public.nursery_inventory WHERE nursery_id = $1
-		`, nurseryID).Scan(&d.Inventory.TotalItems, &d.Inventory.Available)
-
-		// Connections
-		_ = r.db.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM public.nursery_users
-			WHERE nursery_id = $1 AND role = 'MANAGER' AND status = 'ACTIVE'
-		`, nurseryID).Scan(&d.Connections.Managers)
-
-		_ = r.db.QueryRowContext(ctx, `
-			SELECT COUNT(DISTINCT driver_id) FROM public.dispatches
-			WHERE nursery_id = $1 AND driver_id IS NOT NULL
-		`, nurseryID).Scan(&d.Connections.Drivers)
-
-		_ = r.db.QueryRowContext(ctx, `
-			SELECT COUNT(DISTINCT buyer_user_id) FROM public.orders
-			WHERE nursery_id = $1 AND buyer_user_id IS NOT NULL
-		`, nurseryID).Scan(&d.Connections.Customers)
 	}
 
 	return d, nil
+}
+
+// statusCounts runs a "status, count GROUP BY status" query for one nursery.
+func (r *PostgresRepository) statusCounts(ctx context.Context, query string, nurseryID int64) (map[string]int, error) {
+	rows, err := r.db.QueryContext(ctx, query, nurseryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := map[string]int{}
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			return nil, err
+		}
+		counts[status] += n
+	}
+	return counts, rows.Err()
+}
+
+// fillOrders maps the order state machine (docs/orders.md) onto the
+// dashboard buckets; "confirmed" means accepted and not yet delivered.
+func fillOrders(m *OrderMetrics, counts map[string]int) {
+	for status, n := range counts {
+		m.Total += n
+		switch status {
+		case "PENDING":
+			m.Pending += n
+		case "CONFIRMED", "LOADING", "LOADED", "PARTIALLY_FULFILLED":
+			m.Confirmed += n
+		case "COMPLETED":
+			m.Delivered += n
+		case "CANCELLED":
+			m.Cancelled += n
+		}
+	}
+}
+
+// fillQuotes maps the quotation state machine (docs/quotations.md):
+// pending = sent and awaiting the buyer. Drafts and expired quotations count
+// only toward the total.
+func fillQuotes(m *QuoteMetrics, counts map[string]int) {
+	for status, n := range counts {
+		m.Total += n
+		switch status {
+		case "CUSTOMER_SENT":
+			m.Pending += n
+		case "CUSTOMER_ACCEPTED", "CONVERTED":
+			m.Approved += n
+		case "CUSTOMER_REJECTED":
+			m.Rejected += n
+		}
+	}
 }

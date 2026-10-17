@@ -68,6 +68,7 @@ func (r *PostgresRepository) List(ctx context.Context, input ListNurseriesReques
 
 	offset := (input.Page - 1) * input.PerPage
 	args = append(args, input.PerPage, offset)
+	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
 	query := fmt.Sprintf(`
 		SELECT DISTINCT n.nursery_id, n.nursery_code, n.nursery_name, n.mobile,
 			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
