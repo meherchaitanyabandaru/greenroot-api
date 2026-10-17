@@ -10,6 +10,7 @@ import (
 
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/database/pgerr"
 )
 
 var ErrNotFound = apperrs.ErrNotFound
@@ -149,7 +150,7 @@ func (r *PostgresRepository) Create(ctx context.Context, input CreatePaymentInpu
 		jsonOrNil(input.RawResponseJSON),
 		now,
 	).Scan(&paymentID); err != nil {
-		return nil, err
+		return nil, pgerr.Map(err)
 	}
 	return r.FindByID(ctx, paymentID)
 }
@@ -184,7 +185,7 @@ func (r *PostgresRepository) UpdateStatus(ctx context.Context, paymentID int64, 
 		input.Status,
 	)
 	if err != nil {
-		return nil, err
+		return nil, pgerr.Map(err)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {

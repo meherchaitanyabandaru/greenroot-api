@@ -4,7 +4,9 @@
 //	go run ./cmd/migrate up
 //	go run ./cmd/migrate baseline <version>   # adopt a DB migrated by hand / built from schema.sql
 //
-// Uses DATABASE_URL.
+// Uses MIGRATE_DATABASE_URL (the greenroot_migrator role) when set, otherwise
+// DATABASE_URL. In production the API's DATABASE_URL role (greenroot_app)
+// cannot run DDL, so MIGRATE_DATABASE_URL is required there.
 package main
 
 import (
@@ -31,8 +33,11 @@ func run(args []string) error {
 		return fmt.Errorf("usage: migrate status | up | baseline <version>")
 	}
 	cfg := config.Load()
+	if u := os.Getenv("MIGRATE_DATABASE_URL"); u != "" {
+		cfg.Database.URL = u
+	}
 	if cfg.Database.URL == "" {
-		return fmt.Errorf("DATABASE_URL is required")
+		return fmt.Errorf("MIGRATE_DATABASE_URL or DATABASE_URL is required")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()

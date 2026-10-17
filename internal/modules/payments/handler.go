@@ -197,6 +197,8 @@ func writePaymentsError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusNotFound, "not_found", "payment resource not found")
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid payment input")
+	case errors.Is(err, ErrConflict):
+		response.Error(w, http.StatusConflict, "duplicate_provider_payment", "this gateway payment is already recorded")
 	default:
 		response.Error(w, http.StatusInternalServerError, "payments_error", "payment request failed")
 	}

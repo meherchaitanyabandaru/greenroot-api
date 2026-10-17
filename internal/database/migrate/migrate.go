@@ -117,6 +117,10 @@ func (r *Runner) Pending(ctx context.Context) ([]Migration, error) {
 	if err != nil {
 		return nil, err
 	}
+	return r.pendingFrom(done)
+}
+
+func (r *Runner) pendingFrom(done map[string]Applied) ([]Migration, error) {
 	var pending []Migration
 	for _, m := range r.migrations {
 		a, ok := done[m.Version]
@@ -265,8 +269,25 @@ func splitStatements(sqlText string) []string {
 var ErrPending = errors.New("database has pending migrations")
 
 // CheckCurrent fails when migrations are pending; the API calls it at startup.
+// It only reads: the API's database role has no DDL rights, so a ledger that
+// does not exist yet (or predates the checksum column) means "run migrate up".
 func (r *Runner) CheckCurrent(ctx context.Context) ([]Migration, error) {
-	pending, err := r.Pending(ctx)
+	var ready bool
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = 'schema_migrations' AND column_name = 'checksum')`,
+	).Scan(&ready); err != nil {
+		return nil, err
+	}
+	if !ready {
+		return r.migrations, ErrPending
+	}
+	done, err := r.applied(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pending, err := r.pendingFrom(done)
 	if err != nil {
 		return nil, err
 	}

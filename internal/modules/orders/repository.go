@@ -766,7 +766,7 @@ func baseSelect() string {
 			o.order_status::text, COALESCE(o.total_amount, 0), o.notes, o.order_date,
 			o.created_at, o.updated_at,
 			o.created_by, o.updated_by,
-			o.nursery_id, o.quotation_id, o.customer_user_id, o.customer_name, o.customer_mobile,
+			o.quotation_id, o.customer_user_id, o.customer_name, o.customer_mobile,
 			o.assigned_manager_user_id, o.created_by_user_id,
 			o.cancelled_by_user_id, o.cancelled_at, o.cancel_reason,
 			o.loading_started_at, o.loading_completed_at, o.loading_completed_by_user_id,
@@ -774,7 +774,7 @@ func baseSelect() string {
 			mu.first_name
 		FROM public.orders o
 		LEFT JOIN public.users bu ON bu.user_id = o.buyer_user_id
-		LEFT JOIN public.nurseries n ON n.nursery_id = COALESCE(o.nursery_id, o.seller_nursery_id)
+		LEFT JOIN public.nurseries n ON n.nursery_id = o.seller_nursery_id
 		LEFT JOIN public.users mu ON mu.user_id = o.assigned_manager_user_id
 	`
 }
@@ -885,7 +885,7 @@ func scanOrder(row interface{ Scan(dest ...any) error }) (Order, error) {
 	var buyerID, sellerNurseryID, createdBy, updatedBy sql.NullInt64
 	var buyerName, nurseryName, notes sql.NullString
 	// V1 fields
-	var nurseryID, quotationID, customerUserID sql.NullInt64
+	var quotationID, customerUserID sql.NullInt64
 	var customerName, customerMobile sql.NullString
 	var assignedManagerUserID, createdByUserID sql.NullInt64
 	var cancelledByUserID sql.NullInt64
@@ -901,7 +901,7 @@ func scanOrder(row interface{ Scan(dest ...any) error }) (Order, error) {
 		&order.Status, &order.TotalAmount, &notes, &order.OrderDate,
 		&order.CreatedAt, &order.UpdatedAt,
 		&createdBy, &updatedBy,
-		&nurseryID, &quotationID, &customerUserID, &customerName, &customerMobile,
+		&quotationID, &customerUserID, &customerName, &customerMobile,
 		&assignedManagerUserID, &createdByUserID,
 		&cancelledByUserID, &cancelledAt, &cancelReason,
 		&loadingStartedAt, &loadingCompletedAt, &loadingCompletedByUserID,
@@ -917,7 +917,6 @@ func scanOrder(row interface{ Scan(dest ...any) error }) (Order, error) {
 	order.SellerNursery = nullableString(nurseryName)
 	order.NurseryName = nullableString(nurseryName)
 	order.Notes = nullableString(notes)
-	order.NurseryID = nullableInt64(nurseryID)
 	order.QuotationID = nullableInt64(quotationID)
 	order.CustomerUserID = nullableInt64(customerUserID)
 	order.CustomerName = nullableString(customerName)

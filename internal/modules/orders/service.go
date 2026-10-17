@@ -128,10 +128,7 @@ func (s *Service) RenderPDF(ctx context.Context, actor ActorContext, orderID int
 		return nil, "", err
 	}
 	var nursery PDFNurseryExtras
-	nurseryID := o.NurseryID
-	if nurseryID == nil {
-		nurseryID = o.SellerNurseryID
-	}
+	nurseryID := o.SellerNurseryID
 	if nurseryID != nil {
 		if extras, extrasErr := s.repository.GetNurseryContactExtras(ctx, *nurseryID); extrasErr == nil {
 			nursery = extras
@@ -276,10 +273,7 @@ func (s *Service) RevokeAndRegenerateToken(ctx context.Context, actor ActorConte
 	}
 	isAdmin := actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
 	if !isAdmin {
-		nurseryID := o.NurseryID
-		if nurseryID == nil {
-			nurseryID = o.SellerNurseryID
-		}
+		nurseryID := o.SellerNurseryID
 		if nurseryID == nil {
 			return VerifyTokenResponse{}, ErrForbidden
 		}
@@ -725,10 +719,7 @@ func (s *Service) AssignManager(ctx context.Context, actor ActorContext, orderID
 		return Order{}, err
 	}
 	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
-		nurseryID := order.NurseryID
-		if nurseryID == nil {
-			nurseryID = order.SellerNurseryID
-		}
+		nurseryID := order.SellerNurseryID
 		if nurseryID == nil {
 			return Order{}, ErrForbidden
 		}
@@ -911,10 +902,7 @@ func (s *Service) canView(ctx context.Context, actor ActorContext, order Order) 
 	if order.AssignedManagerUserID != nil && *order.AssignedManagerUserID == actor.UserID {
 		return nil
 	}
-	nurseryID := order.NurseryID
-	if nurseryID == nil {
-		nurseryID = order.SellerNurseryID
-	}
+	nurseryID := order.SellerNurseryID
 	if nurseryID != nil {
 		owner, _ := s.repository.IsNurseryOwner(ctx, *nurseryID, actor.UserID)
 		if owner {
@@ -951,10 +939,7 @@ func (s *Service) canManage(ctx context.Context, actor ActorContext, order Order
 	if order.AssignedManagerUserID != nil && *order.AssignedManagerUserID == actor.UserID {
 		return nil
 	}
-	nurseryID := order.NurseryID
-	if nurseryID == nil {
-		nurseryID = order.SellerNurseryID
-	}
+	nurseryID := order.SellerNurseryID
 	if nurseryID != nil {
 		owner, _ := s.repository.IsNurseryOwner(ctx, *nurseryID, actor.UserID)
 		if owner {

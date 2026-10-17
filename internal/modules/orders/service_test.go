@@ -100,7 +100,6 @@ func (m *mockRepo) Create(_ context.Context, actorID int64, input CreateOrderReq
 		OrderNumber:     orderNumber,
 		Status:          input.Status,
 		SellerNurseryID: nurseryID,
-		NurseryID:       nurseryID,
 		BuyerUserID:     input.BuyerUserID,
 		CreatedByUserID: &actorID,
 	}
@@ -538,7 +537,6 @@ func TestUpdateDeliverySnapshot_EmergencyNotifiesStartedDispatchDriver(t *testin
 		OrderCode:       "ORD-TEST-001",
 		Status:          "LOADED",
 		SellerNurseryID: nurseryID(1),
-		NurseryID:       nurseryID(1),
 	})
 	repo.startedOrders[10] = true
 	repo.driverUserIDs[10] = 700
@@ -570,7 +568,7 @@ func TestUpdateStatus_PendingToConfirmed(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid, DeliverySnapshot: testDeliverySnapshot()})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid, DeliverySnapshot: testDeliverySnapshot()})
 	o, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "CONFIRMED"})
 	if err != nil {
 		t.Fatalf("PENDING→CONFIRMED: %v", err)
@@ -584,7 +582,7 @@ func TestUpdateStatus_PendingToConfirmedRequiresDeliveryAddress(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "CONFIRMED"})
 	if !errors.Is(err, ErrMissingDeliveryAddress) {
 		t.Fatalf("PENDING→CONFIRMED without delivery: want ErrMissingDeliveryAddress, got %v", err)
@@ -597,7 +595,7 @@ func TestUpdateStatus_LoadingNotAllowedViaGeneric(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "LOADING"})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("LOADING via generic PUT: want ErrInvalidInput, got %v", err)
@@ -608,7 +606,7 @@ func TestUpdateStatus_ConfirmedToCompletedBlocked(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", SellerNurseryID: &nid})
 	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "COMPLETED"})
 	if !errors.Is(err, ErrInvalidStatus) {
 		t.Errorf("CONFIRMED→COMPLETED: want ErrInvalidStatus, got %v", err)
@@ -619,7 +617,7 @@ func TestUpdateStatus_LoadedToCompleted(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "LOADED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "LOADED", SellerNurseryID: &nid})
 	o, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "COMPLETED"})
 	if err != nil {
 		t.Fatalf("LOADED→COMPLETED: %v", err)
@@ -633,7 +631,7 @@ func TestUpdateStatus_LoadedToCompletedBlockedByUndeliveredDispatch(t *testing.T
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "LOADED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "LOADED", SellerNurseryID: &nid})
 	repo.undelivered[10] = true
 
 	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "COMPLETED"})
@@ -646,7 +644,7 @@ func TestUpdateStatus_PartiallyFulfilledToCompleted(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PARTIALLY_FULFILLED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PARTIALLY_FULFILLED", SellerNurseryID: &nid})
 	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "COMPLETED"})
 	if err != nil {
 		t.Errorf("PARTIALLY_FULFILLED→COMPLETED: %v", err)
@@ -657,7 +655,7 @@ func TestUpdateStatus_CompletedIsTerminal(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "COMPLETED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "COMPLETED", SellerNurseryID: &nid})
 	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "CONFIRMED"})
 	if !errors.Is(err, ErrInvalidStatus) {
 		t.Errorf("COMPLETED→CONFIRMED: want ErrInvalidStatus, got %v", err)
@@ -668,7 +666,7 @@ func TestUpdateStatus_UnknownStatus(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "UNICORN"})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("bad status: want ErrInvalidInput, got %v", err)
@@ -679,7 +677,7 @@ func TestUpdateStatus_StrangerForbidden(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(999), 10, UpdateStatusRequest{Status: "CONFIRMED"})
 	if !errors.Is(err, ErrForbidden) {
 		t.Errorf("stranger update: want ErrForbidden, got %v", err)
@@ -691,7 +689,7 @@ func TestUpdateStatus_AssignedManagerCanUpdate(t *testing.T) {
 	repo.seedNursery(1, 100)
 	nid := int64(1)
 	mgr := int64(200)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid, AssignedManagerUserID: &mgr, DeliverySnapshot: testDeliverySnapshot()})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid, AssignedManagerUserID: &mgr, DeliverySnapshot: testDeliverySnapshot()})
 	_, err := svc(repo).UpdateStatus(context.Background(), managerActor(200), 10, UpdateStatusRequest{Status: "CONFIRMED"})
 	if err != nil {
 		t.Errorf("assigned manager update: %v", err)
@@ -704,7 +702,7 @@ func TestStartLoading_FromConfirmed(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", NurseryID: &nid, DeliverySnapshot: testDeliverySnapshot()})
+	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", SellerNurseryID: &nid, DeliverySnapshot: testDeliverySnapshot()})
 	o, err := svc(repo).StartLoading(context.Background(), ownerActor(100), 10)
 	if err != nil {
 		t.Fatalf("StartLoading from CONFIRMED: %v", err)
@@ -718,7 +716,7 @@ func TestStartLoading_FromPending(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	_, err := svc(repo).StartLoading(context.Background(), ownerActor(100), 10)
 	if !errors.Is(err, ErrInvalidStatus) {
 		t.Errorf("StartLoading from PENDING: want ErrInvalidStatus, got %v", err)
@@ -729,7 +727,7 @@ func TestStartLoading_NonMemberForbidden(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", SellerNurseryID: &nid})
 	_, err := svc(repo).StartLoading(context.Background(), ownerActor(999), 10)
 	if !errors.Is(err, ErrForbidden) {
 		t.Errorf("non-member StartLoading: want ErrForbidden, got %v", err)
@@ -742,7 +740,7 @@ func TestCompleteLoading_AllFullBecomesLoaded(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "LOADING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "LOADING", SellerNurseryID: &nid})
 	full := float64(10)
 	repo.seedItem(OrderItem{ID: 1, OrderID: 10, Quantity: 10, LoadedQuantity: &full})
 	o, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10)
@@ -758,7 +756,7 @@ func TestCompleteLoading_ShortBecomesPartiallyFulfilled(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "LOADING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "LOADING", SellerNurseryID: &nid})
 	partial := float64(5) // ordered 10, loaded only 5
 	repo.seedItem(OrderItem{ID: 1, OrderID: 10, Quantity: 10, LoadedQuantity: &partial})
 	o, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10)
@@ -777,7 +775,7 @@ func TestCompleteLoading_PartialReturnsRecalculatedTotal(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "LOADING", NurseryID: &nid, TotalAmount: 500})
+	repo.seedOrder(Order{ID: 10, Status: "LOADING", SellerNurseryID: &nid, TotalAmount: 500})
 	partial := float64(7) // ordered 10 @ 50/unit, loaded only 7 -> should recalc to 350
 	repo.seedItem(OrderItem{ID: 1, OrderID: 10, Quantity: 10, UnitPrice: 50, LoadedQuantity: &partial})
 	o, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10)
@@ -796,7 +794,7 @@ func TestCompleteLoading_NotInLoading(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", SellerNurseryID: &nid})
 	_, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10)
 	if !errors.Is(err, ErrInvalidStatus) {
 		t.Errorf("CompleteLoading not in LOADING: want ErrInvalidStatus, got %v", err)
@@ -809,7 +807,7 @@ func TestSetLoadedQuantity_ValidInLoading(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "LOADING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "LOADING", SellerNurseryID: &nid})
 	repo.seedItem(OrderItem{ID: 1, OrderID: 10, Quantity: 10})
 	item, err := svc(repo).SetLoadedQuantity(context.Background(), ownerActor(100), 10, 1, 7)
 	if err != nil {
@@ -824,7 +822,7 @@ func TestSetLoadedQuantity_NegativeRejected(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "LOADING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "LOADING", SellerNurseryID: &nid})
 	repo.seedItem(OrderItem{ID: 1, OrderID: 10, Quantity: 10})
 	_, err := svc(repo).SetLoadedQuantity(context.Background(), ownerActor(100), 10, 1, -1)
 	if !errors.Is(err, ErrInvalidInput) {
@@ -836,7 +834,7 @@ func TestSetLoadedQuantity_NotInLoading(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	repo.seedItem(OrderItem{ID: 1, OrderID: 10, Quantity: 10})
 	_, err := svc(repo).SetLoadedQuantity(context.Background(), ownerActor(100), 10, 1, 5)
 	if !errors.Is(err, ErrInvalidStatus) {
@@ -848,7 +846,7 @@ func TestSetLoadedQuantity_WrongOrderItem(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "LOADING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "LOADING", SellerNurseryID: &nid})
 	repo.seedItem(OrderItem{ID: 1, OrderID: 99, Quantity: 10}) // item belongs to order 99, not 10
 	_, err := svc(repo).SetLoadedQuantity(context.Background(), ownerActor(100), 10, 1, 5)
 	if !errors.Is(err, ErrForbidden) {
@@ -862,7 +860,7 @@ func TestCancel_PendingByOwner(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	o, err := svc(repo).Cancel(context.Background(), ownerActor(100), 10, "test")
 	if err != nil {
 		t.Fatalf("cancel PENDING by owner: %v", err)
@@ -877,7 +875,7 @@ func TestCancel_PendingByBuyerSelf(t *testing.T) {
 	repo.seedNursery(1, 100)
 	bid := int64(300)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid, BuyerUserID: &bid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid, BuyerUserID: &bid})
 	_, err := svc(repo).Cancel(context.Background(), buyerActor(300), 10, "changed mind")
 	if err != nil {
 		t.Errorf("buyer self-cancel PENDING: %v", err)
@@ -889,7 +887,7 @@ func TestCancel_ConfirmedByBuyerForbidden(t *testing.T) {
 	repo.seedNursery(1, 100)
 	bid := int64(300)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", NurseryID: &nid, BuyerUserID: &bid})
+	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", SellerNurseryID: &nid, BuyerUserID: &bid})
 	_, err := svc(repo).Cancel(context.Background(), buyerActor(300), 10, "oops")
 	if !errors.Is(err, ErrForbidden) {
 		t.Errorf("buyer cancel CONFIRMED: want ErrForbidden, got %v", err)
@@ -900,7 +898,7 @@ func TestCancel_LoadedForbidden(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "LOADED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "LOADED", SellerNurseryID: &nid})
 	_, err := svc(repo).Cancel(context.Background(), ownerActor(100), 10, "cancel")
 	if !errors.Is(err, ErrInvalidStatus) {
 		t.Errorf("cancel LOADED: want ErrInvalidStatus, got %v", err)
@@ -911,7 +909,7 @@ func TestCancel_PartiallyFulfilledForbidden(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PARTIALLY_FULFILLED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PARTIALLY_FULFILLED", SellerNurseryID: &nid})
 	_, err := svc(repo).Cancel(context.Background(), ownerActor(100), 10, "cancel")
 	if !errors.Is(err, ErrInvalidStatus) {
 		t.Errorf("cancel PARTIALLY_FULFILLED: want ErrInvalidStatus, got %v", err)
@@ -922,7 +920,7 @@ func TestCancel_CompletedForbidden(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "COMPLETED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "COMPLETED", SellerNurseryID: &nid})
 	_, err := svc(repo).Cancel(context.Background(), ownerActor(100), 10, "cancel")
 	if !errors.Is(err, ErrInvalidStatus) {
 		t.Errorf("cancel COMPLETED: want ErrInvalidStatus, got %v", err)
@@ -933,7 +931,7 @@ func TestCancel_AlreadyCancelledForbidden(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "CANCELLED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "CANCELLED", SellerNurseryID: &nid})
 	_, err := svc(repo).Cancel(context.Background(), ownerActor(100), 10, "cancel")
 	if !errors.Is(err, ErrInvalidStatus) {
 		t.Errorf("cancel CANCELLED: want ErrInvalidStatus, got %v", err)
@@ -944,7 +942,7 @@ func TestCancel_ConfirmedByManager(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100, 200)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", SellerNurseryID: &nid})
 	_, err := svc(repo).Cancel(context.Background(), managerActor(200), 10, "cancel")
 	if err != nil {
 		t.Errorf("manager cancel CONFIRMED: %v", err)
@@ -957,7 +955,7 @@ func TestDelete_PendingByOwner(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	if err := svc(repo).Delete(context.Background(), ownerActor(100), 10); err != nil {
 		t.Errorf("delete PENDING: %v", err)
 	}
@@ -970,7 +968,7 @@ func TestDelete_ConfirmedBlocked(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", SellerNurseryID: &nid})
 	err := svc(repo).Delete(context.Background(), ownerActor(100), 10)
 	if !errors.Is(err, ErrInvalidStatus) {
 		t.Errorf("delete CONFIRMED: want ErrInvalidStatus, got %v", err)
@@ -981,7 +979,7 @@ func TestDelete_StrangerForbidden(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	err := svc(repo).Delete(context.Background(), ownerActor(999), 10)
 	if !errors.Is(err, ErrForbidden) {
 		t.Errorf("stranger delete: want ErrForbidden, got %v", err)
@@ -994,7 +992,7 @@ func TestAssignManager_OwnerCanAssign(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	o, err := svc(repo).AssignManager(context.Background(), ownerActor(100), 10, 200)
 	if err != nil {
 		t.Fatalf("owner assign manager: %v", err)
@@ -1008,7 +1006,7 @@ func TestAssignManager_AdminCanAssign(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	_, err := svc(repo).AssignManager(context.Background(), adminActor(1), 10, 200)
 	if err != nil {
 		t.Errorf("admin assign manager: %v", err)
@@ -1019,7 +1017,7 @@ func TestAssignManager_ManagerForbidden(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100, 200)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	_, err := svc(repo).AssignManager(context.Background(), managerActor(200), 10, 300)
 	if !errors.Is(err, ErrForbidden) {
 		t.Errorf("manager assign manager: want ErrForbidden, got %v", err)
@@ -1032,7 +1030,7 @@ func TestCreateItem_AllowedInPending(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	_, err := svc(repo).CreateItem(context.Background(), ownerActor(100), 10, validItem())
 	if err != nil {
 		t.Errorf("create item in PENDING: %v", err)
@@ -1043,7 +1041,7 @@ func TestCreateItem_AllowedInConfirmed(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", SellerNurseryID: &nid})
 	_, err := svc(repo).CreateItem(context.Background(), ownerActor(100), 10, validItem())
 	if err != nil {
 		t.Errorf("create item in CONFIRMED: %v", err)
@@ -1054,7 +1052,7 @@ func TestCreateItem_AllowedInLoading(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "LOADING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "LOADING", SellerNurseryID: &nid})
 	_, err := svc(repo).CreateItem(context.Background(), ownerActor(100), 10, validItem())
 	if err != nil {
 		t.Errorf("create item in LOADING: %v", err)
@@ -1065,7 +1063,7 @@ func TestCreateItem_LockedAfterLoaded(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "LOADED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "LOADED", SellerNurseryID: &nid})
 	_, err := svc(repo).CreateItem(context.Background(), ownerActor(100), 10, validItem())
 	if !errors.Is(err, ErrInvalidStatus) {
 		t.Errorf("create item in LOADED: want ErrInvalidStatus, got %v", err)
@@ -1076,7 +1074,7 @@ func TestCreateItem_LockedAfterCompleted(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "COMPLETED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "COMPLETED", SellerNurseryID: &nid})
 	_, err := svc(repo).CreateItem(context.Background(), ownerActor(100), 10, validItem())
 	if !errors.Is(err, ErrInvalidStatus) {
 		t.Errorf("create item in COMPLETED: want ErrInvalidStatus, got %v", err)
@@ -1087,7 +1085,7 @@ func TestCreateItem_InvalidZeroQty(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	_, err := svc(repo).CreateItem(context.Background(), ownerActor(100), 10, OrderItemRequest{
 		PlantID: 1, Quantity: 0, UnitPrice: 50, TotalPrice: 0,
 	})
@@ -1100,7 +1098,7 @@ func TestDeleteItem_AllowedInPending(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "PENDING", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	repo.seedItem(OrderItem{ID: 1, OrderID: 10, Quantity: 5})
 	if err := svc(repo).DeleteItem(context.Background(), ownerActor(100), 1); err != nil {
 		t.Errorf("delete item in PENDING: %v", err)
@@ -1111,7 +1109,7 @@ func TestDeleteItem_LockedAfterLoaded(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrder(Order{ID: 10, Status: "LOADED", NurseryID: &nid})
+	repo.seedOrder(Order{ID: 10, Status: "LOADED", SellerNurseryID: &nid})
 	repo.seedItem(OrderItem{ID: 1, OrderID: 10, Quantity: 5})
 	err := svc(repo).DeleteItem(context.Background(), ownerActor(100), 1)
 	if !errors.Is(err, ErrInvalidStatus) {

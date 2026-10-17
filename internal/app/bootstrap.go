@@ -70,6 +70,23 @@ func Bootstrap(ctx context.Context) (*App, error) {
 			}
 			logManager.Logger().Warn("database has pending migrations; run `go run ./cmd/migrate up`", "pending", versions(pending))
 		}
+
+		// The API must connect as greenroot_app (row access only), never as
+		// the schema owner or a superuser. See greenroot-infra roles.sql.
+		problems, err := database.PrivilegeProblems(ctx, db)
+		if err != nil {
+			_ = logManager.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("check database privileges: %w", err)
+		}
+		if len(problems) > 0 {
+			if cfg.IsProduction() {
+				_ = logManager.Close()
+				_ = db.Close()
+				return nil, fmt.Errorf("DATABASE_URL role is over-privileged (use greenroot_app): %s", strings.Join(problems, "; "))
+			}
+			logManager.Logger().Warn("DATABASE_URL role is over-privileged; production will refuse to start", "problems", problems)
+		}
 	}
 
 	storageClient, err := storage.New(storage.Config{

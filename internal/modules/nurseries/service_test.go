@@ -540,6 +540,22 @@ func TestUpdateStatus_OwnerForbidden(t *testing.T) {
 	}
 }
 
+func TestUpdateStatus_RejectsUnknownStatus(t *testing.T) {
+	for _, status := range []string{"", "APPROVE", "COMPLETE", "unicorn"} {
+		repo := newMock()
+		repo.seedNursery(1, "Nursery", "PENDING", ptr(int64(10)))
+		if _, err := svc(repo).UpdateStatus(context.Background(), adminActor(1), 1, status); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("status %q: want ErrInvalidInput, got %v", status, err)
+		}
+	}
+	// Case and spaces are normalised.
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "PENDING", ptr(int64(10)))
+	if n, err := svc(repo).UpdateStatus(context.Background(), adminActor(1), 1, " approved "); err != nil || n.Status != "APPROVED" {
+		t.Errorf("normalised status: got %v, %v", n.Status, err)
+	}
+}
+
 func TestUpdateStatus_TrialCreatedOnApproval(t *testing.T) {
 	repo := newMock()
 	ownerID := int64(10)

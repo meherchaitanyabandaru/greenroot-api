@@ -79,7 +79,11 @@ jobs:
           --health-cmd "redis-cli ping"
           --health-interval 5s --health-timeout 5s --health-retries 20
     env:
+      # Superuser: loads the schema/seeds and the test fixtures only.
       DATABASE_URL: postgres://greenroot:greenroot@localhost:5432/greenroot?sslmode=disable
+      # Production-shaped roles from greenroot-infra roles.sql.
+      MIGRATE_DATABASE_URL: postgres://greenroot_migrator:ci-migrator@localhost:5432/greenroot?sslmode=disable
+      APP_DATABASE_URL: postgres://greenroot_app:ci-app@localhost:5432/greenroot?sslmode=disable
       REDIS_ADDR: localhost:6379
       JWT_SECRET: ci-only-secret-not-used-anywhere-else-0123456789
       LOG_DIR: /tmp/gr-logs
@@ -107,15 +111,29 @@ jobs:
               psql -h localhost -U greenroot -d greenroot -v ON_ERROR_STOP=1 -q -f "/sql/$f"
           done
 
+      # Least-privilege roles (D9): the migrator owns the schema, the API can
+      # only read and write rows.
+      - name: Create database roles
+        run: |
+          docker run --rm --network host -v "$PWD/infra/db/postgresql:/sql:ro" \
+            -e PGPASSWORD=greenroot postgis/postgis:17-3.5 \
+            psql -h localhost -U greenroot -d greenroot -v ON_ERROR_STOP=1 -q -f /sql/roles.sql
+          docker run --rm --network host -e PGPASSWORD=greenroot postgis/postgis:17-3.5 \
+            psql -h localhost -U greenroot -d greenroot -v ON_ERROR_STOP=1 -q \
+              -c "ALTER ROLE greenroot_migrator PASSWORD 'ci-migrator'" \
+              -c "ALTER ROLE greenroot_app PASSWORD 'ci-app'"
+
       # schema.sql records the applied migrations; any new migration in this
-      # change is applied here, proving it runs on a fresh-install database.
+      # change is applied here, as the migrator role, proving it runs on a
+      # fresh-install database with production privileges.
       - name: Apply migrations
         run: go run ./cmd/migrate up
 
       - name: Start API
         run: |
           go build -o /tmp/greenroot-api ./cmd/api
-          /tmp/greenroot-api > /tmp/api.log 2>&1 &
+          # The API runs as greenroot_app, exactly as in production.
+          DATABASE_URL="$APP_DATABASE_URL" /tmp/greenroot-api > /tmp/api.log 2>&1 &
           for i in $(seq 1 60); do
             curl -sf http://localhost:8080/health && exit 0
             sleep 1
@@ -123,7 +141,10 @@ jobs:
           echo "API did not become healthy"; cat /tmp/api.log; exit 1
 
       - name: API integration tests
-        run: go test -count=1 ./tests/...
+        run: |
+          go test -count=1 ./tests/...
+          # No over-privilege warning may appear in the API log.
+          if grep -q "over-privileged" /tmp/api.log; then cat /tmp/api.log; exit 1; fi
 
       - name: API log (on failure)
         if: failure()

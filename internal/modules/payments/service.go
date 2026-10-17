@@ -14,6 +14,7 @@ import (
 var (
 	ErrForbidden    = apperrs.ErrForbidden
 	ErrInvalidInput = apperrs.ErrInvalidInput
+	ErrConflict     = apperrs.ErrConflict
 )
 
 // EventNotifier fans payer alerts out to every messaging channel (SMS, email).

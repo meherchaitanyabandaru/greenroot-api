@@ -580,7 +580,7 @@ func baseSelect() string {
 	return `
 		SELECT d.dispatch_id, d.dispatch_code, d.order_id, o.order_number,
 			o.order_status::text, o.loading_started_at, o.loading_completed_at,
-			COALESCE(o.nursery_id, o.seller_nursery_id), d.dispatch_number,
+			o.seller_nursery_id, d.dispatch_number,
 			COALESCE(d.dispatch_status::text, ''), d.vehicle_id, v.vehicle_number, d.driver_id,
 			u.first_name, u.mobile, d.dispatched_by, d.dispatch_date, d.delivery_date, d.destination_address,
 			ods.latitude AS delivery_latitude, ods.longitude AS delivery_longitude,

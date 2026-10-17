@@ -64,7 +64,6 @@ type Order struct {
 	OrderCode   string `json:"order_code"`
 	OrderNumber string `json:"order_number"`
 	// V1 nursery-centric fields
-	NurseryID                *int64     `json:"nursery_id,omitempty"`
 	NurseryName              *string    `json:"nursery_name,omitempty"`
 	QuotationID              *int64     `json:"quotation_id,omitempty"`
 	CustomerUserID           *int64     `json:"customer_user_id,omitempty"`

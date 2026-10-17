@@ -9,6 +9,7 @@ go run ./cmd/migrate up                     # apply pending, in order
 go run ./cmd/migrate baseline <version>     # record versions as applied without running them
 ```
 
+- **Roles:** in production `cmd/migrate` connects with `MIGRATE_DATABASE_URL` (the `greenroot_migrator` role from `greenroot-infra/db/postgresql/roles.sql`); the API's `DATABASE_URL` role cannot run DDL. Locally both fall back to `DATABASE_URL`. Objects created by migrations are owned by `greenroot_owner` and granted to the app automatically (default privileges).
 - **Deploy:** run `migrate up` before starting the new API. In production the API **refuses to start** while migrations are pending; elsewhere it logs a warning.
 - **Existing databases that predate the runner** (migrated by hand): run `migrate baseline <last version already applied>` once, then `migrate up`. For a database built from the 2026-07-25 `schema.sql`, that is `baseline 20260725_order_documents_verifications`.
 - **Fresh local databases** come from `greenroot-infra/db/postgresql/schema.sql`, which includes the `schema_migrations` rows, so nothing is pending.
@@ -20,4 +21,5 @@ go run ./cmd/migrate baseline <version>     # record versions as applied without
 3. **Concurrent indexes:** for `CREATE INDEX CONCURRENTLY` on live tables, put `-- migrate:no-transaction` in the file. Statements then run one at a time, so keep that file to plain DDL ending in `;`.
 4. **Idempotent where practical:** use `IF NOT EXISTS`, and `ON CONFLICT DO NOTHING` / `WHERE NOT EXISTS` for seed rows, so a re-run never overwrites admin edits.
 5. **Never edit an applied migration.** The runner checks file checksums and stops on changes; add a new migration instead.
-6. **After applying locally:** refresh the fresh-install snapshot with `greenroot-infra/scripts/dump-schema.sh` and check the diff contains only your change.
+6. **Domain lists:** status columns carry `ck_*` CHECK constraints that mirror the Go validators. A new status value needs a migration that drops and re-adds the constraint (`NOT VALID`, then `VALIDATE CONSTRAINT`).
+7. **After applying locally:** refresh the fresh-install snapshot with `greenroot-infra/scripts/dump-schema.sh` and check the diff contains only your change.

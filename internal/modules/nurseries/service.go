@@ -327,7 +327,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, nurseryI
 		return Nursery{}, ErrForbidden
 	}
 	status = strings.ToUpper(strings.TrimSpace(status))
-	if status == "" {
+	if !isAllowedNurseryStatus(status) {
 		return Nursery{}, ErrInvalidInput
 	}
 	old, _ := s.repository.FindByID(ctx, nurseryID)
@@ -602,13 +602,20 @@ func validateNursery(input CreateNurseryRequest) error {
 	if input.Name == "" {
 		return ErrInvalidInput
 	}
-	status := statusOrActive(input.Status)
-	switch status {
-	case "ACTIVE", "INACTIVE", "SUSPENDED", "DELETED", "PENDING", "APPROVED", "REJECTED":
-		return nil
-	default:
+	if !isAllowedNurseryStatus(statusOrActive(input.Status)) {
 		return ErrInvalidInput
 	}
+	return nil
+}
+
+// isAllowedNurseryStatus is the full nursery status set; the database
+// enforces the same list (ck_nurseries_status).
+func isAllowedNurseryStatus(status string) bool {
+	switch status {
+	case "ACTIVE", "INACTIVE", "SUSPENDED", "DELETED", "PENDING", "APPROVED", "REJECTED":
+		return true
+	}
+	return false
 }
 
 func normalizeUpdateNursery(input UpdateNurseryRequest) UpdateNurseryRequest {
@@ -630,10 +637,7 @@ func normalizeUpdateNursery(input UpdateNurseryRequest) UpdateNurseryRequest {
 
 func validateUpdateNursery(input UpdateNurseryRequest) error {
 	if input.Status != nil {
-		status := strings.ToUpper(strings.TrimSpace(*input.Status))
-		switch status {
-		case "ACTIVE", "INACTIVE", "SUSPENDED", "DELETED", "PENDING", "APPROVED", "REJECTED":
-		default:
+		if !isAllowedNurseryStatus(strings.ToUpper(strings.TrimSpace(*input.Status))) {
 			return ErrInvalidInput
 		}
 	}
