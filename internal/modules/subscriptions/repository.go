@@ -220,7 +220,7 @@ func (r *PostgresRepository) FindByID(ctx context.Context, subscriptionID int64)
 func (r *PostgresRepository) FindActiveByUser(ctx context.Context, userID int64) (*UserSubscription, error) {
 	subscription, err := scanSubscription(r.db.QueryRowContext(ctx, baseSubscriptionSelect()+`
 		WHERE us.user_id = $1
-		  AND us.subscription_status::text = 'ACTIVE'
+		  AND us.status::text = 'ACTIVE'
 		  AND (us.end_date IS NULL OR us.end_date >= CURRENT_DATE)
 		ORDER BY us.end_date DESC NULLS FIRST, us.user_subscription_id DESC
 		LIMIT 1
@@ -239,7 +239,7 @@ func (r *PostgresRepository) Create(ctx context.Context, input CreateSubscriptio
 
 	const query = `
 		INSERT INTO public.user_subscriptions (
-			subscription_code, user_id, plan_id, start_date, end_date, subscription_status, auto_renew, created_at, updated_at
+			subscription_code, user_id, plan_id, start_date, end_date, status, is_auto_renew, created_at, updated_at
 		)
 		VALUES ($1, $2, $3, $4, $5, 'ACTIVE', $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING user_subscription_id
@@ -254,8 +254,8 @@ func (r *PostgresRepository) Create(ctx context.Context, input CreateSubscriptio
 func (r *PostgresRepository) UpdateStatus(ctx context.Context, subscriptionID int64, status string) (*UserSubscription, error) {
 	const query = `
 		UPDATE public.user_subscriptions
-		SET subscription_status = $2,
-			auto_renew = CASE WHEN $3 IN ('CANCELLED', 'EXPIRED') THEN false ELSE auto_renew END,
+		SET status = $2,
+			is_auto_renew = CASE WHEN $3 IN ('CANCELLED', 'EXPIRED') THEN false ELSE is_auto_renew END,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE user_subscription_id = $1
 	`
@@ -276,8 +276,8 @@ func (r *PostgresRepository) Renew(ctx context.Context, subscriptionID int64, in
 		UPDATE public.user_subscriptions
 		SET start_date = $2,
 			end_date = $3,
-			subscription_status = 'ACTIVE',
-			auto_renew = $4,
+			status = 'ACTIVE',
+			is_auto_renew = $4,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE user_subscription_id = $1
 	`
@@ -304,8 +304,8 @@ func (r *PostgresRepository) CreatePayment(ctx context.Context, input CreatePaym
 	}
 	const query = `
 		INSERT INTO public.payments (
-			payment_code, payment_for, user_subscription_id, payer_user_id, amount, payment_method, payment_status,
-			payment_date, notes, provider, provider_order_id, created_at, updated_at
+			payment_code, payment_for, user_subscription_id, payer_user_id, amount, payment_method, status,
+			paid_at, notes, provider, provider_order_id, created_at, updated_at
 		)
 		VALUES ($1, 'SUBSCRIPTION', $2, $3, $4, $5, $6::text,
 			CASE WHEN $6::text = 'SUCCESS' THEN $10::timestamptz ELSE NULL::timestamptz END,
@@ -318,7 +318,7 @@ func (r *PostgresRepository) CreatePayment(ctx context.Context, input CreatePaym
 func (r *PostgresRepository) ListPaymentsBySubscription(ctx context.Context, subscriptionID int64) ([]Payment, error) {
 	const query = `
 		SELECT payment_id, payment_code, amount, payment_method, transaction_reference,
-		       payment_status, payment_date, provider, provider_payment_id, provider_order_id, created_at
+		       status, paid_at, provider, provider_payment_id, provider_order_id, created_at
 		FROM public.payments
 		WHERE user_subscription_id = $1 AND payment_for = 'SUBSCRIPTION'
 		ORDER BY payment_id DESC
@@ -361,16 +361,16 @@ func planSelect() string {
 func baseSubscriptionSelect() string {
 	return `
 		SELECT us.user_subscription_id, us.subscription_code, us.user_id, us.plan_id, sp.plan_code, sp.plan_name,
-			us.start_date, us.end_date, us.subscription_status::text, COALESCE(us.auto_renew, false),
+			us.start_date, us.end_date, us.status::text, COALESCE(us.is_auto_renew, false),
 			us.created_at, us.updated_at,
 			lp.payment_id, lp.payment_code, lp.amount, lp.payment_method, lp.transaction_reference,
-			lp.payment_status, lp.payment_date, lp.provider, lp.provider_payment_id,
+			lp.status, lp.paid_at, lp.provider, lp.provider_payment_id,
 			lp.provider_order_id, lp.created_at
 		FROM public.user_subscriptions us
 		JOIN public.subscription_plans sp ON sp.plan_id = us.plan_id
 		LEFT JOIN LATERAL (
-			SELECT payment_id, payment_code, amount, payment_method, transaction_reference, payment_status,
-				payment_date, provider, provider_payment_id, provider_order_id, created_at
+			SELECT payment_id, payment_code, amount, payment_method, transaction_reference, status,
+				paid_at, provider, provider_payment_id, provider_order_id, created_at
 			FROM public.payments
 			WHERE user_subscription_id = us.user_subscription_id
 			  AND payment_for = 'SUBSCRIPTION'
@@ -393,7 +393,7 @@ func buildSubscriptionWhere(input ListSubscriptionsRequest) (string, []any) {
 	}
 	if input.Status != "" {
 		args = append(args, input.Status)
-		clauses = append(clauses, fmt.Sprintf("us.subscription_status::text = $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("us.status::text = $%d", len(args)))
 	}
 	if input.Search != "" {
 		args = append(args, "%"+input.Search+"%")
@@ -577,7 +577,7 @@ func (r *PostgresRepository) CreatePromo(ctx context.Context, input CreatePromoI
 	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO public.subscription_promos
 			(promo_code, name, description, discount_type, discount_value, max_discount_cap,
-			 applicable_plans, applicable_cycles, valid_from, valid_until, max_uses, created_by)
+			 applicable_plans, applicable_cycles, valid_from, valid_until, max_uses, created_by_user_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::date, $10::date, $11, $12)
 		RETURNING promo_id
 	`, strings.ToUpper(strings.TrimSpace(input.PromoCode)), input.Name, input.Description,
@@ -626,7 +626,7 @@ func (r *PostgresRepository) FindUnsubscribedOwnerIDs(ctx context.Context) ([]in
 		  AND NOT EXISTS (
 			SELECT 1 FROM public.user_subscriptions us
 			WHERE us.user_id = ur.user_id
-			  AND us.subscription_status = 'ACTIVE'
+			  AND us.status = 'ACTIVE'
 			  AND (us.end_date IS NULL OR us.end_date >= CURRENT_DATE)
 		  )
 	`
@@ -656,7 +656,7 @@ func (r *PostgresRepository) BulkCreateNotifications(ctx context.Context, inputs
 	}
 	defer tx.Rollback() //nolint:errcheck
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO public.notifications (user_id, notification_type, title, message, channel, notification_status, data, sent_at, created_at)
+		INSERT INTO public.notifications (user_id, notification_type, title, message, channel, status, data, sent_at, created_at)
 		VALUES ($1, $2, $3, $4, 'IN_APP', 'SENT', $5::jsonb, NOW(), NOW())
 	`)
 	if err != nil {
@@ -678,7 +678,7 @@ func promoSelect() string {
 			p.discount_type, p.discount_value, p.max_discount_cap,
 			p.applicable_plans, p.applicable_cycles,
 			p.valid_from, p.valid_until, p.is_active,
-			p.max_uses, p.used_count, p.created_by,
+			p.max_uses, p.used_count, p.created_by_user_id,
 			p.created_at, p.updated_at
 		FROM public.subscription_promos p
 	`

@@ -57,6 +57,7 @@ jobs:
           go build ./cmd/migrate
           go build ./cmd/smoke
           go build ./cmd/integration
+          go build ./cmd/sqlcheck
 
   integration:
     name: Integration (PostGIS + Redis)
@@ -128,6 +129,11 @@ jobs:
       # fresh-install database with production privileges.
       - name: Apply migrations
         run: go run ./cmd/migrate up
+
+      # Every SQL statement in the code is PREPAREd against the migrated
+      # schema: a wrong column or table name fails here, not in production.
+      - name: SQL statements match the schema (sqlcheck)
+        run: go run ./cmd/sqlcheck ./internal/...
 
       - name: Start API
         run: |

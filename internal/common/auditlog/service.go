@@ -137,7 +137,7 @@ func (s *Service) Log(ctx context.Context, e Entry) {
 			action_type, description,
 			old_data, new_data, metadata,
 			source_ip, user_agent,
-			changed_by, changed_at
+			changed_by_user_id, changed_at
 		) VALUES (
 			NULLIF($1,''),  NULLIF($2,0),  NULLIF($3,0),
 			NULLIF($4,''),  NULLIF($5,''), $6,

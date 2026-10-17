@@ -45,7 +45,7 @@ func NewRepository(db *sql.DB) Repository { return &PostgresRepository{db: db} }
 // ── Principal Entity ────────────────────────────────────────────────────────
 
 const entitySelect = `SELECT entity_id, pe_id, entity_name, dlt_operator, telemarketer_name, telemarketer_id,
-	registration_status, notes, created_at, updated_at FROM public.sms_dlt_entities`
+	status, notes, created_at, updated_at FROM public.sms_dlt_entities`
 
 func scanEntity(row interface{ Scan(...any) error }) (*Entity, error) {
 	var e Entity
@@ -64,20 +64,20 @@ func (r *PostgresRepository) GetEntity(ctx context.Context) (*Entity, error) {
 // UpsertEntity relies on the singleton unique index ((true)).
 func (r *PostgresRepository) UpsertEntity(ctx context.Context, in EntityRequest) (*Entity, error) {
 	return scanEntity(r.db.QueryRowContext(ctx, `
-		INSERT INTO public.sms_dlt_entities (pe_id, entity_name, dlt_operator, telemarketer_name, telemarketer_id, registration_status, notes)
+		INSERT INTO public.sms_dlt_entities (pe_id, entity_name, dlt_operator, telemarketer_name, telemarketer_id, status, notes)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT ((true)) DO UPDATE SET
 			pe_id = EXCLUDED.pe_id, entity_name = EXCLUDED.entity_name, dlt_operator = EXCLUDED.dlt_operator,
 			telemarketer_name = EXCLUDED.telemarketer_name, telemarketer_id = EXCLUDED.telemarketer_id,
-			registration_status = EXCLUDED.registration_status, notes = EXCLUDED.notes, updated_at = CURRENT_TIMESTAMP
+			status = EXCLUDED.status, notes = EXCLUDED.notes, updated_at = CURRENT_TIMESTAMP
 		RETURNING entity_id, pe_id, entity_name, dlt_operator, telemarketer_name, telemarketer_id,
-			registration_status, notes, created_at, updated_at`,
+			status, notes, created_at, updated_at`,
 		in.PEID, in.EntityName, in.DLTOperator, in.TelemarketerName, in.TelemarketerID, in.RegistrationStatus, in.Notes))
 }
 
 // ── Headers ─────────────────────────────────────────────────────────────────
 
-const headerColumns = `header_id, header, header_type, dlt_header_id, registration_status, rejection_reason, created_at, updated_at`
+const headerColumns = `header_id, header, header_type, dlt_header_id, status, rejection_reason, created_at, updated_at`
 
 func scanHeader(row interface{ Scan(...any) error }) (*Header, error) {
 	var h Header
@@ -111,7 +111,7 @@ func (r *PostgresRepository) FindHeader(ctx context.Context, id int64) (*Header,
 
 func (r *PostgresRepository) CreateHeader(ctx context.Context, in HeaderRequest) (*Header, error) {
 	h, err := scanHeader(r.db.QueryRowContext(ctx, `
-		INSERT INTO public.sms_headers (header, header_type, dlt_header_id, registration_status, rejection_reason)
+		INSERT INTO public.sms_headers (header, header_type, dlt_header_id, status, rejection_reason)
 		VALUES ($1, $2, $3, $4, $5) RETURNING `+headerColumns,
 		in.Header, in.HeaderType, in.DLTHeaderID, in.RegistrationStatus, in.RejectionReason))
 	return h, mapUnique(err)
@@ -119,7 +119,7 @@ func (r *PostgresRepository) CreateHeader(ctx context.Context, in HeaderRequest)
 
 func (r *PostgresRepository) UpdateHeader(ctx context.Context, id int64, in HeaderRequest) (*Header, error) {
 	h, err := scanHeader(r.db.QueryRowContext(ctx, `
-		UPDATE public.sms_headers SET header = $2, header_type = $3, dlt_header_id = $4, registration_status = $5,
+		UPDATE public.sms_headers SET header = $2, header_type = $3, dlt_header_id = $4, status = $5,
 			rejection_reason = $6, updated_at = CURRENT_TIMESTAMP
 		WHERE header_id = $1 RETURNING `+headerColumns,
 		id, in.Header, in.HeaderType, in.DLTHeaderID, in.RegistrationStatus, in.RejectionReason))
@@ -129,8 +129,8 @@ func (r *PostgresRepository) UpdateHeader(ctx context.Context, id int64, in Head
 // ── Templates ───────────────────────────────────────────────────────────────
 
 const templateSelect = `SELECT t.sms_template_id, t.template_code, t.template_name, t.category, t.header_id,
-	h.header, h.header_type, h.registration_status, t.body, t.variables, t.is_unicode, t.dlt_template_id,
-	t.registration_status, t.rejection_reason, t.whitelisted_urls, t.whitelisted_numbers, t.is_active,
+	h.header, h.header_type, h.status, t.body, t.variables, t.is_unicode, t.dlt_template_id,
+	t.status, t.rejection_reason, t.whitelisted_urls, t.whitelisted_numbers, t.is_active,
 	t.approved_at, t.created_at, t.updated_at
 	FROM public.sms_templates t LEFT JOIN public.sms_headers h ON h.header_id = t.header_id`
 
@@ -191,7 +191,7 @@ func (r *PostgresRepository) CreateTemplate(ctx context.Context, in TemplateRequ
 	var id int64
 	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO public.sms_templates (template_code, template_name, category, header_id, body, variables, is_unicode,
-			dlt_template_id, registration_status, rejection_reason, whitelisted_urls, whitelisted_numbers, is_active, approved_at)
+			dlt_template_id, status, rejection_reason, whitelisted_urls, whitelisted_numbers, is_active, approved_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::varchar, $10, $11, $12, $13, CASE WHEN $9::varchar = 'APPROVED' THEN CURRENT_TIMESTAMP END)
 		RETURNING sms_template_id`,
 		templateArgs(in)...).Scan(&id)
@@ -205,7 +205,7 @@ func (r *PostgresRepository) UpdateTemplate(ctx context.Context, id int64, in Te
 	args := append([]any{id}, templateArgs(in)...)
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE public.sms_templates SET template_code = $2, template_name = $3, category = $4, header_id = $5, body = $6,
-			variables = $7, is_unicode = $8, dlt_template_id = $9, registration_status = $10::varchar, rejection_reason = $11,
+			variables = $7, is_unicode = $8, dlt_template_id = $9, status = $10::varchar, rejection_reason = $11,
 			whitelisted_urls = $12, whitelisted_numbers = $13, is_active = $14,
 			approved_at = CASE WHEN $10::varchar = 'APPROVED' THEN COALESCE(approved_at, CURRENT_TIMESTAMP) END,
 			updated_at = CURRENT_TIMESTAMP
@@ -301,7 +301,7 @@ func (r *PostgresRepository) ListMessages(ctx context.Context, in ListMessagesRe
 
 // ── Preferences ─────────────────────────────────────────────────────────────
 
-const preferenceColumns = `user_id, promotional_opt_in, promotional_consent_at, promotional_revoked_at, consent_source, updated_at`
+const preferenceColumns = `user_id, is_promotional_opt_in, promotional_consent_at, promotional_revoked_at, consent_source, updated_at`
 
 func scanPreferences(row interface{ Scan(...any) error }) (Preferences, error) {
 	var p Preferences
@@ -321,12 +321,12 @@ func (r *PostgresRepository) GetPreferences(ctx context.Context, userID int64) (
 // UpsertPreferences stamps consent/revocation times only when the choice changes.
 func (r *PostgresRepository) UpsertPreferences(ctx context.Context, userID int64, optIn bool, source string, at time.Time) (Preferences, error) {
 	return scanPreferences(r.db.QueryRowContext(ctx, `
-		INSERT INTO public.sms_preferences (user_id, promotional_opt_in, promotional_consent_at, promotional_revoked_at, consent_source, updated_at)
+		INSERT INTO public.sms_preferences (user_id, is_promotional_opt_in, promotional_consent_at, promotional_revoked_at, consent_source, updated_at)
 		VALUES ($1, $2, CASE WHEN $2 THEN $4::timestamptz END, CASE WHEN NOT $2 THEN $4::timestamptz END, $3, $4)
 		ON CONFLICT (user_id) DO UPDATE SET
-			promotional_consent_at = CASE WHEN EXCLUDED.promotional_opt_in AND NOT sms_preferences.promotional_opt_in THEN EXCLUDED.updated_at ELSE sms_preferences.promotional_consent_at END,
-			promotional_revoked_at = CASE WHEN NOT EXCLUDED.promotional_opt_in AND sms_preferences.promotional_opt_in THEN EXCLUDED.updated_at ELSE sms_preferences.promotional_revoked_at END,
-			promotional_opt_in = EXCLUDED.promotional_opt_in,
+			promotional_consent_at = CASE WHEN EXCLUDED.is_promotional_opt_in AND NOT sms_preferences.is_promotional_opt_in THEN EXCLUDED.updated_at ELSE sms_preferences.promotional_consent_at END,
+			promotional_revoked_at = CASE WHEN NOT EXCLUDED.is_promotional_opt_in AND sms_preferences.is_promotional_opt_in THEN EXCLUDED.updated_at ELSE sms_preferences.promotional_revoked_at END,
+			is_promotional_opt_in = EXCLUDED.is_promotional_opt_in,
 			consent_source = EXCLUDED.consent_source,
 			updated_at = EXCLUDED.updated_at
 		RETURNING `+preferenceColumns, userID, optIn, source, at))

@@ -58,7 +58,7 @@ func NewRepository(db *sql.DB) Repository { return &PostgresRepository{db: db} }
 func (r *PostgresRepository) GetMember(ctx context.Context, nurseryID int64) (*Member, error) {
 	const q = `
 		SELECT snm.member_id, snm.nursery_id, n.nursery_name, snm.is_active,
-			snm.road_accessible, snm.lorry_accessible, snm.contact_visible,
+			snm.is_road_accessible, snm.is_lorry_accessible, snm.is_contact_visible,
 			snm.service_radius_km, snm.joined_at, snm.updated_at
 		FROM public.sourcing_network_members snm
 		JOIN public.nurseries n ON n.nursery_id = snm.nursery_id
@@ -78,11 +78,11 @@ func (r *PostgresRepository) JoinNetwork(ctx context.Context, nurseryID int64, u
 	}
 	const q = `
 		INSERT INTO public.sourcing_network_members
-			(nursery_id, is_active, road_accessible, lorry_accessible, contact_visible, service_radius_km, joined_by_user_id)
+			(nursery_id, is_active, is_road_accessible, is_lorry_accessible, is_contact_visible, service_radius_km, joined_by_user_id)
 		VALUES ($1, true, $2, $3, $4, $5, $6)
 		ON CONFLICT (nursery_id) DO UPDATE
-			SET is_active = true, road_accessible = $2, lorry_accessible = $3,
-				contact_visible = $4, service_radius_km = $5, updated_at = CURRENT_TIMESTAMP,
+			SET is_active = true, is_road_accessible = $2, is_lorry_accessible = $3,
+				is_contact_visible = $4, service_radius_km = $5, updated_at = CURRENT_TIMESTAMP,
 				deactivated_at = NULL
 		RETURNING member_id
 	`
@@ -161,8 +161,8 @@ func (r *PostgresRepository) ListNearby(ctx context.Context, q NearbyQuery) ([]N
 	dataQ := fmt.Sprintf(`
 		SELECT DISTINCT ON (snm.nursery_id)
 			snm.nursery_id, n.nursery_name, na.city, %s AS distance_km,
-			snm.road_accessible, snm.lorry_accessible,
-			CASE WHEN snm.contact_visible THEN n.mobile ELSE NULL END AS contact_number
+			snm.is_road_accessible, snm.is_lorry_accessible,
+			CASE WHEN snm.is_contact_visible THEN n.mobile ELSE NULL END AS contact_number
 		FROM public.sourcing_network_members snm
 		JOIN public.nurseries n ON n.nursery_id = snm.nursery_id
 		LEFT JOIN public.nursery_addresses na ON na.nursery_id = snm.nursery_id AND na.is_primary = true
@@ -208,8 +208,8 @@ func (r *PostgresRepository) ListNearby(ctx context.Context, q NearbyQuery) ([]N
 func (r *PostgresRepository) GetNurseryProfile(ctx context.Context, nurseryID int64) (*NearbyNursery, error) {
 	const q = `
 		SELECT snm.nursery_id, n.nursery_name, na.city,
-			snm.road_accessible, snm.lorry_accessible,
-			CASE WHEN snm.contact_visible THEN n.mobile ELSE NULL END
+			snm.is_road_accessible, snm.is_lorry_accessible,
+			CASE WHEN snm.is_contact_visible THEN n.mobile ELSE NULL END
 		FROM public.sourcing_network_members snm
 		JOIN public.nurseries n ON n.nursery_id = snm.nursery_id
 		LEFT JOIN public.nursery_addresses na ON na.nursery_id = snm.nursery_id AND na.is_primary = true

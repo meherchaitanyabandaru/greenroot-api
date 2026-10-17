@@ -85,15 +85,15 @@ func (r *PostgresRepository) CreateUser(ctx context.Context, mobile string) (*Us
 			user_code,
 			first_name,
 			mobile,
-			mobile_verified,
-			email_verified,
+			is_mobile_verified,
+			is_email_verified,
 			status,
 			created_at,
 			updated_at
 		)
 		VALUES ($1, $2, $3, true, false, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING user_id, user_code, first_name, last_name, mobile, email, profile_image_url,
-			mobile_verified, email_verified, onboarding_completed, initial_activity,
+			is_mobile_verified, is_email_verified, is_onboarding_completed, initial_activity,
 			onboarding_completed_at, status::text, suspension_reason, suspended_at, last_login_at, created_at, updated_at
 	`
 
@@ -158,9 +158,9 @@ func (r *PostgresRepository) CreateSession(ctx context.Context, input CreateSess
 	const query = `
 		INSERT INTO public.user_sessions (
 			user_id,
-			login_time,
+			logged_in_at,
 			last_activity_at,
-			session_status,
+			status,
 			device_type,
 			os_name,
 			app_version,
@@ -198,9 +198,9 @@ func (r *PostgresRepository) StoreRefreshToken(ctx context.Context, sessionID in
 
 func (r *PostgresRepository) FindActiveSessionByToken(ctx context.Context, refreshToken string) (*Session, error) {
 	const query = `
-		SELECT session_id, user_id, session_status::text, login_time, last_activity_at
+		SELECT session_id, user_id, status::text, logged_in_at, last_activity_at
 		FROM public.user_sessions
-		WHERE session_token = $1 AND session_status = 'ACTIVE'
+		WHERE session_token = $1 AND status = 'ACTIVE'
 	`
 	var session Session
 	err := r.db.QueryRowContext(ctx, query, hashRefreshToken(refreshToken)).Scan(
@@ -222,7 +222,7 @@ func (r *PostgresRepository) FindActiveSessionByToken(ctx context.Context, refre
 func (r *PostgresRepository) LogoutSession(ctx context.Context, sessionID int64) error {
 	const query = `
 		UPDATE public.user_sessions
-		SET session_status = 'LOGGED_OUT', session_token = NULL, last_activity_at = CURRENT_TIMESTAMP
+		SET status = 'LOGGED_OUT', session_token = NULL, last_activity_at = CURRENT_TIMESTAMP
 		WHERE session_id = $1
 	`
 	_, err := r.db.ExecContext(ctx, query, sessionID)
@@ -238,7 +238,7 @@ func (r *PostgresRepository) CreateUserActivity(ctx context.Context, input Creat
 			entity_type,
 			entity_id,
 			activity_data,
-			activity_timestamp
+			occurred_at
 		)
 		VALUES ($1, $2, $3, 'USER', $1, NULLIF($4, '')::jsonb, $5)
 	`
@@ -249,7 +249,7 @@ func (r *PostgresRepository) CreateUserActivity(ctx context.Context, input Creat
 func (r *PostgresRepository) scanUser(ctx context.Context, where string, args ...any) (*User, error) {
 	query := fmt.Sprintf(`
 		SELECT user_id, user_code, first_name, last_name, mobile, email, profile_image_url,
-			mobile_verified, email_verified, onboarding_completed, initial_activity,
+			is_mobile_verified, is_email_verified, is_onboarding_completed, initial_activity,
 			onboarding_completed_at, status::text, suspension_reason, suspended_at, last_login_at, created_at, updated_at
 		FROM public.users
 		%s
@@ -396,7 +396,7 @@ func (r *PostgresRepository) GetTokenContext(ctx context.Context, userID int64) 
 			FROM public.user_subscriptions us
 			JOIN public.subscription_plans sp ON sp.plan_id = us.plan_id
 			WHERE us.user_id = $1
-			  AND us.subscription_status IN ('ACTIVE', 'TRIAL', 'EXPIRED')
+			  AND us.status IN ('ACTIVE', 'TRIAL', 'EXPIRED')
 			  AND (us.end_date IS NULL OR us.end_date >= CURRENT_DATE - INTERVAL '7 days')
 			ORDER BY us.end_date DESC NULLS FIRST
 			LIMIT 1
@@ -481,7 +481,7 @@ func (r *PostgresRepository) GetWorkspaces(ctx context.Context, userID int64) ([
 		SELECT d.user_id, nd.nursery_id
 		FROM public.drivers d
 		LEFT JOIN public.nursery_drivers nd
-		    ON nd.driver_user_id = d.user_id AND nd.connection_status IN ('APPROVED', 'CONNECTED', 'ACTIVE')
+		    ON nd.driver_user_id = d.user_id AND nd.status IN ('APPROVED', 'CONNECTED', 'ACTIVE')
 		WHERE d.user_id = $1 AND d.approval_status = 'APPROVED'
 		LIMIT 1
 	`
@@ -521,11 +521,11 @@ func (r *PostgresRepository) GetOwnerDashboard(ctx context.Context, userID int64
 		return d, nil
 	}
 
-	sellOrders, err := r.statusCounts(ctx, `SELECT COALESCE(order_status::text,'PENDING'), COUNT(*) FROM public.orders WHERE seller_nursery_id = $1 AND deleted_at IS NULL GROUP BY 1`, nurseryID)
+	sellOrders, err := r.statusCounts(ctx, `SELECT COALESCE(status::text,'PENDING'), COUNT(*) FROM public.orders WHERE seller_nursery_id = $1 AND deleted_at IS NULL GROUP BY 1`, nurseryID)
 	if err != nil {
 		return nil, err
 	}
-	buyOrders, err := r.statusCounts(ctx, `SELECT COALESCE(order_status::text,'PENDING'), COUNT(*) FROM public.orders WHERE buyer_nursery_id = $1 AND deleted_at IS NULL GROUP BY 1`, nurseryID)
+	buyOrders, err := r.statusCounts(ctx, `SELECT COALESCE(status::text,'PENDING'), COUNT(*) FROM public.orders WHERE buyer_nursery_id = $1 AND deleted_at IS NULL GROUP BY 1`, nurseryID)
 	if err != nil {
 		return nil, err
 	}
@@ -548,14 +548,14 @@ func (r *PostgresRepository) GetOwnerDashboard(ctx context.Context, userID int64
 	}{
 		// Was `status`, a column that does not exist: the error was swallowed
 		// and owners always saw 0 inventory.
-		{`SELECT COUNT(*), COALESCE(SUM(CASE WHEN inventory_status = 'AVAILABLE' THEN 1 ELSE 0 END), 0)
+		{`SELECT COUNT(*), COALESCE(SUM(CASE WHEN status = 'AVAILABLE' THEN 1 ELSE 0 END), 0)
 			FROM public.nursery_inventory WHERE nursery_id = $1`, []any{&d.Inventory.TotalItems, &d.Inventory.Available}},
 		// nursery_users.role is the populated source of truth today; invites
 		// leave nursery_role_id NULL (tracked as a data-ownership fix).
 		{`SELECT COUNT(*) FROM public.nursery_users WHERE nursery_id = $1 AND role = 'MANAGER' AND status = 'ACTIVE'`, []any{&d.Connections.Managers}},
 		// Orders and dispatches carry the selling nursery in orders.seller_nursery_id;
 		// orders.nursery_id and dispatches.nursery_id are not populated.
-		{`SELECT COUNT(*) FROM public.nursery_drivers WHERE nursery_id = $1 AND connection_status IN ('CONNECTED', 'APPROVED')`, []any{&d.Connections.Drivers}},
+		{`SELECT COUNT(*) FROM public.nursery_drivers WHERE nursery_id = $1 AND status IN ('CONNECTED', 'APPROVED')`, []any{&d.Connections.Drivers}},
 		{`SELECT COUNT(DISTINCT buyer_user_id) FROM public.orders WHERE seller_nursery_id = $1 AND buyer_user_id IS NOT NULL AND deleted_at IS NULL`, []any{&d.Connections.Customers}},
 	}
 	for _, q := range scalars {

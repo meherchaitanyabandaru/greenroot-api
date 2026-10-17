@@ -84,14 +84,14 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Up
 
 	const query = `
 		INSERT INTO public.nursery_inventory (
-			inventory_code, nursery_id, plant_id, size_id, available_quantity, inventory_status,
-			last_updated_by, last_updated_at, created_at
+			inventory_code, nursery_id, plant_id, size_id, available_quantity, status,
+			last_updated_by_user_id, last_updated_at, created_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT (nursery_id, plant_id, size_id) DO UPDATE SET
 			available_quantity = EXCLUDED.available_quantity,
-			inventory_status   = EXCLUDED.inventory_status,
-			last_updated_by    = EXCLUDED.last_updated_by,
+			status   = EXCLUDED.status,
+			last_updated_by_user_id    = EXCLUDED.last_updated_by_user_id,
 			last_updated_at    = CURRENT_TIMESTAMP
 		RETURNING inventory_id
 	`
@@ -109,8 +109,8 @@ func (r *PostgresRepository) Update(ctx context.Context, actorID int64, inventor
 			plant_id = $3,
 			size_id = $4,
 			available_quantity = $5,
-			inventory_status = $6,
-			last_updated_by = $7,
+			status = $6,
+			last_updated_by_user_id = $7,
 			last_updated_at = CURRENT_TIMESTAMP
 		WHERE inventory_id = $1
 		  AND ($8::bigint IS NULL OR version = $8)
@@ -175,7 +175,7 @@ func baseSelect() string {
 	return `
 		SELECT ni.inventory_id, ni.inventory_code, ni.nursery_id, n.nursery_name, ni.plant_id, p.scientific_name,
 			p.common_name, ni.size_id, ps.size_code, ps.display_name, ni.available_quantity,
-			ni.inventory_status::text, ni.last_updated_by, ni.last_updated_at, ni.created_at, ni.version
+			ni.status::text, ni.last_updated_by_user_id, ni.last_updated_at, ni.created_at, ni.version
 		FROM public.nursery_inventory ni
 		JOIN public.nurseries n ON n.nursery_id = ni.nursery_id
 		JOIN public.plants p ON p.plant_id = ni.plant_id
@@ -210,7 +210,7 @@ func buildWhere(input ListInventoryRequest) (string, []any) {
 	}
 	if input.Status != "" {
 		args = append(args, input.Status)
-		clauses = append(clauses, fmt.Sprintf("ni.inventory_status::text = $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("ni.status::text = $%d", len(args)))
 	}
 	if input.Search != "" {
 		args = append(args, "%"+input.Search+"%")
@@ -240,7 +240,7 @@ func sortClause(input ListInventoryRequest) string {
 	case "available_quantity":
 		return "ni.available_quantity " + direction + " NULLS LAST, ni.inventory_id DESC"
 	case "inventory_status", "status":
-		return "ni.inventory_status " + direction + " NULLS LAST, ni.inventory_id DESC"
+		return "ni.status " + direction + " NULLS LAST, ni.inventory_id DESC"
 	case "last_updated_at":
 		return "ni.last_updated_at " + direction + " NULLS LAST, ni.inventory_id DESC"
 	case "created_at":

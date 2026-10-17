@@ -81,7 +81,7 @@ func backfillSubscriptionExpiries(ctx context.Context, deps Dependencies) error 
 		`SELECT user_subscription_id, EXTRACT(EPOCH FROM end_date)::bigint
 		 FROM public.user_subscriptions
 		 WHERE end_date IS NOT NULL
-		   AND subscription_status IN ('ACTIVE', 'TRIAL')`,
+		   AND status IN ('ACTIVE', 'TRIAL')`,
 	)
 	if err != nil {
 		return err
@@ -182,9 +182,9 @@ func expireQuotation(ctx context.Context, deps Dependencies, id int64) error {
 func expireSubscription(ctx context.Context, deps Dependencies, id int64) error {
 	result, err := deps.DB.ExecContext(ctx,
 		`UPDATE public.user_subscriptions
-		 SET subscription_status = 'EXPIRED', auto_renew = false, updated_at = CURRENT_TIMESTAMP
+		 SET status = 'EXPIRED', is_auto_renew = false, updated_at = CURRENT_TIMESTAMP
 		 WHERE user_subscription_id = $1
-		   AND subscription_status IN ('ACTIVE', 'TRIAL')`,
+		   AND status IN ('ACTIVE', 'TRIAL')`,
 		id,
 	)
 	if err != nil {

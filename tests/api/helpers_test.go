@@ -56,7 +56,7 @@ func seedAPITestFixtures() error {
 
 	const fixtureSQL = `
 INSERT INTO public.users
-  (user_id, user_code, first_name, last_name, mobile, email, mobile_verified, email_verified, gender, status, created_at, updated_at)
+  (user_id, user_code, first_name, last_name, mobile, email, is_mobile_verified, is_email_verified, gender, status, created_at, updated_at)
 VALUES
   (2, 'USR-000002', 'Test', 'Owner', '9100000000', 'owner@greenroot.test', true, true, 'MALE', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   (3, 'USR-000003', 'Test', 'Buyer', '9300000000', 'buyer@greenroot.test', true, true, 'FEMALE', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
@@ -68,8 +68,8 @@ ON CONFLICT (user_id) DO UPDATE SET
   last_name = EXCLUDED.last_name,
   mobile = EXCLUDED.mobile,
   email = EXCLUDED.email,
-  mobile_verified = true,
-  email_verified = true,
+  is_mobile_verified = true,
+  is_email_verified = true,
   gender = EXCLUDED.gender,
   status = 'ACTIVE',
   deleted_at = NULL,
@@ -92,7 +92,7 @@ WHERE true
 ON CONFLICT DO NOTHING;
 
 INSERT INTO public.nurseries
-  (nursery_id, nursery_code, nursery_name, owner_user_id, mobile, email, website, description, status, approved_at, created_by, created_at, updated_at)
+  (nursery_id, nursery_code, nursery_name, owner_user_id, mobile, email, website, description, status, approved_at, created_by_user_id, created_at, updated_at)
 VALUES
   (1, 'NUR-000001', 'API Test Nursery', 2, '9100000000', 'nursery@greenroot.test', 'https://greenroot.test', 'API fixture nursery', 'APPROVED', CURRENT_TIMESTAMP, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT (nursery_id) DO UPDATE SET
@@ -106,7 +106,7 @@ ON CONFLICT (nursery_id) DO UPDATE SET
   updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO public.nurseries
-  (nursery_id, nursery_code, nursery_name, owner_user_id, mobile, email, website, description, status, approved_at, created_by, created_at, updated_at)
+  (nursery_id, nursery_code, nursery_name, owner_user_id, mobile, email, website, description, status, approved_at, created_by_user_id, created_at, updated_at)
 VALUES
   (2, 'NUR-000002', 'Second API Test Nursery', 6, '9500000000', 'second.nursery@greenroot.test', 'https://second.greenroot.test', 'Cross-nursery market fixture', 'APPROVED', CURRENT_TIMESTAMP, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT (nursery_id) DO UPDATE SET
@@ -144,7 +144,7 @@ ON CONFLICT (plan_code) DO UPDATE SET
 DELETE FROM public.user_subscriptions WHERE user_id IN (2, 6);
 
 INSERT INTO public.user_subscriptions
-  (subscription_code, user_id, plan_id, start_date, end_date, subscription_status, auto_renew, created_at, updated_at)
+  (subscription_code, user_id, plan_id, start_date, end_date, status, is_auto_renew, created_at, updated_at)
 SELECT 'SUB-API-OWNER', 2, plan_id, CURRENT_DATE, CURRENT_DATE + INTERVAL '180 days', 'TRIAL', false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 FROM public.subscription_plans
 WHERE plan_code = 'TRIAL'
@@ -154,11 +154,11 @@ ON CONFLICT (subscription_code) DO UPDATE SET
   plan_id = EXCLUDED.plan_id,
   start_date = EXCLUDED.start_date,
   end_date = EXCLUDED.end_date,
-  subscription_status = 'TRIAL',
+  status = 'TRIAL',
   updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO public.user_subscriptions
-  (subscription_code, user_id, plan_id, start_date, end_date, subscription_status, auto_renew, created_at, updated_at)
+  (subscription_code, user_id, plan_id, start_date, end_date, status, is_auto_renew, created_at, updated_at)
 SELECT 'SUB-API-SECOND-OWNER', 6, plan_id, CURRENT_DATE, CURRENT_DATE + INTERVAL '180 days', 'TRIAL', false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 FROM public.subscription_plans
 WHERE plan_code = 'TRIAL'
@@ -167,7 +167,7 @@ ON CONFLICT (subscription_code) DO UPDATE SET
   plan_id = EXCLUDED.plan_id,
   start_date = EXCLUDED.start_date,
   end_date = EXCLUDED.end_date,
-  subscription_status = 'TRIAL',
+  status = 'TRIAL',
   updated_at = CURRENT_TIMESTAMP;
 
 SELECT setval('public.users_user_id_seq', GREATEST((SELECT COALESCE(MAX(user_id), 1) FROM public.users), 1), true);

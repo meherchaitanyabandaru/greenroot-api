@@ -106,12 +106,12 @@ func (r *PostgresRepository) ListSecurity(ctx context.Context, in ListSecurityRe
 	args = append(args, in.PerPage, off)
 	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
 	q := fmt.Sprintf(`
-		SELECT id, event_type, description,
+		SELECT security_audit_log_id, event_type, description,
 		       user_id, nursery_id, request_id,
 		       ip_address, device_info::text, metadata::text,
 		       created_at
 		FROM public.security_audit_logs %s
-		ORDER BY id DESC
+		ORDER BY security_audit_log_id DESC
 		LIMIT $%d OFFSET $%d`, where, len(args)-1, len(args))
 
 	rows, err := r.db.QueryContext(ctx, q, args...)

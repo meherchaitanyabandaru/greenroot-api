@@ -72,7 +72,7 @@ func (r *PostgresRepository) List(ctx context.Context, input ListNurseriesReques
 	query := fmt.Sprintf(`
 		SELECT DISTINCT n.nursery_id, n.nursery_code, n.nursery_name, n.mobile,
 			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
-			n.created_at, n.updated_at, n.created_by, n.updated_by, n.rejection_reason, n.rejected_at,
+			n.created_at, n.updated_at, n.created_by_user_id, n.updated_by_user_id, n.rejection_reason, n.rejected_at,
 			n.logo_url, n.brand_icon_key, n.brand_color
 		FROM public.nurseries n
 		%s
@@ -186,7 +186,7 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 	const query = `
 		INSERT INTO public.nurseries (
 			nursery_code, nursery_name, mobile, email, website, description,
-			status, owner_user_id, created_at, updated_at, created_by, updated_by
+			status, owner_user_id, created_at, updated_at, created_by_user_id, updated_by_user_id
 		)
 		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''),
 			NULLIF($5, ''), NULLIF($6, ''), $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $9, $9)
@@ -229,7 +229,7 @@ func (r *PostgresRepository) Update(ctx context.Context, actorID int64, nurseryI
 			brand_icon_key = COALESCE($11, brand_icon_key),
 			brand_color = COALESCE($12, brand_color),
 			updated_at = CURRENT_TIMESTAMP,
-			updated_by = $9
+			updated_by_user_id = $9
 		WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'
 	`
 	result, err := r.db.ExecContext(
@@ -267,21 +267,21 @@ func (r *PostgresRepository) UpdateStatusOnly(ctx context.Context, actorID int64
 	switch status {
 	case "APPROVED":
 		result, err = r.db.ExecContext(ctx,
-			`UPDATE public.nurseries SET status = $2, approved_by = $3, approved_at = CURRENT_TIMESTAMP,
-			 updated_at = CURRENT_TIMESTAMP, updated_by = $3
+			`UPDATE public.nurseries SET status = $2, approved_by_user_id = $3, approved_at = CURRENT_TIMESTAMP,
+			 updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $3
 			 WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'`,
 			nurseryID, status, actorID,
 		)
 	case "REJECTED":
 		result, err = r.db.ExecContext(ctx,
-			`UPDATE public.nurseries SET status = $2, rejected_by = $3, rejected_at = CURRENT_TIMESTAMP,
-			 updated_at = CURRENT_TIMESTAMP, updated_by = $3
+			`UPDATE public.nurseries SET status = $2, rejected_by_user_id = $3, rejected_at = CURRENT_TIMESTAMP,
+			 updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $3
 			 WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'`,
 			nurseryID, status, actorID,
 		)
 	default:
 		result, err = r.db.ExecContext(ctx,
-			`UPDATE public.nurseries SET status = $2, updated_at = CURRENT_TIMESTAMP, updated_by = $3
+			`UPDATE public.nurseries SET status = $2, updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $3
 			 WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'`,
 			nurseryID, status, actorID,
 		)
@@ -310,11 +310,11 @@ func (r *PostgresRepository) ResubmitByOwner(ctx context.Context, actorID int64,
 		     email            = $5,
 		     description      = $6,
 		     status           = 'PENDING',
-		     rejected_by      = NULL,
+		     rejected_by_user_id      = NULL,
 		     rejected_at      = NULL,
 		     rejection_reason = NULL,
 		     updated_at       = CURRENT_TIMESTAMP,
-		     updated_by       = $2
+		     updated_by_user_id       = $2
 		 WHERE owner_user_id = $1
 		   AND status::text   = 'REJECTED'`,
 		ownerUserID, actorID,
@@ -337,7 +337,7 @@ func (r *PostgresRepository) ResubmitByOwner(ctx context.Context, actorID int64,
 // Called when admin approves a nursery so the owner's JWT gains NURSERY_OWNER on next login.
 func (r *PostgresRepository) GrantOwnerRole(ctx context.Context, ownerUserID int64, assignedByUserID int64) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO public.user_roles (user_id, role_id, assigned_by, assigned_at)
+		`INSERT INTO public.user_roles (user_id, role_id, assigned_by_user_id, assigned_at)
 		 VALUES ($1, 3, $2, CURRENT_TIMESTAMP)
 		 ON CONFLICT (user_id, role_id) DO NOTHING`,
 		ownerUserID, assignedByUserID,
@@ -346,7 +346,7 @@ func (r *PostgresRepository) GrantOwnerRole(ctx context.Context, ownerUserID int
 }
 
 func (r *PostgresRepository) Delete(ctx context.Context, actorID int64, nurseryID int64) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE public.nurseries SET status = 'DELETED', updated_at = CURRENT_TIMESTAMP, updated_by = $2 WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'`, nurseryID, actorID)
+	result, err := r.db.ExecContext(ctx, `UPDATE public.nurseries SET status = 'DELETED', updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $2 WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'`, nurseryID, actorID)
 	if err != nil {
 		return err
 	}
@@ -364,7 +364,7 @@ func (r *PostgresRepository) ListAddresses(ctx context.Context, nurseryID int64)
 	const query = `
 		SELECT nursery_address_id, nursery_id, address_type::text, address_line1, address_line2,
 			city, state, country, postal_code, latitude, longitude, COALESCE(is_primary, false),
-			gps_accuracy_meters, landmark, location_source, location_confirmed_by, location_confirmed_at,
+			gps_accuracy_meters, landmark, location_source, location_confirmed_by_user_id, location_confirmed_at,
 			created_at, updated_at
 		FROM public.nursery_addresses
 		WHERE nursery_id = $1
@@ -401,7 +401,7 @@ func (r *PostgresRepository) CreateAddress(ctx context.Context, nurseryID int64,
 		INSERT INTO public.nursery_addresses (
 			nursery_id, address_type, address_line1, address_line2, city, state, country,
 			postal_code, latitude, longitude, location, gps_accuracy_meters, landmark,
-			location_source, location_confirmed_by, location_confirmed_at, is_primary, created_at, updated_at
+			location_source, location_confirmed_by_user_id, location_confirmed_at, is_primary, created_at, updated_at
 		)
 		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''),
 			NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), $9, $10,
@@ -412,7 +412,7 @@ func (r *PostgresRepository) CreateAddress(ctx context.Context, nurseryID int64,
 			$11, NULLIF($12, ''), NULLIF($13, ''), $14, $15, $16, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING nursery_address_id, nursery_id, address_type::text, address_line1, address_line2,
 			city, state, country, postal_code, latitude, longitude, COALESCE(is_primary, false),
-			gps_accuracy_meters, landmark, location_source, location_confirmed_by, location_confirmed_at,
+			gps_accuracy_meters, landmark, location_source, location_confirmed_by_user_id, location_confirmed_at,
 			created_at, updated_at
 	`
 	address, err := scanAddressRow(tx.QueryRowContext(
@@ -479,14 +479,14 @@ func (r *PostgresRepository) UpdateAddress(ctx context.Context, addressID int64,
 			gps_accuracy_meters = $11,
 			landmark = NULLIF($12, ''),
 			location_source = NULLIF($13, ''),
-			location_confirmed_by = $14,
+			location_confirmed_by_user_id = $14,
 			location_confirmed_at = $15,
 			is_primary = $16,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE nursery_address_id = $1
 		RETURNING nursery_address_id, nursery_id, address_type::text, address_line1, address_line2,
 			city, state, country, postal_code, latitude, longitude, COALESCE(is_primary, false),
-			gps_accuracy_meters, landmark, location_source, location_confirmed_by, location_confirmed_at,
+			gps_accuracy_meters, landmark, location_source, location_confirmed_by_user_id, location_confirmed_at,
 			created_at, updated_at
 	`
 	address, err := scanAddressRow(tx.QueryRowContext(
@@ -651,11 +651,11 @@ func (r *PostgresRepository) ConnectDriver(ctx context.Context, nurseryID int64,
 		status = "INVITED"
 	}
 	const query = `
-		INSERT INTO public.nursery_drivers (nursery_id, driver_user_id, invited_by_user_id, connection_status, created_at, updated_at)
+		INSERT INTO public.nursery_drivers (nursery_id, driver_user_id, invited_by_user_id, status, created_at, updated_at)
 		VALUES ($1, $2, NULLIF($3, 0), $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT (nursery_id, driver_user_id) DO UPDATE
-		SET connection_status = $4, updated_at = CURRENT_TIMESTAMP
-		RETURNING id
+		SET status = $4, updated_at = CURRENT_TIMESTAMP
+		RETURNING nursery_driver_id
 	`
 	var id int64
 	if err := r.db.QueryRowContext(ctx, query, nurseryID, driverUserID, invitedByUserID, status).Scan(&id); err != nil {
@@ -668,7 +668,7 @@ func (r *PostgresRepository) ConnectDriver(ctx context.Context, nurseryID int64,
 func (r *PostgresRepository) ApproveDriverConnection(ctx context.Context, nurseryID int64, driverUserID int64, approvedByUserID int64) error {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE public.nursery_drivers
-		SET connection_status = 'APPROVED', approved_by_user_id = $3, connected_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		SET status = 'APPROVED', approved_by_user_id = $3, connected_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 		WHERE nursery_id = $1 AND driver_user_id = $2
 	`, nurseryID, driverUserID, approvedByUserID)
 	if err != nil {
@@ -684,10 +684,10 @@ func (r *PostgresRepository) ApproveDriverConnection(ctx context.Context, nurser
 // ListConnectedDrivers returns all approved drivers for a nursery.
 func (r *PostgresRepository) ListConnectedDrivers(ctx context.Context, nurseryID int64) ([]NurseryDriver, error) {
 	const query = `
-		SELECT nd.id, nd.nursery_id, nd.driver_user_id,
+		SELECT nd.nursery_driver_id, nd.nursery_id, nd.driver_user_id,
 			u.first_name, u.mobile,
 			d.vehicle_number, d.vehicle_type,
-			nd.connection_status, nd.connected_at, nd.created_at
+			nd.status, nd.connected_at, nd.created_at
 		FROM public.nursery_drivers nd
 		JOIN public.users u ON u.user_id = nd.driver_user_id
 		LEFT JOIN public.drivers d ON d.user_id = nd.driver_user_id
@@ -722,14 +722,14 @@ func (r *PostgresRepository) ListConnectedDrivers(ctx context.Context, nurseryID
 
 func (r *PostgresRepository) findNurseryDriver(ctx context.Context, id int64) (*NurseryDriver, error) {
 	const query = `
-		SELECT nd.id, nd.nursery_id, nd.driver_user_id,
+		SELECT nd.nursery_driver_id, nd.nursery_id, nd.driver_user_id,
 			u.first_name, u.mobile,
 			d.vehicle_number, d.vehicle_type,
-			nd.connection_status, nd.connected_at, nd.created_at
+			nd.status, nd.connected_at, nd.created_at
 		FROM public.nursery_drivers nd
 		JOIN public.users u ON u.user_id = nd.driver_user_id
 		LEFT JOIN public.drivers d ON d.user_id = nd.driver_user_id
-		WHERE nd.id = $1
+		WHERE nd.nursery_driver_id = $1
 	`
 	var nd NurseryDriver
 	var firstName, mobile string
@@ -769,8 +769,8 @@ func (r *PostgresRepository) RemoveUser(ctx context.Context, nurseryID int64, us
 func (r *PostgresRepository) InvalidateUserSessions(ctx context.Context, userID int64) error {
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE public.user_sessions
-		 SET session_status = 'LOGGED_OUT', session_token = NULL, last_activity_at = CURRENT_TIMESTAMP
-		 WHERE user_id = $1 AND session_status = 'ACTIVE'`,
+		 SET status = 'LOGGED_OUT', session_token = NULL, last_activity_at = CURRENT_TIMESTAMP
+		 WHERE user_id = $1 AND status = 'ACTIVE'`,
 		userID)
 	return err
 }
@@ -778,8 +778,8 @@ func (r *PostgresRepository) InvalidateUserSessions(ctx context.Context, userID 
 func (r *PostgresRepository) DisconnectDriver(ctx context.Context, nurseryID int64, driverUserID int64, actorID int64) error {
 	result, err := r.db.ExecContext(ctx,
 		`UPDATE public.nursery_drivers
-		 SET connection_status = 'DISCONNECTED', disconnected_at = CURRENT_TIMESTAMP, disconnected_by = $3
-		 WHERE nursery_id = $1 AND driver_user_id = $2 AND connection_status IN ('REQUESTED','CONNECTED','APPROVED')`,
+		 SET status = 'DISCONNECTED', disconnected_at = CURRENT_TIMESTAMP, disconnected_by_user_id = $3
+		 WHERE nursery_id = $1 AND driver_user_id = $2 AND status IN ('REQUESTED','CONNECTED','APPROVED')`,
 		nurseryID, driverUserID, actorID)
 	if err != nil {
 		return err
@@ -834,7 +834,7 @@ func (r *PostgresRepository) ListByUserID(ctx context.Context, userID int64) ([]
 	const query = `
 		SELECT DISTINCT n.nursery_id, n.nursery_code, n.nursery_name, n.mobile,
 			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
-			n.created_at, n.updated_at, n.created_by, n.updated_by, n.rejection_reason, n.rejected_at,
+			n.created_at, n.updated_at, n.created_by_user_id, n.updated_by_user_id, n.rejection_reason, n.rejected_at,
 			n.logo_url, n.brand_icon_key, n.brand_color
 		FROM public.nurseries n
 		JOIN public.nursery_users nu ON nu.nursery_id = n.nursery_id
@@ -874,7 +874,7 @@ func (r *PostgresRepository) WorkspaceUserIDs(ctx context.Context, nurseryID int
 			UNION ALL
 			SELECT driver_user_id AS user_id
 			FROM public.nursery_drivers
-			WHERE nursery_id = $1 AND connection_status IN ('APPROVED', 'CONNECTED', 'ACTIVE')
+			WHERE nursery_id = $1 AND status IN ('APPROVED', 'CONNECTED', 'ACTIVE')
 		) users
 		WHERE user_id IS NOT NULL
 	`
@@ -969,7 +969,7 @@ func (r *PostgresRepository) scanNursery(ctx context.Context, where string, args
 	query := `
 		SELECT n.nursery_id, n.nursery_code, n.nursery_name, n.mobile,
 			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
-			n.created_at, n.updated_at, n.created_by, n.updated_by, n.rejection_reason, n.rejected_at,
+			n.created_at, n.updated_at, n.created_by_user_id, n.updated_by_user_id, n.rejection_reason, n.rejected_at,
 			n.logo_url, n.brand_icon_key, n.brand_color
 		FROM public.nurseries n
 		` + where

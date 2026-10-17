@@ -2,6 +2,8 @@
 /api
 /smoke
 /integration
+/migrate
+/sqlcheck
 bin/
 dist/
 build/

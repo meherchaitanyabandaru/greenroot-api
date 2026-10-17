@@ -135,7 +135,7 @@ func (r *PostgresRepository) CreateAd(ctx context.Context, nurseryID, userID int
 		   (nursery_id, created_by_user_id, plant_id, plant_name, category_name,
 		    title, description, quantity, size_description, price_per_unit, price_unit, photos,
 		    pickup_address, pickup_landmark, pickup_latitude, pickup_longitude, pickup_location,
-		    pickup_gps_accuracy_meters, pickup_location_source, pickup_confirmed_by, pickup_confirmed_at)
+		    pickup_gps_accuracy_meters, pickup_location_source, pickup_confirmed_by_user_id, pickup_confirmed_at)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
 		    CASE WHEN $15::numeric IS NOT NULL AND $16::numeric IS NOT NULL
 		      THEN ST_SetSRID(ST_MakePoint($16::double precision, $15::double precision), 4326)::geography
@@ -164,7 +164,7 @@ func (r *PostgresRepository) GetAd(ctx context.Context, id int64) (Ad, error) {
 		       ma.price_per_unit, ma.price_unit, ma.photos,
 		       ma.pickup_address, ma.pickup_landmark, ma.pickup_latitude, ma.pickup_longitude,
 		       ma.pickup_gps_accuracy_meters, ma.pickup_location_source,
-		       ma.pickup_confirmed_by, ma.pickup_confirmed_at,
+		       ma.pickup_confirmed_by_user_id, ma.pickup_confirmed_at,
 		       ma.status, ma.view_count, ma.save_count, ma.enquiry_count,
 		       ma.expires_at, ma.published_at,
 		       ma.paused_at, ma.expired_at, ma.archived_at,
@@ -271,7 +271,7 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, p
 		       ma.price_per_unit, ma.price_unit, ma.photos,
 		       ma.pickup_address, ma.pickup_landmark, ma.pickup_latitude, ma.pickup_longitude,
 		       ma.pickup_gps_accuracy_meters, ma.pickup_location_source,
-		       ma.pickup_confirmed_by, ma.pickup_confirmed_at,
+		       ma.pickup_confirmed_by_user_id, ma.pickup_confirmed_at,
 		       ma.status, ma.view_count, ma.save_count, ma.enquiry_count,
 		       ma.expires_at, ma.published_at,
 		       ma.paused_at, ma.expired_at, ma.archived_at,
@@ -365,7 +365,7 @@ func (r *PostgresRepository) UpdateAd(ctx context.Context, id, userID int64, req
 		add("pickup_location_source", *req.PickupLocationSource)
 	}
 	if req.PickupConfirmedBy != nil {
-		add("pickup_confirmed_by", *req.PickupConfirmedBy)
+		add("pickup_confirmed_by_user_id", *req.PickupConfirmedBy)
 	}
 	if req.PickupConfirmedAt != nil {
 		add("pickup_confirmed_at", *req.PickupConfirmedAt)

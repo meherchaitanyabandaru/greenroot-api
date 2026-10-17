@@ -119,7 +119,7 @@ func (r *PostgresRepository) HasDuplicate(ctx context.Context, dispatchNumber st
 			SELECT 1
 			FROM public.dispatches
 			WHERE UPPER(COALESCE(dispatch_number, '')) = UPPER($1)
-				AND COALESCE(dispatch_status, '') <> 'CANCELLED'
+				AND COALESCE(status, '') <> 'CANCELLED'
 		)
 	`
 	var exists bool
@@ -133,7 +133,7 @@ func (r *PostgresRepository) HasActiveForOrder(ctx context.Context, orderID int6
 			SELECT 1
 			FROM public.dispatches
 			WHERE order_id = $1
-				AND COALESCE(dispatch_status::text, '') <> 'CANCELLED'
+				AND COALESCE(status::text, '') <> 'CANCELLED'
 		)
 	`
 	var exists bool
@@ -148,7 +148,7 @@ func (r *PostgresRepository) DriverHasActiveTrip(ctx context.Context, userID int
 			FROM public.dispatches
 			WHERE driver_user_id = $1
 				AND dispatch_id <> $2
-				AND dispatch_status IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
+				AND status IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
 		)
 	`
 	var exists bool
@@ -190,14 +190,14 @@ func (r *PostgresRepository) SetDriverUser(ctx context.Context, dispatchID int64
 	if driverID > 0 {
 		result, execErr := r.db.ExecContext(ctx,
 			`UPDATE public.dispatches
-			 SET driver_user_id = $1, driver_id = $2, dispatch_status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP
+			 SET driver_user_id = $1, driver_id = $2, status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP
 			 WHERE dispatch_id = $3
 			   AND NOT EXISTS (
 			   	SELECT 1
 			   	FROM public.dispatches active
 			   	WHERE active.driver_user_id = $1
 			   	  AND active.dispatch_id <> $3
-			   	  AND active.dispatch_status IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
+			   	  AND active.status IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
 			   )`,
 			userID, driverID, dispatchID)
 		err = execErr
@@ -217,14 +217,14 @@ func (r *PostgresRepository) SetDriverUser(ctx context.Context, dispatchID int64
 	} else {
 		result, execErr := r.db.ExecContext(ctx,
 			`UPDATE public.dispatches
-			 SET driver_user_id = $1, dispatch_status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP
+			 SET driver_user_id = $1, status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP
 			 WHERE dispatch_id = $2
 			   AND NOT EXISTS (
 			   	SELECT 1
 			   	FROM public.dispatches active
 			   	WHERE active.driver_user_id = $1
 			   	  AND active.dispatch_id <> $2
-			   	  AND active.dispatch_status IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
+			   	  AND active.status IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
 			   )`,
 			userID, dispatchID)
 		err = execErr
@@ -263,8 +263,8 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 
 	const query = `
 		INSERT INTO public.dispatches (
-			dispatch_code, order_id, dispatch_number, dispatch_status, vehicle_id, driver_id, dispatched_by,
-			dispatch_date, destination_address, notes, created_at, updated_at
+			dispatch_code, order_id, dispatch_number, status, vehicle_id, driver_id, dispatched_by_user_id,
+			dispatched_at, destination_address, notes, created_at, updated_at
 		)
 		VALUES (
 			$1, $2, NULLIF($3, ''), 'PENDING', $4, $5, $6, $7,
@@ -301,8 +301,8 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 func (r *PostgresRepository) UpdateStatus(ctx context.Context, dispatchID int64, input UpdateStatusInput) (*Dispatch, error) {
 	const query = `
 		UPDATE public.dispatches
-		SET dispatch_status = $2,
-			delivery_date = CASE WHEN $5 = 'DELIVERED' THEN COALESCE($3, CURRENT_TIMESTAMP) ELSE COALESCE($3, delivery_date) END,
+		SET status = $2,
+			delivered_at = CASE WHEN $5 = 'DELIVERED' THEN COALESCE($3, CURRENT_TIMESTAMP) ELSE COALESCE($3, delivered_at) END,
 			notes = COALESCE(NULLIF($4, ''), notes),
 			updated_at = CURRENT_TIMESTAMP
 		WHERE dispatch_id = $1 AND version = $6
@@ -329,15 +329,15 @@ func (r *PostgresRepository) UpdateStatus(ctx context.Context, dispatchID int64,
 func (r *PostgresRepository) CompleteOrderIfReady(ctx context.Context, orderID int64) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE public.orders o
-		SET order_status = 'COMPLETED',
+		SET status = 'COMPLETED',
 			updated_at = CURRENT_TIMESTAMP
 		WHERE o.order_id = $1
-		  AND o.order_status IN ('LOADED', 'PARTIALLY_FULFILLED')
+		  AND o.status IN ('LOADED', 'PARTIALLY_FULFILLED')
 		  AND NOT EXISTS (
 			SELECT 1
 			FROM public.dispatches d
 			WHERE d.order_id = o.order_id
-			  AND COALESCE(d.dispatch_status::text, '') NOT IN ('CANCELLED', 'DELIVERED')
+			  AND COALESCE(d.status::text, '') NOT IN ('CANCELLED', 'DELIVERED')
 		  )
 	`, orderID)
 	return err
@@ -347,7 +347,7 @@ func (r *PostgresRepository) AcknowledgeDeliveryUpdate(ctx context.Context, disp
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE public.order_delivery_snapshots ods
 		SET requires_driver_ack = false,
-			driver_acknowledged_by = $2,
+			driver_acknowledged_by_user_id = $2,
 			driver_acknowledged_at = CURRENT_TIMESTAMP,
 			updated_at = CURRENT_TIMESTAMP
 		FROM public.dispatches d
@@ -420,7 +420,7 @@ func (r *PostgresRepository) ListItems(ctx context.Context, dispatchID int64) ([
 func (r *PostgresRepository) OrderAccess(ctx context.Context, orderID int64) (*OrderAccess, error) {
 	var access OrderAccess
 	var buyerID, nurseryID sql.NullInt64
-	err := r.db.QueryRowContext(ctx, `SELECT order_id, buyer_user_id, seller_nursery_id, order_status::text FROM public.orders WHERE order_id = $1`, orderID).Scan(&access.OrderID, &buyerID, &nurseryID, &access.OrderStatus)
+	err := r.db.QueryRowContext(ctx, `SELECT order_id, buyer_user_id, seller_nursery_id, status::text FROM public.orders WHERE order_id = $1`, orderID).Scan(&access.OrderID, &buyerID, &nurseryID, &access.OrderStatus)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -525,7 +525,7 @@ func (r *PostgresRepository) CreateTripEvent(ctx context.Context, input CreateTr
 	const q = `
 		INSERT INTO public.trip_events (dispatch_id, event_type, latitude, longitude, photo_url, remarks, created_by_user_id, created_at)
 		VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7, CURRENT_TIMESTAMP)
-		RETURNING id, dispatch_id, event_type, latitude, longitude, photo_url, remarks, created_by_user_id, created_at
+		RETURNING trip_event_id, dispatch_id, event_type, latitude, longitude, photo_url, remarks, created_by_user_id, created_at
 	`
 	var event TripEvent
 	var lat, lon sql.NullFloat64
@@ -551,10 +551,10 @@ func (r *PostgresRepository) CreateTripEvent(ctx context.Context, input CreateTr
 
 func (r *PostgresRepository) ListTripEvents(ctx context.Context, dispatchID int64) ([]TripEvent, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, dispatch_id, event_type, latitude, longitude, photo_url, remarks, created_by_user_id, created_at
+		SELECT trip_event_id, dispatch_id, event_type, latitude, longitude, photo_url, remarks, created_by_user_id, created_at
 		FROM public.trip_events
 		WHERE dispatch_id = $1
-		ORDER BY id ASC
+		ORDER BY trip_event_id ASC
 	`, dispatchID)
 	if err != nil {
 		return nil, err
@@ -583,7 +583,7 @@ func (r *PostgresRepository) ListTripEvents(ctx context.Context, dispatchID int6
 
 func (r *PostgresRepository) CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO public.notifications (user_id, notification_type, title, message, channel, notification_status)
+		`INSERT INTO public.notifications (user_id, notification_type, title, message, channel, status)
 		 VALUES ($1, $2, $3, $4, 'IN_APP', 'PENDING')`,
 		userID, notifType, title, message,
 	)
@@ -593,15 +593,15 @@ func (r *PostgresRepository) CreateNotification(ctx context.Context, userID int6
 func baseSelect() string {
 	return `
 		SELECT d.dispatch_id, d.dispatch_code, d.order_id, o.order_number,
-			o.order_status::text, o.loading_started_at, o.loading_completed_at,
+			o.status::text, o.loading_started_at, o.loading_completed_at,
 			o.seller_nursery_id, d.dispatch_number,
-			COALESCE(d.dispatch_status::text, ''), d.vehicle_id, v.vehicle_number, d.driver_id,
-			u.first_name, u.mobile, d.dispatched_by, d.dispatch_date, d.delivery_date, d.destination_address,
+			COALESCE(d.status::text, ''), d.vehicle_id, v.vehicle_number, d.driver_id,
+			u.first_name, u.mobile, d.dispatched_by_user_id, d.dispatched_at, d.delivered_at, d.destination_address,
 			ods.latitude AS delivery_latitude, ods.longitude AS delivery_longitude,
 			ods.requires_driver_ack,
 			d.notes, d.created_at, d.updated_at, d.version,
 			d.nursery_id, d.assigned_manager_user_id, d.driver_user_id,
-			d.owner_user_id_snapshot, d.customer_user_id,
+			d.snapshot_owner_user_id, d.customer_user_id,
 			d.customer_name_snapshot, d.customer_mobile_snapshot,
 			d.trip_started_at, d.trip_started_by_user_id, d.completed_at,
 			tl.tracking_uuid::text,
@@ -654,7 +654,7 @@ func buildWhere(input ListDispatchesRequest) (string, []any) {
 	}
 	if input.Status != "" {
 		args = append(args, input.Status)
-		clauses = append(clauses, fmt.Sprintf("d.dispatch_status::text = $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("d.status::text = $%d", len(args)))
 	}
 	if input.Search != "" {
 		args = append(args, "%"+input.Search+"%")
@@ -676,7 +676,7 @@ func sortClause(input ListDispatchesRequest) string {
 	case "dispatch_number":
 		return "d.dispatch_number " + direction + " NULLS LAST, d.dispatch_id DESC"
 	case "dispatch_status", "status":
-		return "d.dispatch_status " + direction + " NULLS LAST, d.dispatch_id DESC"
+		return "d.status " + direction + " NULLS LAST, d.dispatch_id DESC"
 	case "order_number":
 		return "o.order_number " + direction + " NULLS LAST, d.dispatch_id DESC"
 	case "vehicle_number":
@@ -684,7 +684,7 @@ func sortClause(input ListDispatchesRequest) string {
 	case "driver_name":
 		return "u.first_name " + direction + " NULLS LAST, d.dispatch_id DESC"
 	case "dispatch_date":
-		return "d.dispatch_date " + direction + " NULLS LAST, d.dispatch_id DESC"
+		return "d.dispatched_at " + direction + " NULLS LAST, d.dispatch_id DESC"
 	case "created_at":
 		return "d.created_at " + direction + " NULLS LAST, d.dispatch_id DESC"
 	default:

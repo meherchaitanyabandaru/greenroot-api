@@ -235,8 +235,8 @@ func runCronJobs(ctx context.Context, deps Dependencies) {
 func expireSubscriptions(ctx context.Context, deps Dependencies) {
 	const q = `
 		UPDATE public.user_subscriptions
-		SET subscription_status = 'EXPIRED', updated_at = CURRENT_TIMESTAMP
-		WHERE subscription_status IN ('ACTIVE', 'TRIAL')
+		SET status = 'EXPIRED', updated_at = CURRENT_TIMESTAMP
+		WHERE status IN ('ACTIVE', 'TRIAL')
 		  AND end_date IS NOT NULL
 		  AND end_date < CURRENT_DATE
 	`

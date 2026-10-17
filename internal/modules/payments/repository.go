@@ -123,7 +123,7 @@ func (r *PostgresRepository) Create(ctx context.Context, input CreatePaymentInpu
 	const query = `
 		INSERT INTO public.payments (
 			payment_code, payment_for, order_id, user_subscription_id, payer_user_id, amount, payment_method,
-			transaction_reference, payment_status, payment_date, notes, provider, provider_payment_id,
+			transaction_reference, status, paid_at, notes, provider, provider_payment_id,
 			provider_order_id, provider_signature, raw_response, created_at, updated_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9::text,
@@ -161,9 +161,9 @@ func (r *PostgresRepository) Create(ctx context.Context, input CreatePaymentInpu
 func (r *PostgresRepository) UpdateStatus(ctx context.Context, paymentID int64, input UpdatePaymentInput) (*Payment, error) {
 	const query = `
 		UPDATE public.payments
-		SET payment_status = $2,
+		SET status = $2,
 			transaction_reference = COALESCE(NULLIF($3, ''), transaction_reference),
-			payment_date = CASE WHEN $10 = 'SUCCESS' THEN COALESCE(payment_date, CURRENT_TIMESTAMP) ELSE payment_date END,
+			paid_at = CASE WHEN $10 = 'SUCCESS' THEN COALESCE(paid_at, CURRENT_TIMESTAMP) ELSE paid_at END,
 			notes = COALESCE(NULLIF($4, ''), notes),
 			provider = COALESCE(NULLIF($5, ''), provider),
 			provider_payment_id = COALESCE(NULLIF($6, ''), provider_payment_id),
@@ -248,7 +248,7 @@ func baseSelect() string {
 	return `
 		SELECT p.payment_id, p.payment_code, p.payment_for, p.order_id, o.order_number, o.order_code, p.user_subscription_id,
 			sp.plan_name, p.payer_user_id, u.first_name, p.amount, p.payment_method::text,
-			p.transaction_reference, p.payment_status::text, p.payment_date, p.notes,
+			p.transaction_reference, p.status::text, p.paid_at, p.notes,
 			p.provider, p.provider_payment_id, p.provider_order_id, p.provider_signature,
 			p.raw_response::text, p.created_at, p.updated_at, p.version
 		FROM public.payments p
@@ -291,7 +291,7 @@ func buildWhere(input ListPaymentsRequest) (string, []any) {
 	}
 	if input.Status != "" {
 		args = append(args, input.Status)
-		clauses = append(clauses, fmt.Sprintf("p.payment_status::text = $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("p.status::text = $%d", len(args)))
 	}
 	if input.Method != "" {
 		args = append(args, input.Method)
@@ -327,9 +327,9 @@ func sortClause(input ListPaymentsRequest) string {
 	case "payment_method":
 		return "p.payment_method " + direction + " NULLS LAST, p.payment_id DESC"
 	case "payment_status", "status":
-		return "p.payment_status " + direction + " NULLS LAST, p.payment_id DESC"
+		return "p.status " + direction + " NULLS LAST, p.payment_id DESC"
 	case "payment_date":
-		return "p.payment_date " + direction + " NULLS LAST, p.payment_id DESC"
+		return "p.paid_at " + direction + " NULLS LAST, p.payment_id DESC"
 	case "created_at":
 		return "p.created_at " + direction + " NULLS LAST, p.payment_id DESC"
 	default:

@@ -34,7 +34,7 @@ func (r *PostgresRepository) List(ctx context.Context, input ListRequest) ([]Att
 	offset := (input.Page - 1) * input.PerPage
 	args = append(args, input.PerPage, offset)
 	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
-	query := fmt.Sprintf(`SELECT attachment_id, attachment_code, entity_type, entity_id, file_name, file_url, file_type, file_size, uploaded_by, uploaded_at FROM public.attachments %s ORDER BY attachment_id DESC LIMIT $%d OFFSET $%d`, where, len(args)-1, len(args))
+	query := fmt.Sprintf(`SELECT attachment_id, attachment_code, entity_type, entity_id, file_name, file_url, file_type, file_size, uploaded_by_user_id, uploaded_at FROM public.attachments %s ORDER BY attachment_id DESC LIMIT $%d OFFSET $%d`, where, len(args)-1, len(args))
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
@@ -52,7 +52,7 @@ func (r *PostgresRepository) List(ctx context.Context, input ListRequest) ([]Att
 }
 
 func (r *PostgresRepository) FindByID(ctx context.Context, id int64) (*Attachment, error) {
-	item, err := scan(r.db.QueryRowContext(ctx, `SELECT attachment_id, attachment_code, entity_type, entity_id, file_name, file_url, file_type, file_size, uploaded_by, uploaded_at FROM public.attachments WHERE attachment_id=$1`, id))
+	item, err := scan(r.db.QueryRowContext(ctx, `SELECT attachment_id, attachment_code, entity_type, entity_id, file_name, file_url, file_type, file_size, uploaded_by_user_id, uploaded_at FROM public.attachments WHERE attachment_id=$1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -65,7 +65,7 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input At
 		return nil, err
 	}
 	var id int64
-	err = r.db.QueryRowContext(ctx, `INSERT INTO public.attachments (attachment_code,entity_type,entity_id,file_name,file_url,file_type,file_size,uploaded_by,uploaded_at) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),$7,$8,CURRENT_TIMESTAMP) RETURNING attachment_id`, attachmentCode, input.EntityType, input.EntityID, input.FileName, input.FileURL, stringOrEmpty(input.FileType), int64OrNil(input.FileSize), actorID).Scan(&id)
+	err = r.db.QueryRowContext(ctx, `INSERT INTO public.attachments (attachment_code,entity_type,entity_id,file_name,file_url,file_type,file_size,uploaded_by_user_id,uploaded_at) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),$7,$8,CURRENT_TIMESTAMP) RETURNING attachment_id`, attachmentCode, input.EntityType, input.EntityID, input.FileName, input.FileURL, stringOrEmpty(input.FileType), int64OrNil(input.FileSize), actorID).Scan(&id)
 	if err != nil {
 		return nil, err
 	}

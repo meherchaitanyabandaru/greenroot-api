@@ -36,7 +36,7 @@ func NewRepository(db *sql.DB) Repository { return &PostgresRepository{db: db} }
 
 // ── Sender ──────────────────────────────────────────────────────────────────
 
-const senderColumns = `sender_id, from_name, from_address, reply_to, domain_verified, updated_at`
+const senderColumns = `sender_id, from_name, from_address, reply_to, is_domain_verified, updated_at`
 
 func scanSender(row interface{ Scan(...any) error }) (*Sender, error) {
 	var s Sender
@@ -48,17 +48,17 @@ func scanSender(row interface{ Scan(...any) error }) (*Sender, error) {
 }
 
 func (r *PostgresRepository) GetSender(ctx context.Context) (*Sender, error) {
-	return scanSender(r.db.QueryRowContext(ctx, "SELECT "+senderColumns+" FROM public.email_sender LIMIT 1"))
+	return scanSender(r.db.QueryRowContext(ctx, "SELECT "+senderColumns+" FROM public.email_senders LIMIT 1"))
 }
 
 // UpsertSender relies on the singleton unique index ((true)).
 func (r *PostgresRepository) UpsertSender(ctx context.Context, in SenderRequest) (*Sender, error) {
 	return scanSender(r.db.QueryRowContext(ctx, `
-		INSERT INTO public.email_sender (from_name, from_address, reply_to, domain_verified)
+		INSERT INTO public.email_senders (from_name, from_address, reply_to, is_domain_verified)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT ((true)) DO UPDATE SET
 			from_name = EXCLUDED.from_name, from_address = EXCLUDED.from_address,
-			reply_to = EXCLUDED.reply_to, domain_verified = EXCLUDED.domain_verified,
+			reply_to = EXCLUDED.reply_to, is_domain_verified = EXCLUDED.is_domain_verified,
 			updated_at = CURRENT_TIMESTAMP
 		RETURNING `+senderColumns, in.FromName, in.FromAddress, in.ReplyTo, in.DomainVerified))
 }

@@ -32,10 +32,10 @@ func (r *PostgresRepository) Summary(ctx context.Context) (Summary, error) {
 		{"SELECT COUNT(*) FROM public.plants WHERE is_active = TRUE", &s.Plants},
 		{"SELECT COUNT(*) FROM public.nursery_inventory", &s.InventoryItems},
 		{"SELECT COUNT(*) FROM public.plant_requests WHERE COALESCE(status,'') <> 'CANCELLED'", &s.PlantRequests},
-		{"SELECT COUNT(*) FROM public.orders WHERE UPPER(COALESCE(order_status,'')) <> 'CANCELLED'", &s.Orders},
-		{"SELECT COUNT(*) FROM public.orders WHERE UPPER(COALESCE(order_status,'')) IN ('CONFIRMED','LOADING','LOADING_COMPLETED','DISPATCH_CREATED','DISPATCHED','IN_TRANSIT')", &s.ActiveOrders},
+		{"SELECT COUNT(*) FROM public.orders WHERE UPPER(COALESCE(status,'')) <> 'CANCELLED'", &s.Orders},
+		{"SELECT COUNT(*) FROM public.orders WHERE UPPER(COALESCE(status,'')) IN ('CONFIRMED','LOADING','LOADING_COMPLETED','DISPATCH_CREATED','DISPATCHED','IN_TRANSIT')", &s.ActiveOrders},
 		{"SELECT COUNT(*) FROM public.payments", &s.Payments},
-		{"SELECT COUNT(*) FROM public.dispatches WHERE COALESCE(dispatch_status,'') <> 'CANCELLED'", &s.Dispatches},
+		{"SELECT COUNT(*) FROM public.dispatches WHERE COALESCE(status,'') <> 'CANCELLED'", &s.Dispatches},
 		{"SELECT COUNT(*) FROM public.notifications", &s.Notifications},
 		{"SELECT COUNT(*) FROM public.drivers WHERE UPPER(COALESCE(approval_status,'')) = 'APPROVED' AND COALESCE(status::text,'') = 'ACTIVE'", &s.ActiveDrivers},
 	}
@@ -44,7 +44,7 @@ func (r *PostgresRepository) Summary(ctx context.Context) (Summary, error) {
 			return s, err
 		}
 	}
-	_ = r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(amount),0) FROM public.payments WHERE payment_status::text='SUCCESS'`).Scan(&s.Revenue)
+	_ = r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(amount),0) FROM public.payments WHERE status::text='SUCCESS'`).Scan(&s.Revenue)
 	return s, nil
 }
 
@@ -82,8 +82,8 @@ func (r *PostgresRepository) ListUsers(ctx context.Context, input ListUsersReque
 			u.mobile,
 			u.email,
 			COALESCE(u.status, ''),
-			COALESCE(u.mobile_verified, false),
-			COALESCE(u.email_verified, false),
+			COALESCE(u.is_mobile_verified, false),
+			COALESCE(u.is_email_verified, false),
 			u.last_login_at,
 			u.created_at,
 			COALESCE(STRING_AGG(DISTINCT r.role_code, ',' ORDER BY r.role_code), '') AS roles,
@@ -101,7 +101,7 @@ func (r *PostgresRepository) ListUsers(ctx context.Context, input ListUsersReque
 				JOIN public.roles role_filter ON role_filter.role_id = role_filter_ur.role_id
 				WHERE role_filter_ur.user_id = u.user_id AND UPPER(role_filter.role_code) = UPPER($3)
 			))
-		GROUP BY u.user_id, u.user_code, u.first_name, u.last_name, u.mobile, u.email, u.status, u.mobile_verified, u.email_verified, u.last_login_at, u.created_at
+		GROUP BY u.user_id, u.user_code, u.first_name, u.last_name, u.mobile, u.email, u.status, u.is_mobile_verified, u.is_email_verified, u.last_login_at, u.created_at
 		ORDER BY u.created_at DESC, u.user_id DESC
 		LIMIT $4 OFFSET $5
 	`
@@ -187,9 +187,9 @@ func (r *PostgresRepository) UpdateUserStatus(ctx context.Context, actorID int64
 			UPDATE public.users SET
 				status            = $2,
 				suspension_reason = $3,
-				suspended_by      = $4,
+				suspended_by_user_id      = $4,
 				suspended_at      = CURRENT_TIMESTAMP,
-				unsuspended_by    = NULL,
+				unsuspended_by_user_id    = NULL,
 				unsuspended_at    = NULL,
 				updated_at        = CURRENT_TIMESTAMP
 			WHERE user_id = $1`,
@@ -199,9 +199,9 @@ func (r *PostgresRepository) UpdateUserStatus(ctx context.Context, actorID int64
 			UPDATE public.users SET
 				status            = $2,
 				suspension_reason = NULL,
-				suspended_by      = NULL,
+				suspended_by_user_id      = NULL,
 				suspended_at      = NULL,
-				unsuspended_by    = $3,
+				unsuspended_by_user_id    = $3,
 				unsuspended_at    = CURRENT_TIMESTAMP,
 				updated_at        = CURRENT_TIMESTAMP
 			WHERE user_id = $1`,
@@ -222,9 +222,9 @@ func (r *PostgresRepository) UpdateNurseryStatus(ctx context.Context, actorID in
 			UPDATE public.nurseries SET
 				status            = $2,
 				suspension_reason = $3,
-				suspended_by      = $4,
+				suspended_by_user_id      = $4,
 				suspended_at      = CURRENT_TIMESTAMP,
-				unsuspended_by    = NULL,
+				unsuspended_by_user_id    = NULL,
 				unsuspended_at    = NULL,
 				updated_at        = CURRENT_TIMESTAMP
 			WHERE nursery_id = $1`,
@@ -234,9 +234,9 @@ func (r *PostgresRepository) UpdateNurseryStatus(ctx context.Context, actorID in
 			UPDATE public.nurseries SET
 				status            = $2,
 				suspension_reason = NULL,
-				suspended_by      = NULL,
+				suspended_by_user_id      = NULL,
 				suspended_at      = NULL,
-				unsuspended_by    = $3,
+				unsuspended_by_user_id    = $3,
 				unsuspended_at    = CURRENT_TIMESTAMP,
 				updated_at        = CURRENT_TIMESTAMP
 			WHERE nursery_id = $1`,
@@ -263,7 +263,7 @@ func (r *PostgresRepository) WorkspaceUserIDs(ctx context.Context, nurseryID int
 			UNION ALL
 			SELECT driver_user_id AS user_id
 			FROM public.nursery_drivers
-			WHERE nursery_id = $1 AND connection_status IN ('APPROVED', 'CONNECTED', 'ACTIVE')
+			WHERE nursery_id = $1 AND status IN ('APPROVED', 'CONNECTED', 'ACTIVE')
 		) users
 		WHERE user_id IS NOT NULL
 	`, nurseryID)

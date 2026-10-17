@@ -130,8 +130,8 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 
 	const query = `
 		INSERT INTO public.orders (
-			order_code, order_number, buyer_user_id, seller_nursery_id, buyer_nursery_id, order_status, total_amount,
-			notes, order_date, created_at, updated_at, created_by, updated_by
+			order_code, order_number, buyer_user_id, seller_nursery_id, buyer_nursery_id, status, total_amount,
+			notes, ordered_at, created_at, updated_at, created_by_user_id, updated_by_user_id
 		)
 		VALUES ($1, $2, $3, $4, $9, $5, 0, NULLIF($6, ''), $7, $7, $7, $8, $8)
 		RETURNING order_id
@@ -178,7 +178,7 @@ func (r *PostgresRepository) createDeliverySnapshotTx(ctx context.Context, tx *s
 		INSERT INTO public.order_delivery_snapshots (
 			order_id, contact_name, contact_mobile, address_line1, address_line2,
 			city, state, country, postal_code, landmark, latitude, longitude,
-			location, gps_accuracy_meters, location_source, confirmed_by, confirmed_at
+			location, gps_accuracy_meters, location_source, confirmed_by_user_id, confirmed_at
 		)
 		SELECT $1, ua.contact_name, ua.contact_mobile, ua.address_line1, ua.address_line2,
 			ua.city, ua.state, ua.country, ua.postal_code, ua.landmark, ua.latitude, ua.longitude,
@@ -202,8 +202,8 @@ func (r *PostgresRepository) GetDeliverySnapshot(ctx context.Context, orderID in
 		SELECT snapshot_id, order_id, contact_name, contact_mobile, alternate_mobile,
 			address_line1, address_line2, city, state, country, postal_code, landmark,
 			delivery_instructions, latitude, longitude, gps_accuracy_meters, location_source,
-			confirmed_by, confirmed_at, emergency_updated, requires_driver_ack,
-			driver_acknowledged_by, driver_acknowledged_at, created_at, updated_at
+			confirmed_by_user_id, confirmed_at, is_emergency_update, requires_driver_ack,
+			driver_acknowledged_by_user_id, driver_acknowledged_at, created_at, updated_at
 		FROM public.order_delivery_snapshots
 		WHERE order_id = $1
 	`
@@ -235,7 +235,7 @@ func (r *PostgresRepository) upsertDeliverySnapshot(ctx context.Context, q inter
 			order_id, contact_name, contact_mobile, alternate_mobile, address_line1, address_line2,
 			city, state, country, postal_code, landmark, delivery_instructions,
 			latitude, longitude, location, gps_accuracy_meters, location_source,
-			confirmed_by, confirmed_at, emergency_updated, requires_driver_ack,
+			confirmed_by_user_id, confirmed_at, is_emergency_update, requires_driver_ack,
 			created_at, updated_at
 		)
 		VALUES ($1, NULLIF($2,''), NULLIF($3,''), NULLIF($4,''), NULLIF($5,''), NULLIF($6,''),
@@ -263,11 +263,11 @@ func (r *PostgresRepository) upsertDeliverySnapshot(ctx context.Context, q inter
 			location = EXCLUDED.location,
 			gps_accuracy_meters = EXCLUDED.gps_accuracy_meters,
 			location_source = EXCLUDED.location_source,
-			confirmed_by = EXCLUDED.confirmed_by,
+			confirmed_by_user_id = EXCLUDED.confirmed_by_user_id,
 			confirmed_at = EXCLUDED.confirmed_at,
-			emergency_updated = order_delivery_snapshots.emergency_updated OR EXCLUDED.emergency_updated,
+			is_emergency_update = order_delivery_snapshots.is_emergency_update OR EXCLUDED.is_emergency_update,
 			requires_driver_ack = order_delivery_snapshots.requires_driver_ack OR EXCLUDED.requires_driver_ack,
-			driver_acknowledged_by = CASE WHEN EXCLUDED.requires_driver_ack THEN NULL ELSE order_delivery_snapshots.driver_acknowledged_by END,
+			driver_acknowledged_by_user_id = CASE WHEN EXCLUDED.requires_driver_ack THEN NULL ELSE order_delivery_snapshots.driver_acknowledged_by_user_id END,
 			driver_acknowledged_at = CASE WHEN EXCLUDED.requires_driver_ack THEN NULL ELSE order_delivery_snapshots.driver_acknowledged_at END,
 			updated_at = CURRENT_TIMESTAMP
 	`
@@ -303,7 +303,7 @@ func (r *PostgresRepository) OrderHasStartedDispatch(ctx context.Context, orderI
 			WHERE order_id = $1
 			  AND (
 				trip_started_at IS NOT NULL
-				OR dispatch_status IN ('IN_TRANSIT', 'DELIVERED')
+				OR status IN ('IN_TRANSIT', 'DELIVERED')
 			  )
 		)
 	`, orderID).Scan(&exists)
@@ -316,8 +316,8 @@ func (r *PostgresRepository) OrderHasUndeliveredDispatch(ctx context.Context, or
 		SELECT EXISTS (
 			SELECT 1 FROM public.dispatches
 			WHERE order_id = $1
-			  AND COALESCE(dispatch_status, '') <> 'CANCELLED'
-			  AND COALESCE(dispatch_status, '') <> 'DELIVERED'
+			  AND COALESCE(status, '') <> 'CANCELLED'
+			  AND COALESCE(status, '') <> 'DELIVERED'
 		)
 	`, orderID).Scan(&exists)
 	return exists, err
@@ -326,12 +326,12 @@ func (r *PostgresRepository) OrderHasUndeliveredDispatch(ctx context.Context, or
 func (r *PostgresRepository) ActiveDispatchForOrder(ctx context.Context, orderID int64) (*ActiveDispatchSummary, error) {
 	var summary ActiveDispatchSummary
 	err := r.db.QueryRowContext(ctx, `
-		SELECT dispatch_id, dispatch_status::text
+		SELECT dispatch_id, status::text
 		FROM public.dispatches
 		WHERE order_id = $1
-		  AND COALESCE(dispatch_status::text, '') <> 'CANCELLED'
+		  AND COALESCE(status::text, '') <> 'CANCELLED'
 		ORDER BY
-		  CASE COALESCE(dispatch_status::text, '')
+		  CASE COALESCE(status::text, '')
 			WHEN 'DELIVERED' THEN 5
 			WHEN 'IN_TRANSIT' THEN 4
 			WHEN 'DISPATCHED' THEN 3
@@ -340,8 +340,8 @@ func (r *PostgresRepository) ActiveDispatchForOrder(ctx context.Context, orderID
 			ELSE 0
 		  END DESC,
 		  updated_at DESC NULLS LAST,
-		  delivery_date DESC NULLS LAST,
-		  dispatch_date DESC NULLS LAST,
+		  delivered_at DESC NULLS LAST,
+		  dispatched_at DESC NULLS LAST,
 		  created_at DESC,
 		  dispatch_id DESC
 		LIMIT 1
@@ -367,12 +367,12 @@ func (r *PostgresRepository) BatchActiveDispatchForOrders(ctx context.Context, o
 	}
 	// #nosec G201 -- IN list is generated $n placeholders; ids are bound args.
 	query := fmt.Sprintf(`
-		SELECT DISTINCT ON (order_id) order_id, dispatch_id, dispatch_status::text
+		SELECT DISTINCT ON (order_id) order_id, dispatch_id, status::text
 		FROM public.dispatches
 		WHERE order_id IN (%s)
-		  AND COALESCE(dispatch_status::text, '') <> 'CANCELLED'
+		  AND COALESCE(status::text, '') <> 'CANCELLED'
 		ORDER BY order_id,
-		  CASE COALESCE(dispatch_status::text, '')
+		  CASE COALESCE(status::text, '')
 			WHEN 'DELIVERED' THEN 5
 			WHEN 'IN_TRANSIT' THEN 4
 			WHEN 'DISPATCHED' THEN 3
@@ -404,12 +404,12 @@ func (r *PostgresRepository) BatchActiveDispatchForOrders(ctx context.Context, o
 func (r *PostgresRepository) StartedDispatchDriverUserID(ctx context.Context, orderID int64) (*int64, error) {
 	var userID sql.NullInt64
 	err := r.db.QueryRowContext(ctx, `
-		SELECT COALESCE(d.driver_user_id, nd.driver_user_id)
+		SELECT COALESCE(d.driver_user_id, dr.user_id)
 		FROM public.dispatches d
-		LEFT JOIN public.nursery_drivers nd ON nd.driver_id = d.driver_id
+		LEFT JOIN public.drivers dr ON dr.driver_id = d.driver_id
 		WHERE d.order_id = $1
-		  AND COALESCE(d.dispatch_status, '') IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
-		  AND COALESCE(d.driver_user_id, nd.driver_user_id) IS NOT NULL
+		  AND COALESCE(d.status, '') IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
+		  AND COALESCE(d.driver_user_id, dr.user_id) IS NOT NULL
 		ORDER BY d.updated_at DESC, d.dispatch_id DESC
 		LIMIT 1
 	`, orderID).Scan(&userID)
@@ -424,7 +424,7 @@ func (r *PostgresRepository) StartedDispatchDriverUserID(ctx context.Context, or
 
 func (r *PostgresRepository) UpdateStatus(ctx context.Context, actorID int64, orderID int64, status string, expectedVersion int64) (*Order, error) {
 	result, err := r.db.ExecContext(ctx, `
-		UPDATE public.orders SET order_status = $2, updated_at = CURRENT_TIMESTAMP, updated_by = $3
+		UPDATE public.orders SET status = $2, updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $3
 		WHERE order_id = $1 AND version = $4`, orderID, status, actorID, expectedVersion)
 	if err != nil {
 		return nil, pgerr.Map(err)
@@ -633,11 +633,11 @@ func (r *PostgresRepository) UpdateStatusWithLoading(ctx context.Context, actorI
 	var query string
 	switch phase {
 	case "start":
-		query = `UPDATE public.orders SET order_status = $2, loading_started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, updated_by = $3 WHERE order_id = $1 AND version = $4`
+		query = `UPDATE public.orders SET status = $2, loading_started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $3 WHERE order_id = $1 AND version = $4`
 	case "complete":
-		query = `UPDATE public.orders SET order_status = $2, loading_completed_at = CURRENT_TIMESTAMP, loading_completed_by_user_id = $3, updated_at = CURRENT_TIMESTAMP, updated_by = $3 WHERE order_id = $1 AND version = $4`
+		query = `UPDATE public.orders SET status = $2, loading_completed_at = CURRENT_TIMESTAMP, loading_completed_by_user_id = $3, updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $3 WHERE order_id = $1 AND version = $4`
 	default:
-		query = `UPDATE public.orders SET order_status = $2, updated_at = CURRENT_TIMESTAMP, updated_by = $3 WHERE order_id = $1 AND version = $4`
+		query = `UPDATE public.orders SET status = $2, updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $3 WHERE order_id = $1 AND version = $4`
 	}
 	result, err := r.db.ExecContext(ctx, query, orderID, status, actorID, expectedVersion)
 	if err != nil {
@@ -672,7 +672,7 @@ func (r *PostgresRepository) requireOneRow(ctx context.Context, result sql.Resul
 func (r *PostgresRepository) Cancel(ctx context.Context, actorID int64, orderID int64, reason string, expectedVersion int64) (*Order, error) {
 	const query = `
 		UPDATE public.orders
-		SET order_status = 'CANCELLED', cancelled_by_user_id = $2, cancelled_at = CURRENT_TIMESTAMP,
+		SET status = 'CANCELLED', cancelled_by_user_id = $2, cancelled_at = CURRENT_TIMESTAMP,
 		    cancel_reason = NULLIF($3, ''), updated_at = CURRENT_TIMESTAMP
 		WHERE order_id = $1 AND version = $4
 	`
@@ -729,7 +729,7 @@ func (r *PostgresRepository) FindOrCreateBuyerByMobile(ctx context.Context, mobi
 	}
 
 	const insertUser = `
-		INSERT INTO public.users (user_code, first_name, mobile, mobile_verified, email_verified, status, created_at, updated_at)
+		INSERT INTO public.users (user_code, first_name, mobile, is_mobile_verified, is_email_verified, status, created_at, updated_at)
 		VALUES ($1, $2, $3, false, false, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING user_id
 	`
@@ -785,9 +785,9 @@ func baseSelect() string {
 		SELECT o.order_id, o.order_code, o.order_number,
 			o.buyer_user_id, bu.first_name,
 			o.seller_nursery_id, n.nursery_name,
-			o.order_status::text, COALESCE(o.total_amount, 0), o.notes, o.order_date,
+			o.status::text, COALESCE(o.total_amount, 0), o.notes, o.ordered_at,
 			o.created_at, o.updated_at,
-			o.created_by, o.updated_by,
+			o.created_by_user_id, o.updated_by_user_id,
 			o.quotation_id, o.customer_user_id, o.customer_name, o.customer_mobile,
 			o.assigned_manager_user_id, o.created_by_user_id,
 			o.cancelled_by_user_id, o.cancelled_at, o.cancel_reason,
@@ -852,7 +852,7 @@ func buildWhere(input ListOrdersRequest) (string, []any) {
 	}
 	if input.Status != "" {
 		args = append(args, input.Status)
-		clauses = append(clauses, fmt.Sprintf("o.order_status::text = $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("o.status::text = $%d", len(args)))
 	}
 	if input.Search != "" {
 		args = append(args, "%"+input.Search+"%")
@@ -878,11 +878,11 @@ func sortClause(input ListOrdersRequest) string {
 	case "seller_nursery":
 		return "n.nursery_name " + direction + " NULLS LAST, o.order_id DESC"
 	case "order_status", "status":
-		return "o.order_status " + direction + " NULLS LAST, o.order_id DESC"
+		return "o.status " + direction + " NULLS LAST, o.order_id DESC"
 	case "total_amount":
 		return "o.total_amount " + direction + " NULLS LAST, o.order_id DESC"
 	case "order_date":
-		return "o.order_date " + direction + " NULLS LAST, o.order_id DESC"
+		return "o.ordered_at " + direction + " NULLS LAST, o.order_id DESC"
 	case "created_at":
 		return "o.created_at " + direction + " NULLS LAST, o.order_id DESC"
 	default:
@@ -1093,7 +1093,7 @@ func (r *PostgresRepository) RecalculateTotalFromLoaded(ctx context.Context, ord
 
 func (r *PostgresRepository) CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO public.notifications (user_id, notification_type, title, message, channel, notification_status)
+		`INSERT INTO public.notifications (user_id, notification_type, title, message, channel, status)
 		 VALUES ($1, $2, $3, $4, 'IN_APP', 'PENDING')`,
 		userID, notifType, title, message,
 	)
@@ -1196,7 +1196,7 @@ func (r *PostgresRepository) GetUserName(ctx context.Context, userID int64) (str
 
 func (r *PostgresRepository) GetActiveVerificationToken(ctx context.Context, orderID int64) (*OrderVerification, error) {
 	const q = `
-		SELECT verification_id, order_id, token, status, created_at, revoked_at, revoked_by
+		SELECT verification_id, order_id, token, status, created_at, revoked_at, revoked_by_user_id
 		FROM public.order_verifications
 		WHERE order_id = $1 AND status = 'ACTIVE'
 	`
@@ -1205,7 +1205,7 @@ func (r *PostgresRepository) GetActiveVerificationToken(ctx context.Context, ord
 
 func (r *PostgresRepository) GetVerificationByToken(ctx context.Context, token string) (*OrderVerification, error) {
 	const q = `
-		SELECT verification_id, order_id, token, status, created_at, revoked_at, revoked_by
+		SELECT verification_id, order_id, token, status, created_at, revoked_at, revoked_by_user_id
 		FROM public.order_verifications
 		WHERE token = $1
 	`
@@ -1216,7 +1216,7 @@ func (r *PostgresRepository) CreateVerificationToken(ctx context.Context, orderI
 	const q = `
 		INSERT INTO public.order_verifications (order_id, token, status)
 		VALUES ($1, $2, 'ACTIVE')
-		RETURNING verification_id, order_id, token, status, created_at, revoked_at, revoked_by
+		RETURNING verification_id, order_id, token, status, created_at, revoked_at, revoked_by_user_id
 	`
 	return scanOrderVerification(r.db.QueryRowContext(ctx, q, orderID, token))
 }
@@ -1224,7 +1224,7 @@ func (r *PostgresRepository) CreateVerificationToken(ctx context.Context, orderI
 func (r *PostgresRepository) RevokeVerificationTokens(ctx context.Context, orderID int64, revokedByUserID int64) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE public.order_verifications
-		SET status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP, revoked_by = $2
+		SET status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP, revoked_by_user_id = $2
 		WHERE order_id = $1 AND status = 'ACTIVE'
 	`, orderID, revokedByUserID)
 	return err
@@ -1255,10 +1255,10 @@ func scanOrderVerification(row interface{ Scan(dest ...any) error }) (*OrderVeri
 func (r *PostgresRepository) CreateDocument(ctx context.Context, doc OrderDocument) (*OrderDocument, error) {
 	const q = `
 		INSERT INTO public.order_documents
-			(order_id, version, object_key, sha256_hash, mime_type, file_size, generated_by, generated_by_name, is_current)
+			(order_id, version, object_key, sha256_hash, mime_type, file_size, generated_by_user_id, generated_by_name, is_current)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)
 		RETURNING doc_id, order_id, version, object_key, sha256_hash, mime_type, file_size,
-		          generated_by, generated_by_name, is_current, created_at
+		          generated_by_user_id, generated_by_name, is_current, created_at
 	`
 	var d OrderDocument
 	var generatedBy sql.NullInt64
@@ -1291,7 +1291,7 @@ func (r *PostgresRepository) CreateDocument(ctx context.Context, doc OrderDocume
 func (r *PostgresRepository) GetCurrentDocument(ctx context.Context, orderID int64) (*OrderDocument, error) {
 	const q = `
 		SELECT doc_id, order_id, version, object_key, sha256_hash, mime_type, file_size,
-		       generated_by, generated_by_name, is_current, created_at
+		       generated_by_user_id, generated_by_name, is_current, created_at
 		FROM public.order_documents
 		WHERE order_id = $1 AND is_current = TRUE
 	`

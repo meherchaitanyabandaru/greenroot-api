@@ -75,14 +75,14 @@ func (r *PostgresRepository) UpdateProfile(ctx context.Context, userID int64, in
 			-- NULL $5 = leave unchanged, '' = clear; a changed address loses its
 			-- verified flag (SET expressions see the old row).
 			email = CASE WHEN $5::text IS NULL THEN email ELSE NULLIF($5::text, '') END,
-			email_verified = CASE WHEN $5::text IS NULL OR lower(email) IS NOT DISTINCT FROM lower(NULLIF($5::text, ''))
-				THEN email_verified ELSE false END,
+			is_email_verified = CASE WHEN $5::text IS NULL OR lower(email) IS NOT DISTINCT FROM lower(NULLIF($5::text, ''))
+				THEN is_email_verified ELSE false END,
 			profile_image_url = NULLIF($6, ''),
 			updated_at = $7,
-			updated_by = $1
+			updated_by_user_id = $1
 		WHERE user_id = $1 AND deleted_at IS NULL
 		RETURNING user_id, user_code, first_name, last_name, gender::text, mobile, email, profile_image_url,
-			mobile_verified, email_verified, onboarding_completed, initial_activity, onboarding_completed_at,
+			is_mobile_verified, is_email_verified, is_onboarding_completed, initial_activity, onboarding_completed_at,
 			status::text, last_login_at, created_at, updated_at
 	`
 	user, err := scanUserRow(r.db.QueryRowContext(
@@ -116,10 +116,10 @@ func (r *PostgresRepository) EmailTakenByOther(ctx context.Context, email string
 // SetVerifiedEmail stores the address the user just proved they own.
 func (r *PostgresRepository) SetVerifiedEmail(ctx context.Context, userID int64, email string, at time.Time) (*User, error) {
 	user, err := scanUserRow(r.db.QueryRowContext(ctx, `
-		UPDATE public.users SET email = $2, email_verified = true, updated_at = $3, updated_by = $1
+		UPDATE public.users SET email = $2, is_email_verified = true, updated_at = $3, updated_by_user_id = $1
 		WHERE user_id = $1 AND deleted_at IS NULL
 		RETURNING user_id, user_code, first_name, last_name, gender::text, mobile, email, profile_image_url,
-			mobile_verified, email_verified, onboarding_completed, initial_activity, onboarding_completed_at,
+			is_mobile_verified, is_email_verified, is_onboarding_completed, initial_activity, onboarding_completed_at,
 			status::text, last_login_at, created_at, updated_at`, userID, email, at))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -142,14 +142,14 @@ func mapEmailUnique(err error) error {
 func (r *PostgresRepository) CompleteOnboarding(ctx context.Context, userID int64, initialActivity string, at time.Time) (*User, error) {
 	const query = `
 		UPDATE public.users
-		SET onboarding_completed = true,
+		SET is_onboarding_completed = true,
 			initial_activity = $2,
 			onboarding_completed_at = COALESCE(onboarding_completed_at, $3),
 			updated_at = $3,
-			updated_by = $1
+			updated_by_user_id = $1
 		WHERE user_id = $1 AND deleted_at IS NULL
 		RETURNING user_id, user_code, first_name, last_name, gender::text, mobile, email, profile_image_url,
-			mobile_verified, email_verified, onboarding_completed, initial_activity, onboarding_completed_at,
+			is_mobile_verified, is_email_verified, is_onboarding_completed, initial_activity, onboarding_completed_at,
 			status::text, last_login_at, created_at, updated_at
 	`
 	user, err := scanUserRow(r.db.QueryRowContext(ctx, query, userID, initialActivity, at))
@@ -168,7 +168,7 @@ func (r *PostgresRepository) ListAddresses(ctx context.Context, userID int64) ([
 		SELECT address_id, user_id, address_type, contact_name, contact_mobile,
 			address_line1, address_line2, city, state, country, postal_code,
 			latitude, longitude, gps_accuracy_meters, landmark, location_source,
-			location_confirmed_by, location_confirmed_at,
+			location_confirmed_by_user_id, location_confirmed_at,
 			COALESCE(is_default, false), created_at, updated_at
 		FROM public.user_addresses
 		WHERE user_id = $1
@@ -208,7 +208,7 @@ func (r *PostgresRepository) CreateAddress(ctx context.Context, userID int64, in
 		INSERT INTO public.user_addresses (
 			user_id, address_type, contact_name, contact_mobile, address_line1, address_line2,
 			city, state, country, postal_code, latitude, longitude, location,
-			gps_accuracy_meters, landmark, location_source, location_confirmed_by, location_confirmed_at,
+			gps_accuracy_meters, landmark, location_source, location_confirmed_by_user_id, location_confirmed_at,
 			is_default, created_at, updated_at
 		)
 		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, NULLIF($6, ''),
@@ -221,7 +221,7 @@ func (r *PostgresRepository) CreateAddress(ctx context.Context, userID int64, in
 		RETURNING address_id, user_id, address_type, contact_name, contact_mobile,
 			address_line1, address_line2, city, state, country, postal_code,
 			latitude, longitude, gps_accuracy_meters, landmark, location_source,
-			location_confirmed_by, location_confirmed_at,
+			location_confirmed_by_user_id, location_confirmed_at,
 			COALESCE(is_default, false), created_at, updated_at
 	`
 	address, err := scanAddressRow(tx.QueryRowContext(ctx, query,
@@ -286,7 +286,7 @@ func (r *PostgresRepository) UpdateAddress(ctx context.Context, userID int64, ad
 			gps_accuracy_meters = $14,
 			landmark = NULLIF($15, ''),
 			location_source = NULLIF($16, ''),
-			location_confirmed_by = $17,
+			location_confirmed_by_user_id = $17,
 			location_confirmed_at = $18,
 			is_default = $19,
 			updated_at = CURRENT_TIMESTAMP
@@ -294,7 +294,7 @@ func (r *PostgresRepository) UpdateAddress(ctx context.Context, userID int64, ad
 		RETURNING address_id, user_id, address_type, contact_name, contact_mobile,
 			address_line1, address_line2, city, state, country, postal_code,
 			latitude, longitude, gps_accuracy_meters, landmark, location_source,
-			location_confirmed_by, location_confirmed_at,
+			location_confirmed_by_user_id, location_confirmed_at,
 			COALESCE(is_default, false), created_at, updated_at
 	`
 	address, err := scanAddressRow(tx.QueryRowContext(ctx, query,
@@ -372,7 +372,7 @@ func (r *PostgresRepository) ListRoles(ctx context.Context, userID int64) ([]Rol
 
 func (r *PostgresRepository) ListSessions(ctx context.Context, userID int64) ([]Session, error) {
 	const query = `
-		SELECT session_id, user_id, login_time, last_activity_at, COALESCE(session_status::text, ''),
+		SELECT session_id, user_id, logged_in_at, last_activity_at, COALESCE(status::text, ''),
 			device_type, os_name, app_version, ip_address, user_agent, created_at
 		FROM public.user_sessions
 		WHERE user_id = $1
@@ -420,7 +420,7 @@ func (r *PostgresRepository) ListSessions(ctx context.Context, userID int64) ([]
 func (r *PostgresRepository) CreateUserActivity(ctx context.Context, input CreateActivityInput) error {
 	const query = `
 		INSERT INTO public.user_activities (
-			user_id, activity_type, entity_type, entity_id, activity_data, activity_timestamp
+			user_id, activity_type, entity_type, entity_id, activity_data, occurred_at
 		)
 		VALUES ($1, $2, NULLIF($3, ''), $4, NULLIF($5, '')::jsonb, $6)
 	`
@@ -438,7 +438,7 @@ func (r *PostgresRepository) GetAccountDeletionBlockers(ctx context.Context, use
 			(SELECT COUNT(*)
 			   FROM public.orders
 			  WHERE deleted_at IS NULL
-			    AND COALESCE(order_status::text, '') NOT IN ('COMPLETED', 'CANCELLED')
+			    AND COALESCE(status::text, '') NOT IN ('COMPLETED', 'CANCELLED')
 			    AND (
 			    	created_by_user_id = $1 OR assigned_manager_user_id = $1 OR
 			    	customer_user_id = $1 OR buyer_user_id = $1
@@ -489,8 +489,8 @@ func (r *PostgresRepository) SoftDeleteAccount(ctx context.Context, userID int64
 	// 2. Revoke all active sessions — next refresh attempt will fail
 	_, err = tx.ExecContext(ctx, `
 		UPDATE public.user_sessions
-		SET session_status = 'LOGGED_OUT', session_token = NULL, last_activity_at = CURRENT_TIMESTAMP
-		WHERE user_id = $1 AND session_status = 'ACTIVE'`, userID)
+		SET status = 'LOGGED_OUT', session_token = NULL, last_activity_at = CURRENT_TIMESTAMP
+		WHERE user_id = $1 AND status = 'ACTIVE'`, userID)
 	if err != nil {
 		return err
 	}
@@ -507,8 +507,8 @@ func (r *PostgresRepository) SoftDeleteAccount(ctx context.Context, userID int64
 	// 4. Disconnect any active driver profiles
 	_, err = tx.ExecContext(ctx, `
 		UPDATE public.nursery_drivers
-		SET connection_status = 'DISCONNECTED', disconnected_at = CURRENT_TIMESTAMP, disconnected_by = $1
-		WHERE driver_user_id = $1 AND connection_status IN ('REQUESTED','CONNECTED','APPROVED')`, userID)
+		SET status = 'DISCONNECTED', disconnected_at = CURRENT_TIMESTAMP, disconnected_by_user_id = $1
+		WHERE driver_user_id = $1 AND status IN ('REQUESTED','CONNECTED','APPROVED')`, userID)
 	if err != nil {
 		return err
 	}
@@ -519,8 +519,8 @@ func (r *PostgresRepository) SoftDeleteAccount(ctx context.Context, userID int64
 func (r *PostgresRepository) scanUser(ctx context.Context, where string, args ...any) (*User, error) {
 	query := `
 		SELECT user_id, user_code, first_name, last_name, gender::text, mobile, email, profile_image_url,
-			COALESCE(mobile_verified, false), COALESCE(email_verified, false),
-			COALESCE(onboarding_completed, false), initial_activity, onboarding_completed_at,
+			COALESCE(is_mobile_verified, false), COALESCE(is_email_verified, false),
+			COALESCE(is_onboarding_completed, false), initial_activity, onboarding_completed_at,
 			COALESCE(status::text, ''), last_login_at, created_at, updated_at
 		FROM public.users
 		` + where

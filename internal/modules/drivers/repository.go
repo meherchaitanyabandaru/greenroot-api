@@ -303,9 +303,9 @@ func syncDriverVehicleTx(ctx context.Context, tx *sql.Tx, userID int64, vehicleN
 
 func (r *PostgresRepository) CreateLocation(ctx context.Context, driverID int64, actorID int64, input LocationRequest) (*DriverLocation, error) {
 	const query = `
-		INSERT INTO public.driver_locations (driver_id, latitude, longitude, recorded_at, created_by)
+		INSERT INTO public.driver_locations (driver_id, latitude, longitude, recorded_at, created_by_user_id)
 		VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4)
-		RETURNING location_id, driver_id, latitude, longitude, recorded_at, created_by
+		RETURNING location_id, driver_id, latitude, longitude, recorded_at, created_by_user_id
 	`
 	location, err := scanLocation(r.db.QueryRowContext(ctx, query, driverID, input.Latitude, input.Longitude, actorID))
 	if errors.Is(err, sql.ErrNoRows) {

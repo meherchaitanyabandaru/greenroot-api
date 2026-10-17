@@ -50,7 +50,6 @@ type Repository interface {
 	IsNurseryActive(ctx context.Context, nurseryID int64) (bool, error)
 	GetOwnedNurseryID(ctx context.Context, userID int64) (*int64, error)
 	GetManagerNurseryID(ctx context.Context, userID int64) (*int64, error)
-	GetOrderNurseryID(ctx context.Context, orderID int64) (*int64, error)
 	CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error
 	// Document methods
 	CreateDocument(ctx context.Context, doc QuotationDocument) (*QuotationDocument, error)
@@ -603,21 +602,6 @@ func (r *PostgresRepository) IsNurseryActive(ctx context.Context, nurseryID int6
 	return exists, err
 }
 
-func (r *PostgresRepository) GetOrderNurseryID(ctx context.Context, orderID int64) (*int64, error) {
-	var id sql.NullInt64
-	err := r.db.QueryRowContext(ctx,
-		`SELECT nursery_id FROM public.orders WHERE order_id = $1`,
-		orderID,
-	).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	return nullableInt64(id), nil
-}
-
 // CreateOrderAndConvert creates a PENDING order from the quotation's items and marks
 // the quotation as CONVERTED in a single transaction. No manual order_id needed.
 func (r *PostgresRepository) CreateOrderAndConvert(ctx context.Context, q *Quotation, byUserID int64) (int64, error) {
@@ -671,8 +655,8 @@ func (r *PostgresRepository) CreateOrderAndConvert(ctx context.Context, q *Quota
 	if err := tx.QueryRowContext(ctx, `
 		INSERT INTO public.orders (
 			order_code, order_number, seller_nursery_id, buyer_nursery_id,
-			buyer_user_id, customer_user_id, quotation_id, order_status, total_amount,
-			notes, order_date, created_at, updated_at, created_by, updated_by
+			buyer_user_id, customer_user_id, quotation_id, status, total_amount,
+			notes, ordered_at, created_at, updated_at, created_by_user_id, updated_by_user_id
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,'PENDING',0,$8,$9,$9,$9,$10,$10)
 		RETURNING order_id
 	`, orderCode, orderNumber, nurseryID, buyerNurseryID, buyerUserID, buyerUserID, q.ID, notes, now, byUserID,
@@ -1079,7 +1063,7 @@ func validateItemMath(item QuotationItemRequest) bool {
 
 func (r *PostgresRepository) GetActiveVerificationToken(ctx context.Context, quotationID int64) (*QuotationVerification, error) {
 	const q = `
-		SELECT verification_id, quotation_id, token, status, created_at, revoked_at, revoked_by
+		SELECT verification_id, quotation_id, token, status, created_at, revoked_at, revoked_by_user_id
 		FROM public.quotation_verifications
 		WHERE quotation_id = $1 AND status = 'ACTIVE'
 	`
@@ -1088,7 +1072,7 @@ func (r *PostgresRepository) GetActiveVerificationToken(ctx context.Context, quo
 
 func (r *PostgresRepository) GetVerificationByToken(ctx context.Context, token string) (*QuotationVerification, error) {
 	const q = `
-		SELECT verification_id, quotation_id, token, status, created_at, revoked_at, revoked_by
+		SELECT verification_id, quotation_id, token, status, created_at, revoked_at, revoked_by_user_id
 		FROM public.quotation_verifications
 		WHERE token = $1
 	`
@@ -1099,7 +1083,7 @@ func (r *PostgresRepository) CreateVerificationToken(ctx context.Context, quotat
 	const q = `
 		INSERT INTO public.quotation_verifications (quotation_id, token, status)
 		VALUES ($1, $2, 'ACTIVE')
-		RETURNING verification_id, quotation_id, token, status, created_at, revoked_at, revoked_by
+		RETURNING verification_id, quotation_id, token, status, created_at, revoked_at, revoked_by_user_id
 	`
 	return scanVerification(r.db.QueryRowContext(ctx, q, quotationID, token))
 }
@@ -1107,7 +1091,7 @@ func (r *PostgresRepository) CreateVerificationToken(ctx context.Context, quotat
 func (r *PostgresRepository) RevokeVerificationTokens(ctx context.Context, quotationID int64, revokedByUserID int64) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE public.quotation_verifications
-		SET status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP, revoked_by = $2
+		SET status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP, revoked_by_user_id = $2
 		WHERE quotation_id = $1 AND status = 'ACTIVE'
 	`, quotationID, revokedByUserID)
 	return err
@@ -1136,10 +1120,10 @@ func scanVerification(row interface{ Scan(dest ...any) error }) (*QuotationVerif
 func (r *PostgresRepository) CreateDocument(ctx context.Context, doc QuotationDocument) (*QuotationDocument, error) {
 	const q = `
 		INSERT INTO public.quotation_documents
-			(quotation_id, version, object_key, sha256_hash, mime_type, file_size, generated_by, generated_by_name, is_current)
+			(quotation_id, version, object_key, sha256_hash, mime_type, file_size, generated_by_user_id, generated_by_name, is_current)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)
 		RETURNING doc_id, quotation_id, version, object_key, sha256_hash, mime_type, file_size,
-		          generated_by, generated_by_name, is_current, created_at
+		          generated_by_user_id, generated_by_name, is_current, created_at
 	`
 	var d QuotationDocument
 	var generatedBy sql.NullInt64
@@ -1172,7 +1156,7 @@ func (r *PostgresRepository) CreateDocument(ctx context.Context, doc QuotationDo
 func (r *PostgresRepository) GetCurrentDocument(ctx context.Context, quotationID int64) (*QuotationDocument, error) {
 	const q = `
 		SELECT doc_id, quotation_id, version, object_key, sha256_hash, mime_type, file_size,
-		       generated_by, generated_by_name, is_current, created_at
+		       generated_by_user_id, generated_by_name, is_current, created_at
 		FROM public.quotation_documents
 		WHERE quotation_id = $1 AND is_current = TRUE
 	`
@@ -1201,7 +1185,7 @@ func (r *PostgresRepository) GetCurrentDocument(ctx context.Context, quotationID
 func (r *PostgresRepository) ListDocuments(ctx context.Context, quotationID int64) ([]QuotationDocument, error) {
 	const q = `
 		SELECT doc_id, quotation_id, version, object_key, sha256_hash, mime_type, file_size,
-		       generated_by, generated_by_name, is_current, created_at
+		       generated_by_user_id, generated_by_name, is_current, created_at
 		FROM public.quotation_documents
 		WHERE quotation_id = $1
 		ORDER BY version DESC
@@ -1243,7 +1227,7 @@ func (r *PostgresRepository) MarkDocumentsNotCurrent(ctx context.Context, quotat
 
 func (r *PostgresRepository) CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO public.notifications (user_id, notification_type, title, message, channel, notification_status)
+		`INSERT INTO public.notifications (user_id, notification_type, title, message, channel, status)
 		 VALUES ($1, $2, $3, $4, 'IN_APP', 'PENDING')`,
 		userID, notifType, title, message,
 	)

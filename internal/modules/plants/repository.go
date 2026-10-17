@@ -361,7 +361,7 @@ func buildPlantWhere(input ListPlantsRequest) (string, []any) {
 		))
 	}
 	if input.CategoryID > 0 {
-		add(`EXISTS (SELECT 1 FROM public.plant_category_mapping pcm WHERE pcm.plant_id = p.plant_id AND pcm.category_id = $%d)`, input.CategoryID)
+		add(`EXISTS (SELECT 1 FROM public.plant_category_mappings pcm WHERE pcm.plant_id = p.plant_id AND pcm.category_id = $%d)`, input.CategoryID)
 	}
 	if input.PlantType != "" {
 		add(`p.plant_type = $%d`, input.PlantType)
@@ -418,14 +418,14 @@ func (r *PostgresRepository) scanPlant(ctx context.Context, where string, args .
 }
 
 func (r *PostgresRepository) replaceCategories(ctx context.Context, tx *sql.Tx, plantID int64, categoryIDs []int64) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM public.plant_category_mapping WHERE plant_id = $1`, plantID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM public.plant_category_mappings WHERE plant_id = $1`, plantID); err != nil {
 		return err
 	}
 	for _, categoryID := range categoryIDs {
 		if categoryID <= 0 {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO public.plant_category_mapping (plant_id, category_id, created_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING`, plantID, categoryID); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO public.plant_category_mappings (plant_id, category_id, created_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING`, plantID, categoryID); err != nil {
 			return err
 		}
 	}
@@ -527,7 +527,7 @@ func (r *PostgresRepository) attachPlantRelations(ctx context.Context, plants []
 	// #nosec G201 -- IN list is generated $n placeholders; ids are bound args.
 	catQuery := fmt.Sprintf(`
 		SELECT pcm.plant_id, c.category_id, c.category_name, c.is_active, c.created_at, c.updated_at
-		FROM public.plant_category_mapping pcm
+		FROM public.plant_category_mappings pcm
 		JOIN public.plant_categories c ON c.category_id = pcm.category_id
 		WHERE pcm.plant_id IN (%s) AND c.is_active = true
 		ORDER BY c.category_name`, inClause)
@@ -583,7 +583,7 @@ func (r *PostgresRepository) attachPlantRelations(ctx context.Context, plants []
 func (r *PostgresRepository) categoriesForPlant(ctx context.Context, plantID int64) ([]Category, error) {
 	const query = `
 		SELECT c.category_id, c.category_name, c.is_active, c.created_at, c.updated_at
-		FROM public.plant_category_mapping pcm
+		FROM public.plant_category_mappings pcm
 		JOIN public.plant_categories c ON c.category_id = pcm.category_id
 		WHERE pcm.plant_id = $1 AND c.is_active = true
 		ORDER BY c.category_name

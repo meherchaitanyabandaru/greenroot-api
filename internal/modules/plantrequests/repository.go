@@ -309,7 +309,7 @@ func (r *PostgresRepository) InventoryAvailable(ctx context.Context, supplierNur
 	query := `
 		SELECT COALESCE(SUM(available_quantity), 0)
 		FROM public.nursery_inventory
-		WHERE nursery_id = $1 AND plant_id = $2 AND inventory_status IN ('AVAILABLE', 'LOW_STOCK')
+		WHERE nursery_id = $1 AND plant_id = $2 AND status IN ('AVAILABLE', 'LOW_STOCK')
 	`
 	args := []any{supplierNurseryID, plantID}
 	if sizeID != nil {

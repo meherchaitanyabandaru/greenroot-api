@@ -85,7 +85,7 @@ func (r *PostgresRepository) Create(ctx context.Context, input CreateNotificatio
 	}
 	var id int64
 	err = r.db.QueryRowContext(ctx, `
-		INSERT INTO public.notifications (notification_code, user_id, template_id, notification_type, title, message, channel, notification_status, data, sent_at, created_at, updated_at)
+		INSERT INTO public.notifications (notification_code, user_id, template_id, notification_type, title, message, channel, status, data, sent_at, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7, $8, NULLIF($9, '')::jsonb,
 			CASE WHEN $10 = 'SENT' THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING notification_id
@@ -97,7 +97,7 @@ func (r *PostgresRepository) Create(ctx context.Context, input CreateNotificatio
 }
 
 func (r *PostgresRepository) MarkRead(ctx context.Context, id int64) (*Notification, error) {
-	result, err := r.db.ExecContext(ctx, `UPDATE public.notifications SET notification_status = 'READ', read_at = COALESCE(read_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE notification_id = $1`, id)
+	result, err := r.db.ExecContext(ctx, `UPDATE public.notifications SET status = 'READ', read_at = COALESCE(read_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE notification_id = $1`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +110,7 @@ func (r *PostgresRepository) MarkRead(ctx context.Context, id int64) (*Notificat
 }
 
 func (r *PostgresRepository) MarkAllRead(ctx context.Context, userID int64) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE public.notifications SET notification_status = 'READ', read_at = COALESCE(read_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND read_at IS NULL`, userID)
+	_, err := r.db.ExecContext(ctx, `UPDATE public.notifications SET status = 'READ', read_at = COALESCE(read_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND read_at IS NULL`, userID)
 	return err
 }
 
@@ -247,7 +247,7 @@ func (r *PostgresRepository) findTemplate(ctx context.Context, id int64) (*Templ
 }
 
 func notificationSelect() string {
-	return `SELECT notification_id,notification_code,user_id,template_id,notification_type,title,message,COALESCE(channel::text,''),COALESCE(notification_status::text,''),data::text,sent_at,read_at,created_at,updated_at FROM public.notifications`
+	return `SELECT notification_id,notification_code,user_id,template_id,notification_type,title,message,COALESCE(channel::text,''),COALESCE(status::text,''),data::text,sent_at,read_at,created_at,updated_at FROM public.notifications`
 }
 func deviceSelect() string {
 	return `SELECT device_id,user_id,fcm_token,device_type,device_id_external,platform,app_version,is_active,last_seen_at,created_at,updated_at FROM public.user_notification_devices`
@@ -269,7 +269,7 @@ func buildNotificationWhere(input ListNotificationsRequest) (string, []any) {
 	}
 	if input.Status != "" {
 		args = append(args, input.Status)
-		clauses = append(clauses, fmt.Sprintf("notification_status::text=$%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("status::text=$%d", len(args)))
 	}
 	if input.Channel != "" {
 		args = append(args, input.Channel)

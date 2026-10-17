@@ -39,7 +39,7 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, req Crea
 			status, expires_at, created_at, updated_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING', CURRENT_TIMESTAMP + INTERVAL '7 days', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		RETURNING id
+		RETURNING invite_id
 	`
 	var id int64
 	if err := r.db.QueryRowContext(ctx, query,
@@ -65,7 +65,7 @@ func (r *PostgresRepository) Accept(ctx context.Context, uuid string, acceptedBy
 		UPDATE public.invites
 		SET status = 'ACCEPTED', accepted_by_user_id = $2, accepted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 		WHERE invite_uuid = $1::uuid AND status = 'PENDING' AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
-		RETURNING id
+		RETURNING invite_id
 	`
 	var id int64
 	if err := r.db.QueryRowContext(ctx, query, uuid, acceptedByUserID).Scan(&id); errors.Is(err, sql.ErrNoRows) {
@@ -81,7 +81,7 @@ func (r *PostgresRepository) Cancel(ctx context.Context, uuid string, actorID in
 		UPDATE public.invites
 		SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
 		WHERE invite_uuid = $1::uuid AND status = 'PENDING'
-		RETURNING id
+		RETURNING invite_id
 	`
 	var id int64
 	if err := r.db.QueryRowContext(ctx, query, uuid).Scan(&id); errors.Is(err, sql.ErrNoRows) {
@@ -93,7 +93,7 @@ func (r *PostgresRepository) Cancel(ctx context.Context, uuid string, actorID in
 }
 
 func (r *PostgresRepository) ListByNursery(ctx context.Context, nurseryID int64) ([]Invite, error) {
-	rows, err := r.db.QueryContext(ctx, baseSelect()+" WHERE i.nursery_id = $1 ORDER BY i.id DESC", nurseryID)
+	rows, err := r.db.QueryContext(ctx, baseSelect()+" WHERE i.nursery_id = $1 ORDER BY i.invite_id DESC", nurseryID)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +111,7 @@ func (r *PostgresRepository) ListByNursery(ctx context.Context, nurseryID int64)
 
 func (r *PostgresRepository) ListAcceptedByUser(ctx context.Context, userID int64) ([]Invite, error) {
 	rows, err := r.db.QueryContext(ctx,
-		baseSelect()+` WHERE i.accepted_by_user_id = $1 AND i.invite_type = 'CUSTOMER_INVITE' AND i.status = 'ACCEPTED' ORDER BY i.id DESC`,
+		baseSelect()+` WHERE i.accepted_by_user_id = $1 AND i.invite_type = 'CUSTOMER_INVITE' AND i.status = 'ACCEPTED' ORDER BY i.invite_id DESC`,
 		userID,
 	)
 	if err != nil {
@@ -130,7 +130,7 @@ func (r *PostgresRepository) ListAcceptedByUser(ctx context.Context, userID int6
 }
 
 func (r *PostgresRepository) findByID(ctx context.Context, id int64) (*Invite, error) {
-	invite, err := scanInvite(r.db.QueryRowContext(ctx, baseSelect()+" WHERE i.id = $1", id))
+	invite, err := scanInvite(r.db.QueryRowContext(ctx, baseSelect()+" WHERE i.invite_id = $1", id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -166,7 +166,7 @@ func (r *PostgresRepository) UserIsManager(ctx context.Context, userID int64) (b
 
 func baseSelect() string {
 	return `
-		SELECT i.id, i.invite_uuid::text, i.invite_type, i.invited_by_user_id,
+		SELECT i.invite_id, i.invite_uuid::text, i.invite_type, i.invited_by_user_id,
 			i.nursery_id, n.nursery_name, i.role,
 			i.target_mobile, i.target_email, i.target_name,
 			i.status, i.expires_at, i.accepted_by_user_id, i.accepted_at,

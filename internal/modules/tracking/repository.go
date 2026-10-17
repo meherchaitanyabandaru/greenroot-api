@@ -55,7 +55,7 @@ func (r *PostgresRepository) DispatchAccess(ctx context.Context, dispatchID int6
 	var access DispatchAccess
 	var driverID, driverUserID sql.NullInt64
 	err := r.db.QueryRowContext(ctx, `
-		SELECT COALESCE(dispatch_status, ''), driver_id, driver_user_id
+		SELECT COALESCE(status, ''), driver_id, driver_user_id
 		FROM public.dispatches
 		WHERE dispatch_id = $1
 	`, dispatchID).Scan(&access.Status, &driverID, &driverUserID)
@@ -130,7 +130,7 @@ func (r *PostgresRepository) CanViewDriver(ctx context.Context, driverID, userID
 				dr.user_id = $2 OR EXISTS (
 					SELECT 1 FROM public.nursery_drivers nd
 					WHERE nd.driver_user_id = dr.user_id
-					  AND nd.connection_status IN ('CONNECTED', 'APPROVED')
+					  AND nd.status IN ('CONNECTED', 'APPROVED')
 					  AND `+nurseryMember("nd.nursery_id")+`)))`, driverID, userID).Scan(&ok)
 	return ok, err
 }
