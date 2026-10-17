@@ -17,6 +17,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
@@ -492,6 +493,9 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID 
 	if err := s.canManage(ctx, actor, *current); err != nil {
 		return Order{}, err
 	}
+	if err := checkIfMatch(ctx, *current); err != nil {
+		return Order{}, err
+	}
 	if !CanTransition(current.Status, status) {
 		return Order{}, ErrInvalidStatus
 	}
@@ -507,7 +511,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID 
 			return Order{}, ErrInvalidStatus
 		}
 	}
-	order, err := s.repository.UpdateStatus(ctx, actor.UserID, orderID, status)
+	order, err := s.repository.UpdateStatus(ctx, actor.UserID, orderID, status, current.Version)
 	if err != nil {
 		return Order{}, err
 	}
@@ -577,13 +581,16 @@ func (s *Service) StartLoading(ctx context.Context, actor ActorContext, orderID 
 	if err := s.canManage(ctx, actor, *order); err != nil {
 		return Order{}, err
 	}
+	if err := checkIfMatch(ctx, *order); err != nil {
+		return Order{}, err
+	}
 	if order.Status != "CONFIRMED" && order.Status != "DRAFT" {
 		return Order{}, ErrInvalidStatus
 	}
 	if !hasUsableDeliverySnapshot(order.DeliverySnapshot) {
 		return Order{}, ErrMissingDeliveryAddress
 	}
-	updated, err := s.repository.UpdateStatusWithLoading(ctx, actor.UserID, orderID, "LOADING", "start")
+	updated, err := s.repository.UpdateStatusWithLoading(ctx, actor.UserID, orderID, "LOADING", "start", order.Version)
 	if err != nil {
 		return Order{}, err
 	}
@@ -611,6 +618,9 @@ func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, order
 	if err := s.canManage(ctx, actor, *order); err != nil {
 		return Order{}, err
 	}
+	if err := checkIfMatch(ctx, *order); err != nil {
+		return Order{}, err
+	}
 	if order.Status != "LOADING" {
 		return Order{}, ErrInvalidStatus
 	}
@@ -621,7 +631,7 @@ func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, order
 			break
 		}
 	}
-	updated, err := s.repository.UpdateStatusWithLoading(ctx, actor.UserID, orderID, finalStatus, "complete")
+	updated, err := s.repository.UpdateStatusWithLoading(ctx, actor.UserID, orderID, finalStatus, "complete", order.Version)
 	if err != nil {
 		return Order{}, err
 	}
@@ -689,6 +699,9 @@ func (s *Service) Cancel(ctx context.Context, actor ActorContext, orderID int64,
 	if err != nil {
 		return Order{}, err
 	}
+	if err := checkIfMatch(ctx, *order); err != nil {
+		return Order{}, err
+	}
 	if order.Status == "CANCELLED" || order.Status == "COMPLETED" || order.Status == "LOADED" || order.Status == "PARTIALLY_FULFILLED" {
 		return Order{}, ErrInvalidStatus
 	}
@@ -699,7 +712,7 @@ func (s *Service) Cancel(ctx context.Context, actor ActorContext, orderID int64,
 			return Order{}, err
 		}
 	}
-	updated, err := s.repository.Cancel(ctx, actor.UserID, orderID, reason)
+	updated, err := s.repository.Cancel(ctx, actor.UserID, orderID, reason, order.Version)
 	if err != nil {
 		return Order{}, err
 	}
@@ -1142,4 +1155,14 @@ func mustJSON(value any) string {
 		return fmt.Sprintf(`{"error":%q}`, err.Error())
 	}
 	return string(data)
+}
+
+// checkIfMatch enforces the client's If-Match precondition against the order
+// just read. The following UPDATE is guarded by order.Version as well, so a
+// change committed after this check is still caught (ErrConflict).
+func checkIfMatch(ctx context.Context, order Order) error {
+	if v, ok := rowversion.Expected(ctx); ok && v != order.Version {
+		return ErrConflict
+	}
+	return nil
 }

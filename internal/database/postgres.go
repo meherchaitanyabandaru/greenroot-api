@@ -5,8 +5,11 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"io"
+	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/config"
 )
 
@@ -15,10 +18,16 @@ func Open(ctx context.Context, cfg config.DatabaseConfig) (*sql.DB, error) {
 		return sql.OpenDB(noopConnector{}), nil
 	}
 
-	db, err := sql.Open("pgx", cfg.URL)
+	connCfg, err := pgx.ParseConfig(cfg.URL)
 	if err != nil {
 		return nil, err
 	}
+	// Session time zone = business calendar (CURRENT_DATE, date-based codes).
+	// It never changes stored instants: timestamps are timestamptz.
+	if cfg.TimeZone != "" {
+		connCfg.RuntimeParams["timezone"] = cfg.TimeZone
+	}
+	db := stdlib.OpenDB(*connCfg, stdlib.OptionAfterConnect(scanTimestamptzInUTC))
 
 	db.SetMaxOpenConns(cfg.MaxOpenConns)
 	db.SetMaxIdleConns(cfg.MaxIdleConns)
@@ -64,3 +73,14 @@ func (noopTx) Rollback() error                              { return nil }
 func (noopRows) Columns() []string                          { return []string{} }
 func (noopRows) Close() error                               { return nil }
 func (noopRows) Next([]driver.Value) error                  { return io.EOF }
+
+// scanTimestamptzInUTC makes every timestamptz arrive in Go as UTC, so API
+// responses are "...Z" whatever the session or host time zone is.
+func scanTimestamptzInUTC(_ context.Context, conn *pgx.Conn) error {
+	conn.TypeMap().RegisterType(&pgtype.Type{
+		Name:  "timestamptz",
+		OID:   pgtype.TimestamptzOID,
+		Codec: &pgtype.TimestamptzCodec{ScanLocation: time.UTC},
+	})
+	return nil
+}

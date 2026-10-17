@@ -308,7 +308,7 @@ func (r *PostgresRepository) CreatePayment(ctx context.Context, input CreatePaym
 			payment_date, notes, provider, provider_order_id, created_at, updated_at
 		)
 		VALUES ($1, 'SUBSCRIPTION', $2, $3, $4, $5, $6::text,
-			CASE WHEN $6::text = 'SUCCESS' THEN $10::timestamp ELSE NULL::timestamp END,
+			CASE WHEN $6::text = 'SUCCESS' THEN $10::timestamptz ELSE NULL::timestamptz END,
 			NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), $10, $10)
 	`
 	_, err = r.db.ExecContext(ctx, query, paymentCode, input.SubscriptionID, input.PayerUserID, input.Amount, input.Method, input.Status, input.Notes, stringOrEmpty(input.Provider), stringOrEmpty(input.ProviderOrderID), now)

@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/database/pgerr"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 )
 
@@ -197,8 +198,10 @@ func writePaymentsError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusNotFound, "not_found", "payment resource not found")
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid payment input")
-	case errors.Is(err, ErrConflict):
+	case errors.Is(err, ErrConflict) && pgerr.Constraint(err) == "uq_payments_provider_payment":
 		response.Error(w, http.StatusConflict, "duplicate_provider_payment", "this gateway payment is already recorded")
+	case errors.Is(err, ErrConflict):
+		response.Error(w, http.StatusConflict, "version_conflict", "payment was changed by someone else; reload and retry")
 	default:
 		response.Error(w, http.StatusInternalServerError, "payments_error", "payment request failed")
 	}

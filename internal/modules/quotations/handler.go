@@ -565,6 +565,8 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrForbidden):
 		response.Error(w, http.StatusForbidden, "forbidden", "not allowed to access quotation")
+	case errors.Is(err, ErrConflict):
+		response.Error(w, http.StatusConflict, "version_conflict", "quotation was changed by someone else; reload and retry")
 	case errors.Is(err, ErrAlreadyConverted):
 		response.Error(w, http.StatusConflict, "already_converted", "quotation has already been converted to an order")
 	case errors.Is(err, ErrInvalidTransition):

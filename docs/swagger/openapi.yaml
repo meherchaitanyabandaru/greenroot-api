@@ -686,6 +686,7 @@ paths:
         - BearerAuth: []
       parameters:
         - $ref: "#/components/parameters/InventoryID"
+        - $ref: "#/components/parameters/IfMatch"
       requestBody:
         required: true
         content:
@@ -695,6 +696,8 @@ paths:
       responses:
         "200":
           description: Inventory item updated
+        "409":
+          $ref: "#/components/responses/VersionConflict"
     delete:
       tags: [Inventory]
       summary: Delete inventory item
@@ -952,6 +955,7 @@ paths:
         - BearerAuth: []
       parameters:
         - $ref: "#/components/parameters/OrderID"
+        - $ref: "#/components/parameters/IfMatch"
       requestBody:
         required: true
         content:
@@ -961,6 +965,8 @@ paths:
       responses:
         "200":
           description: Order status updated
+        "409":
+          $ref: "#/components/responses/VersionConflict"
   /api/v1/orders/{id}/items:
     get:
       tags: [Orders]
@@ -1082,6 +1088,7 @@ paths:
         - BearerAuth: []
       parameters:
         - $ref: "#/components/parameters/PaymentID"
+        - $ref: "#/components/parameters/IfMatch"
       requestBody:
         required: true
         content:
@@ -1091,6 +1098,8 @@ paths:
       responses:
         "200":
           description: Payment status updated
+        "409":
+          $ref: "#/components/responses/VersionConflict"
   /api/v1/orders/{orderId}/payments:
     get:
       tags: [Payments]
@@ -1576,6 +1585,7 @@ paths:
         - BearerAuth: []
       parameters:
         - $ref: "#/components/parameters/DispatchID"
+        - $ref: "#/components/parameters/IfMatch"
       requestBody:
         required: true
         content:
@@ -1585,6 +1595,8 @@ paths:
       responses:
         "200":
           description: Dispatch status updated
+        "409":
+          $ref: "#/components/responses/VersionConflict"
   /api/v1/dispatches/{id}/items:
     post:
       tags: [Dispatches]
@@ -4239,6 +4251,7 @@ paths:
         - BearerAuth: []
       parameters:
         - in: path
+        - $ref: "#/components/parameters/IfMatch"
           name: id
           required: true
           schema:
@@ -4270,6 +4283,8 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+        "409":
+          $ref: "#/components/responses/VersionConflict"
   /api/v1/orders/{id}/complete-loading:
     post:
       tags:
@@ -4280,6 +4295,7 @@ paths:
         - BearerAuth: []
       parameters:
         - in: path
+        - $ref: "#/components/parameters/IfMatch"
           name: id
           required: true
           schema:
@@ -4302,6 +4318,8 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+        "409":
+          $ref: "#/components/responses/VersionConflict"
   /api/v1/orders/{id}/confirm:
     post:
       tags:
@@ -4540,6 +4558,7 @@ paths:
         - BearerAuth: []
       parameters:
         - in: path
+        - $ref: "#/components/parameters/IfMatch"
           name: id
           required: true
           schema:
@@ -4562,6 +4581,8 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+        "409":
+          $ref: "#/components/responses/VersionConflict"
   /api/v1/orders/{id}/verify-token:
     post:
       tags:
@@ -5008,6 +5029,7 @@ paths:
         - BearerAuth: []
       parameters:
         - in: path
+        - $ref: "#/components/parameters/IfMatch"
           name: id
           required: true
           schema:
@@ -5036,6 +5058,8 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+        "409":
+          $ref: "#/components/responses/VersionConflict"
   /api/v1/quotations/{id}/approve:
     post:
       tags:
@@ -5249,6 +5273,7 @@ paths:
         - BearerAuth: []
       parameters:
         - in: path
+        - $ref: "#/components/parameters/IfMatch"
           name: id
           required: true
           schema:
@@ -5277,6 +5302,8 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+        "409":
+          $ref: "#/components/responses/VersionConflict"
   /api/v1/quotations/{id}/documents:
     get:
       tags:
@@ -7291,6 +7318,15 @@ paths:
           $ref: '#/components/responses/Error'
 components:
   responses:
+    VersionConflict:
+      description: >-
+        The resource changed since the client read it (`error.code` is
+        `version_conflict`), or the action is not allowed in its current
+        state. Reload the resource and retry with its new `version`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     Error:
       content:
         application/json:
@@ -7298,6 +7334,18 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
       description: Error envelope returned by every endpoint on failure
   parameters:
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: >-
+        Optimistic concurrency. Send the `version` from the last read
+        (`3` or `"3"`); if the resource has changed since, the request fails
+        with 409 `version_conflict` and nothing is written. Omit to write
+        unconditionally. A malformed value is 400 `invalid_if_match`.
+      schema:
+        type: string
+        example: '"3"'
     UserID:
       name: id
       in: path

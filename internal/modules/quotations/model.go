@@ -43,23 +43,25 @@ type Quotation struct {
 	RecipientName   *string `json:"recipient_name,omitempty"`
 	RecipientMobile *string `json:"recipient_mobile,omitempty"`
 	// Conversion
-	ConvertedOrderID    *int64                       `json:"converted_order_id,omitempty"`
-	ConvertedOrderCode  *string                      `json:"converted_order_code,omitempty"`
-	ConvertedAt         *time.Time                   `json:"converted_at,omitempty"`
-	Notes               *string                      `json:"notes,omitempty"`
-	RejectionReason     *string                      `json:"rejection_reason,omitempty"`
-	TotalAmount         float64                      `json:"total_amount"`
-	Status              string                       `json:"status"`
-	ValidUntil          *time.Time                   `json:"valid_until,omitempty"`
-	SentAt              *time.Time                   `json:"sent_at,omitempty"`
-	CustomerRespondedAt *time.Time                   `json:"customer_responded_at,omitempty"`
-	DeletedAt           *time.Time                   `json:"deleted_at,omitempty"`
-	CreatedAt           time.Time                    `json:"created_at"`
-	UpdatedAt           time.Time                    `json:"updated_at"`
-	Items               []QuotationItem              `json:"items,omitempty"`
-	Lifecycle           *lifecycle.QuotationDisplays `json:"lifecycle,omitempty"`
-	Capabilities        *QuotationCapabilities       `json:"capabilities,omitempty"`
-	ExpirySummary       *QuotationExpirySummary      `json:"expiry_summary,omitempty"`
+	ConvertedOrderID    *int64     `json:"converted_order_id,omitempty"`
+	ConvertedOrderCode  *string    `json:"converted_order_code,omitempty"`
+	ConvertedAt         *time.Time `json:"converted_at,omitempty"`
+	Notes               *string    `json:"notes,omitempty"`
+	RejectionReason     *string    `json:"rejection_reason,omitempty"`
+	TotalAmount         float64    `json:"total_amount"`
+	Status              string     `json:"status"`
+	ValidUntil          *time.Time `json:"valid_until,omitempty"`
+	SentAt              *time.Time `json:"sent_at,omitempty"`
+	CustomerRespondedAt *time.Time `json:"customer_responded_at,omitempty"`
+	DeletedAt           *time.Time `json:"deleted_at,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	// Version changes on every update; send it back as If-Match.
+	Version       int64                        `json:"version"`
+	Items         []QuotationItem              `json:"items,omitempty"`
+	Lifecycle     *lifecycle.QuotationDisplays `json:"lifecycle,omitempty"`
+	Capabilities  *QuotationCapabilities       `json:"capabilities,omitempty"`
+	ExpirySummary *QuotationExpirySummary      `json:"expiry_summary,omitempty"`
 }
 
 type QuotationCapabilities struct {

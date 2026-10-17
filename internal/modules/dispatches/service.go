@@ -14,6 +14,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisgeo"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 	"github.com/redis/go-redis/v9"
 )
@@ -144,7 +145,10 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 	if err != nil {
 		return Dispatch{}, ErrInvalidInput
 	}
-	dispatch, err := s.repository.UpdateStatus(ctx, dispatchID, UpdateStatusInput{Status: status, DeliveryDate: deliveryDate, Notes: req.Notes})
+	if v, ok := rowversion.Expected(ctx); ok && v != current.Version {
+		return Dispatch{}, ErrConflict
+	}
+	dispatch, err := s.repository.UpdateStatus(ctx, dispatchID, UpdateStatusInput{Status: status, DeliveryDate: deliveryDate, Notes: req.Notes, ExpectedVersion: current.Version})
 	if err != nil {
 		return Dispatch{}, err
 	}

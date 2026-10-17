@@ -206,6 +206,8 @@ func writeInventoryError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusNotFound, "not_found", "inventory resource not found")
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid inventory input")
+	case errors.Is(err, ErrConflict):
+		response.Error(w, http.StatusConflict, "version_conflict", "inventory item was changed by someone else; reload and retry")
 	default:
 		response.Error(w, http.StatusInternalServerError, "inventory_error", "inventory request failed")
 	}

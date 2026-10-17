@@ -1,8 +1,9 @@
 package payments
 
 import (
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 )
 
 type ActorContext = authctx.ActorContext
@@ -39,4 +40,6 @@ type Payment struct {
 	RawResponse          *string    `json:"raw_response,omitempty"`
 	CreatedAt            time.Time  `json:"created_at"`
 	UpdatedAt            time.Time  `json:"updated_at"`
+	// Version changes on every update; send it back as If-Match.
+	Version int64 `json:"version"`
 }

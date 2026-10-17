@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
 )
 
 // ─── mock repository ─────────────────────────────────────────────────────────
@@ -82,7 +84,11 @@ func (m *mockRepo) UpdateStatus(_ context.Context, paymentID int64, input Update
 	if !ok {
 		return nil, ErrNotFound
 	}
+	if p.Version != input.ExpectedVersion {
+		return nil, ErrConflict
+	}
 	p.Status = input.Status
+	p.Version++
 	return p, nil
 }
 
@@ -364,5 +370,24 @@ func TestIsAllowedMethod(t *testing.T) {
 	}
 	if isAllowedMethod("BARTER") {
 		t.Error("BARTER should NOT be allowed")
+	}
+}
+
+func TestUpdateStatus_StaleIfMatchConflicts(t *testing.T) {
+	repo := newMock()
+	orderID := int64(10)
+	payerID := int64(20)
+	repo.payments[1] = &Payment{ID: 1, PaymentFor: "ORDER", OrderID: &orderID, PayerUserID: &payerID, Status: "PENDING", Version: 5}
+	repo.seedOrder(10, &payerID, nil)
+
+	if _, err := svc(repo).UpdateStatus(rowversion.With(context.Background(), 4), adminActor(1), 1, UpdateStatusRequest{Status: "SUCCESS"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale If-Match: want ErrConflict, got %v", err)
+	}
+	if repo.payments[1].Status != "PENDING" {
+		t.Fatal("a conflicting write must not change the payment")
+	}
+	p, err := svc(repo).UpdateStatus(rowversion.With(context.Background(), 5), adminActor(1), 1, UpdateStatusRequest{Status: "SUCCESS"})
+	if err != nil || p.Status != "SUCCESS" || p.Version != 6 {
+		t.Fatalf("matching If-Match: got %+v, %v", p, err)
 	}
 }

@@ -16,24 +16,27 @@ const (
 )
 
 type InventoryItem struct {
-	ID                int64                        `json:"id"`
-	InventoryCode     string                       `json:"inventory_code"`
-	NurseryID         int64                        `json:"nursery_id"`
-	NurseryName       string                       `json:"nursery_name"`
-	PlantID           int64                        `json:"plant_id"`
-	ScientificName    string                       `json:"scientific_name"`
-	CommonName        *string                      `json:"common_name,omitempty"`
-	SizeID            int16                        `json:"size_id"`
-	SizeCode          string                       `json:"size_code"`
-	SizeName          string                       `json:"size_name"`
-	AvailableQuantity int                          `json:"available_quantity"`
-	Status            string                       `json:"inventory_status"`
-	LastUpdatedBy     *int64                       `json:"last_updated_by,omitempty"`
-	LastUpdatedAt     time.Time                    `json:"last_updated_at"`
-	CreatedAt         time.Time                    `json:"created_at"`
-	Lifecycle         *lifecycle.InventoryDisplays `json:"lifecycle,omitempty"`
-	Capabilities      *InventoryCapabilities       `json:"capabilities,omitempty"`
-	Summary           *InventorySummary            `json:"summary,omitempty"`
+	ID                int64     `json:"id"`
+	InventoryCode     string    `json:"inventory_code"`
+	NurseryID         int64     `json:"nursery_id"`
+	NurseryName       string    `json:"nursery_name"`
+	PlantID           int64     `json:"plant_id"`
+	ScientificName    string    `json:"scientific_name"`
+	CommonName        *string   `json:"common_name,omitempty"`
+	SizeID            int16     `json:"size_id"`
+	SizeCode          string    `json:"size_code"`
+	SizeName          string    `json:"size_name"`
+	AvailableQuantity int       `json:"available_quantity"`
+	Status            string    `json:"inventory_status"`
+	LastUpdatedBy     *int64    `json:"last_updated_by,omitempty"`
+	LastUpdatedAt     time.Time `json:"last_updated_at"`
+	CreatedAt         time.Time `json:"created_at"`
+	// Version changes on every update; send it back as If-Match to avoid
+	// overwriting someone else's change.
+	Version      int64                        `json:"version"`
+	Lifecycle    *lifecycle.InventoryDisplays `json:"lifecycle,omitempty"`
+	Capabilities *InventoryCapabilities       `json:"capabilities,omitempty"`
+	Summary      *InventorySummary            `json:"summary,omitempty"`
 }
 
 type InventoryCapabilities struct {

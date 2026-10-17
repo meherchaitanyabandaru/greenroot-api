@@ -10,6 +10,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/clientip"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
 	appmiddleware "github.com/meherchaitanyabandaru/greenroot-api/internal/middleware"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/admin"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/attachments"
@@ -82,6 +83,7 @@ func NewRouter(deps Dependencies) chi.Router {
 			r.Use(authctx.EnrichActorMiddleware(deps.JWT))
 		}
 		r.Use(appmiddleware.AuditContext) // must come after EnrichActorMiddleware
+		r.Use(rowversion.Middleware)      // If-Match → expected row version (409 on stale writes)
 
 		// Messaging: each channel registers its admin routes; the notifier fans
 		// business events out to every channel (SMS to mobile, email to a

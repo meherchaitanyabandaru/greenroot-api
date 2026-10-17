@@ -51,6 +51,9 @@ type UpdatePaymentInput struct {
 	ProviderOrderID      *string
 	ProviderSignature    *string
 	RawResponseJSON      string
+	// ExpectedVersion is the version the service read; the update applies
+	// only if the payment is still at it (ErrConflict otherwise).
+	ExpectedVersion int64
 }
 
 type OrderAccess struct {
@@ -124,7 +127,7 @@ func (r *PostgresRepository) Create(ctx context.Context, input CreatePaymentInpu
 			provider_order_id, provider_signature, raw_response, created_at, updated_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9::text,
-			CASE WHEN $9::text = 'SUCCESS' THEN $16::timestamp ELSE NULL::timestamp END,
+			CASE WHEN $9::text = 'SUCCESS' THEN $16::timestamptz ELSE NULL::timestamptz END,
 			NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, ''),
 			$15::jsonb, $16, $16)
 		RETURNING payment_id
@@ -168,7 +171,7 @@ func (r *PostgresRepository) UpdateStatus(ctx context.Context, paymentID int64, 
 			provider_signature = COALESCE(NULLIF($8, ''), provider_signature),
 			raw_response = COALESCE(NULLIF($9, '')::jsonb, raw_response),
 			updated_at = CURRENT_TIMESTAMP
-		WHERE payment_id = $1
+		WHERE payment_id = $1 AND version = $11
 	`
 	result, err := r.db.ExecContext(
 		ctx,
@@ -183,6 +186,7 @@ func (r *PostgresRepository) UpdateStatus(ctx context.Context, paymentID int64, 
 		stringOrEmpty(input.ProviderSignature),
 		input.RawResponseJSON,
 		input.Status,
+		input.ExpectedVersion,
 	)
 	if err != nil {
 		return nil, pgerr.Map(err)
@@ -192,6 +196,13 @@ func (r *PostgresRepository) UpdateStatus(ctx context.Context, paymentID int64, 
 		return nil, err
 	}
 	if affected == 0 {
+		var exists bool
+		if err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM public.payments WHERE payment_id = $1)`, paymentID).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if exists {
+			return nil, ErrConflict
+		}
 		return nil, ErrNotFound
 	}
 	return r.FindByID(ctx, paymentID)
@@ -239,7 +250,7 @@ func baseSelect() string {
 			sp.plan_name, p.payer_user_id, u.first_name, p.amount, p.payment_method::text,
 			p.transaction_reference, p.payment_status::text, p.payment_date, p.notes,
 			p.provider, p.provider_payment_id, p.provider_order_id, p.provider_signature,
-			p.raw_response::text, p.created_at, p.updated_at
+			p.raw_response::text, p.created_at, p.updated_at, p.version
 		FROM public.payments p
 		LEFT JOIN public.orders o ON o.order_id = p.order_id
 		LEFT JOIN public.user_subscriptions us ON us.user_subscription_id = p.user_subscription_id
@@ -367,6 +378,7 @@ func scanPayment(row interface{ Scan(dest ...any) error }) (Payment, error) {
 		&raw,
 		&payment.CreatedAt,
 		&payment.UpdatedAt,
+		&payment.Version,
 	); err != nil {
 		return Payment{}, err
 	}

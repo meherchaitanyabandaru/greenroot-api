@@ -51,16 +51,18 @@ type Dispatch struct {
 	// Delivery coordinates from the order's delivery snapshot.
 	// Always reflects the latest confirmed delivery location — drivers use
 	// these to open navigation rather than relying on the address text.
-	DeliveryLatitude  *float64                    `json:"delivery_latitude,omitempty"`
-	DeliveryLongitude *float64                    `json:"delivery_longitude,omitempty"`
-	RequiresDriverAck *bool                       `json:"requires_driver_ack,omitempty"`
-	Notes             *string                     `json:"notes,omitempty"`
-	CreatedAt         time.Time                   `json:"created_at"`
-	UpdatedAt         *time.Time                  `json:"updated_at,omitempty"`
-	Items             []DispatchItem              `json:"items,omitempty"`
-	TripEvents        []TripEvent                 `json:"trip_events,omitempty"`
-	Lifecycle         *lifecycle.DispatchDisplays `json:"lifecycle,omitempty"`
-	Capabilities      *DispatchCapabilities       `json:"capabilities,omitempty"`
+	DeliveryLatitude  *float64   `json:"delivery_latitude,omitempty"`
+	DeliveryLongitude *float64   `json:"delivery_longitude,omitempty"`
+	RequiresDriverAck *bool      `json:"requires_driver_ack,omitempty"`
+	Notes             *string    `json:"notes,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         *time.Time `json:"updated_at,omitempty"`
+	// Version changes on every update; send it back as If-Match.
+	Version      int64                       `json:"version"`
+	Items        []DispatchItem              `json:"items,omitempty"`
+	TripEvents   []TripEvent                 `json:"trip_events,omitempty"`
+	Lifecycle    *lifecycle.DispatchDisplays `json:"lifecycle,omitempty"`
+	Capabilities *DispatchCapabilities       `json:"capabilities,omitempty"`
 }
 
 type TripEvent struct {

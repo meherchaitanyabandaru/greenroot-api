@@ -12,10 +12,13 @@ import (
 
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/database/pgerr"
 )
 
 var (
 	ErrNotFound      = apperrs.ErrNotFound
+	ErrConflict      = apperrs.ErrConflict
 	ErrPlantNotFound = errors.New("plant not found")
 )
 
@@ -199,6 +202,7 @@ func (r *PostgresRepository) Update(ctx context.Context, id int64, input UpdateQ
 		    valid_until       = COALESCE($5, valid_until),
 		    updated_at        = CURRENT_TIMESTAMP
 		WHERE quotation_id = $6
+		  AND ($7::bigint IS NULL OR version = $7)
 	`
 	res, err := tx.ExecContext(ctx, q,
 		int64OrNil(input.CustomerUserID),
@@ -207,12 +211,13 @@ func (r *PostgresRepository) Update(ctx context.Context, id int64, input UpdateQ
 		stringOrEmpty(input.Notes),
 		input.ValidUntil, // nil keeps existing value; non-nil overwrites
 		id,
+		rowversion.Arg(ctx),
 	)
 	if err != nil {
-		return nil, err
+		return nil, pgerr.Map(err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return nil, ErrNotFound
+		return nil, r.missOrConflict(ctx, id)
 	}
 
 	if _, err = tx.ExecContext(ctx, `DELETE FROM public.quotation_items WHERE quotation_id = $1`, id); err != nil {
@@ -241,20 +246,37 @@ func (r *PostgresRepository) UpdateCustomer(ctx context.Context, id int64, input
 		    updated_at       = CURRENT_TIMESTAMP
 		WHERE quotation_id = $4
 		  AND deleted_at IS NULL
+		  AND ($5::bigint IS NULL OR version = $5)
 	`
 	res, err := r.db.ExecContext(ctx, q,
 		int64OrNil(input.CustomerUserID),
 		stringOrEmpty(input.RecipientName),
 		stringOrEmpty(input.RecipientMobile),
 		id,
+		rowversion.Arg(ctx),
 	)
 	if err != nil {
-		return nil, err
+		return nil, pgerr.Map(err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return nil, ErrNotFound
+		return nil, r.missOrConflict(ctx, id)
 	}
 	return r.FindByID(ctx, id)
+}
+
+// missOrConflict explains a guarded UPDATE that touched no row: the
+// quotation is gone (404) or its version moved on since the client read it (409).
+func (r *PostgresRepository) missOrConflict(ctx context.Context, id int64) error {
+	var exists bool
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM public.quotations WHERE quotation_id = $1 AND deleted_at IS NULL)`, id,
+	).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return ErrConflict
+	}
+	return ErrNotFound
 }
 
 func (r *PostgresRepository) SoftDelete(ctx context.Context, id int64) error {
@@ -751,7 +773,7 @@ func baseSelect() string {
 		       q.recipient_name, q.recipient_mobile, q.notes, q.rejection_reason,
 		       COALESCE(q.total_amount, 0), q.status, q.valid_until,
 		       q.sent_at, q.customer_responded_at,
-		       q.deleted_at, q.created_at, q.updated_at,
+		       q.deleted_at, q.created_at, q.updated_at, q.version,
 		       q.buyer_nursery_id,
 		       NULLIF(TRIM(COALESCE(um.first_name, '') || ' ' || COALESCE(um.last_name, '')), '') AS assigned_manager_name,
 		       o.order_code AS converted_order_code,
@@ -919,7 +941,7 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 		&recipientName, &recipientMobile, &notes, &rejectionReason,
 		&totalAmount, &q.Status, &validUntil,
 		&sentAt, &customerRespondedAt,
-		&deletedAt, &q.CreatedAt, &q.UpdatedAt,
+		&deletedAt, &q.CreatedAt, &q.UpdatedAt, &q.Version,
 		&buyerNurseryID, &assignedManagerName,
 		&convertedOrderCode, &convertedAt,
 		&nurseryBrandColor,

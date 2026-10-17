@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
 )
 
 // ── mock repository ───────────────────────────────────────────────────────────
@@ -182,29 +184,41 @@ func (m *mockRepo) StartedDispatchDriverUserID(_ context.Context, orderID int64)
 	return &userID, nil
 }
 
-func (m *mockRepo) UpdateStatus(_ context.Context, _ int64, orderID int64, status string) (*Order, error) {
+func (m *mockRepo) UpdateStatus(_ context.Context, _ int64, orderID int64, status string, expectedVersion int64) (*Order, error) {
 	o, ok := m.orders[orderID]
 	if !ok {
 		return nil, ErrNotFound
 	}
+	if o.Version != expectedVersion {
+		return nil, ErrConflict
+	}
 	o.Status = status
+	o.Version++
 	return o, nil
 }
 
-func (m *mockRepo) UpdateStatusWithLoading(_ context.Context, _ int64, orderID int64, status string, _ string) (*Order, error) {
+func (m *mockRepo) UpdateStatusWithLoading(_ context.Context, _ int64, orderID int64, status string, _ string, expectedVersion int64) (*Order, error) {
 	o, ok := m.orders[orderID]
 	if !ok {
 		return nil, ErrNotFound
 	}
+	if o.Version != expectedVersion {
+		return nil, ErrConflict
+	}
 	o.Status = status
+	o.Version++
 	return o, nil
 }
 
-func (m *mockRepo) Cancel(_ context.Context, _ int64, orderID int64, reason string) (*Order, error) {
+func (m *mockRepo) Cancel(_ context.Context, _ int64, orderID int64, reason string, expectedVersion int64) (*Order, error) {
 	o, ok := m.orders[orderID]
 	if !ok {
 		return nil, ErrNotFound
 	}
+	if o.Version != expectedVersion {
+		return nil, ErrConflict
+	}
+	o.Version++
 	o.Status = "CANCELLED"
 	o.CancelReason = &reason
 	return o, nil
@@ -1238,5 +1252,54 @@ func TestDelete_NotFound(t *testing.T) {
 	err := svc(repo).Delete(context.Background(), adminActor(1), 9999)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("Delete not found: want ErrNotFound, got %v", err)
+	}
+}
+
+// ── Optimistic concurrency (row version) ─────────────────────────────────────
+
+func TestUpdateStatus_StaleIfMatchConflicts(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, 100)
+	nid := int64(1)
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid, Version: 3, DeliverySnapshot: testDeliverySnapshot()})
+
+	ctx := rowversion.With(context.Background(), 2) // client read version 2
+	if _, err := svc(repo).UpdateStatus(ctx, ownerActor(100), 10, UpdateStatusRequest{Status: "CONFIRMED"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale If-Match: want ErrConflict, got %v", err)
+	}
+	if repo.orders[10].Status != "PENDING" {
+		t.Fatal("a conflicting write must not change the order")
+	}
+
+	o, err := svc(repo).UpdateStatus(rowversion.With(context.Background(), 3), ownerActor(100), 10, UpdateStatusRequest{Status: "CONFIRMED"})
+	if err != nil || o.Status != "CONFIRMED" || o.Version != 4 {
+		t.Fatalf("matching If-Match: got %+v, %v", o, err)
+	}
+}
+
+// racingRepo simulates another request committing between the service's
+// read and its write.
+type racingRepo struct{ *mockRepo }
+
+func (r racingRepo) FindByID(ctx context.Context, id int64) (*Order, error) {
+	o, err := r.mockRepo.FindByID(ctx, id)
+	if err == nil {
+		r.orders[id].Version++
+	}
+	return o, err
+}
+
+func TestUpdateStatus_ConcurrentChangeConflicts(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, 100)
+	nid := int64(1)
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid, Version: 1, DeliverySnapshot: testDeliverySnapshot()})
+
+	s := NewService(racingRepo{repo}, nil, nil)
+	if _, err := s.UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "CONFIRMED"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("change between read and write: want ErrConflict, got %v", err)
+	}
+	if repo.orders[10].Status != "PENDING" {
+		t.Fatal("the lost-update must not be applied")
 	}
 }

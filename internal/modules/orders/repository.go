@@ -10,9 +10,13 @@ import (
 
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/database/pgerr"
 )
 
-var ErrNotFound = apperrs.ErrNotFound
+var (
+	ErrNotFound = apperrs.ErrNotFound
+	ErrConflict = apperrs.ErrConflict
+)
 
 type Repository interface {
 	List(ctx context.Context, input ListOrdersRequest) ([]Order, int64, error)
@@ -25,9 +29,11 @@ type Repository interface {
 	ActiveDispatchForOrder(ctx context.Context, orderID int64) (*ActiveDispatchSummary, error)
 	BatchActiveDispatchForOrders(ctx context.Context, orderIDs []int64) (map[int64]*ActiveDispatchSummary, error)
 	StartedDispatchDriverUserID(ctx context.Context, orderID int64) (*int64, error)
-	UpdateStatus(ctx context.Context, actorID int64, orderID int64, status string) (*Order, error)
-	UpdateStatusWithLoading(ctx context.Context, actorID int64, orderID int64, status string, phase string) (*Order, error)
-	Cancel(ctx context.Context, actorID int64, orderID int64, reason string) (*Order, error)
+	// UpdateStatus applies only if the order is still at expectedVersion
+	// (ErrConflict otherwise), closing the read-check-write race.
+	UpdateStatus(ctx context.Context, actorID int64, orderID int64, status string, expectedVersion int64) (*Order, error)
+	UpdateStatusWithLoading(ctx context.Context, actorID int64, orderID int64, status string, phase string, expectedVersion int64) (*Order, error)
+	Cancel(ctx context.Context, actorID int64, orderID int64, reason string, expectedVersion int64) (*Order, error)
 	AssignManager(ctx context.Context, orderID int64, managerUserID int64) (*Order, error)
 	Delete(ctx context.Context, orderID int64) error
 	ListItems(ctx context.Context, orderID int64) ([]OrderItem, error)
@@ -416,17 +422,15 @@ func (r *PostgresRepository) StartedDispatchDriverUserID(ctx context.Context, or
 	return nullableInt64(userID), nil
 }
 
-func (r *PostgresRepository) UpdateStatus(ctx context.Context, actorID int64, orderID int64, status string) (*Order, error) {
-	result, err := r.db.ExecContext(ctx, `UPDATE public.orders SET order_status = $2, updated_at = CURRENT_TIMESTAMP, updated_by = $3 WHERE order_id = $1`, orderID, status, actorID)
+func (r *PostgresRepository) UpdateStatus(ctx context.Context, actorID int64, orderID int64, status string, expectedVersion int64) (*Order, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE public.orders SET order_status = $2, updated_at = CURRENT_TIMESTAMP, updated_by = $3
+		WHERE order_id = $1 AND version = $4`, orderID, status, actorID, expectedVersion)
 	if err != nil {
-		return nil, err
+		return nil, pgerr.Map(err)
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
+	if err := r.requireOneRow(ctx, result, orderID); err != nil {
 		return nil, err
-	}
-	if affected == 0 {
-		return nil, ErrNotFound
 	}
 	return r.FindByID(ctx, orderID)
 }
@@ -625,41 +629,59 @@ func (r *PostgresRepository) GetOwnedNurseryID(ctx context.Context, userID int64
 	return &id, nil
 }
 
-func (r *PostgresRepository) UpdateStatusWithLoading(ctx context.Context, actorID int64, orderID int64, status string, phase string) (*Order, error) {
+func (r *PostgresRepository) UpdateStatusWithLoading(ctx context.Context, actorID int64, orderID int64, status string, phase string, expectedVersion int64) (*Order, error) {
 	var query string
 	switch phase {
 	case "start":
-		query = `UPDATE public.orders SET order_status = $2, loading_started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE order_id = $1`
+		query = `UPDATE public.orders SET order_status = $2, loading_started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, updated_by = $3 WHERE order_id = $1 AND version = $4`
 	case "complete":
-		query = `UPDATE public.orders SET order_status = $2, loading_completed_at = CURRENT_TIMESTAMP, loading_completed_by_user_id = $3, updated_at = CURRENT_TIMESTAMP WHERE order_id = $1`
+		query = `UPDATE public.orders SET order_status = $2, loading_completed_at = CURRENT_TIMESTAMP, loading_completed_by_user_id = $3, updated_at = CURRENT_TIMESTAMP, updated_by = $3 WHERE order_id = $1 AND version = $4`
 	default:
-		query = `UPDATE public.orders SET order_status = $2, updated_at = CURRENT_TIMESTAMP WHERE order_id = $1`
+		query = `UPDATE public.orders SET order_status = $2, updated_at = CURRENT_TIMESTAMP, updated_by = $3 WHERE order_id = $1 AND version = $4`
 	}
-	if phase == "complete" {
-		if _, err := r.db.ExecContext(ctx, query, orderID, status, actorID); err != nil {
-			return nil, err
-		}
-	} else {
-		if _, err := r.db.ExecContext(ctx, query, orderID, status); err != nil {
-			return nil, err
-		}
+	result, err := r.db.ExecContext(ctx, query, orderID, status, actorID, expectedVersion)
+	if err != nil {
+		return nil, pgerr.Map(err)
+	}
+	if err := r.requireOneRow(ctx, result, orderID); err != nil {
+		return nil, err
 	}
 	return r.FindByID(ctx, orderID)
 }
 
-func (r *PostgresRepository) Cancel(ctx context.Context, actorID int64, orderID int64, reason string) (*Order, error) {
+// requireOneRow turns a version-guarded UPDATE that touched nothing into
+// ErrNotFound (order gone) or ErrConflict (changed since it was read).
+func (r *PostgresRepository) requireOneRow(ctx context.Context, result sql.Result, orderID int64) error {
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected > 0 {
+		return nil
+	}
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM public.orders WHERE order_id = $1)`, orderID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return ErrConflict
+	}
+	return ErrNotFound
+}
+
+func (r *PostgresRepository) Cancel(ctx context.Context, actorID int64, orderID int64, reason string, expectedVersion int64) (*Order, error) {
 	const query = `
 		UPDATE public.orders
 		SET order_status = 'CANCELLED', cancelled_by_user_id = $2, cancelled_at = CURRENT_TIMESTAMP,
 		    cancel_reason = NULLIF($3, ''), updated_at = CURRENT_TIMESTAMP
-		WHERE order_id = $1
+		WHERE order_id = $1 AND version = $4
 	`
-	result, err := r.db.ExecContext(ctx, query, orderID, actorID, reason)
+	result, err := r.db.ExecContext(ctx, query, orderID, actorID, reason, expectedVersion)
 	if err != nil {
-		return nil, err
+		return nil, pgerr.Map(err)
 	}
-	if affected, _ := result.RowsAffected(); affected == 0 {
-		return nil, ErrNotFound
+	if err := r.requireOneRow(ctx, result, orderID); err != nil {
+		return nil, err
 	}
 	return r.FindByID(ctx, orderID)
 }
@@ -770,7 +792,7 @@ func baseSelect() string {
 			o.assigned_manager_user_id, o.created_by_user_id,
 			o.cancelled_by_user_id, o.cancelled_at, o.cancel_reason,
 			o.loading_started_at, o.loading_completed_at, o.loading_completed_by_user_id,
-			o.buyer_nursery_id,
+			o.buyer_nursery_id, o.version,
 			mu.first_name
 		FROM public.orders o
 		LEFT JOIN public.users bu ON bu.user_id = o.buyer_user_id
@@ -905,7 +927,7 @@ func scanOrder(row interface{ Scan(dest ...any) error }) (Order, error) {
 		&assignedManagerUserID, &createdByUserID,
 		&cancelledByUserID, &cancelledAt, &cancelReason,
 		&loadingStartedAt, &loadingCompletedAt, &loadingCompletedByUserID,
-		&buyerNurseryID,
+		&buyerNurseryID, &order.Version,
 		&assignedManagerName,
 	); err != nil {
 		return Order{}, err

@@ -10,9 +10,14 @@ import (
 
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/database/pgerr"
 )
 
-var ErrNotFound = apperrs.ErrNotFound
+var (
+	ErrNotFound = apperrs.ErrNotFound
+	ErrConflict = apperrs.ErrConflict
+)
 
 type Repository interface {
 	List(ctx context.Context, input ListInventoryRequest) ([]InventoryItem, int64, error)
@@ -108,19 +113,35 @@ func (r *PostgresRepository) Update(ctx context.Context, actorID int64, inventor
 			last_updated_by = $7,
 			last_updated_at = CURRENT_TIMESTAMP
 		WHERE inventory_id = $1
+		  AND ($8::bigint IS NULL OR version = $8)
 	`
-	result, err := r.db.ExecContext(ctx, query, inventoryID, input.NurseryID, input.PlantID, input.SizeID, input.AvailableQuantity, input.Status, actorID)
+	result, err := r.db.ExecContext(ctx, query, inventoryID, input.NurseryID, input.PlantID, input.SizeID, input.AvailableQuantity, input.Status, actorID, rowversion.Arg(ctx))
 	if err != nil {
-		return nil, err
+		return nil, pgerr.Map(err)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
 		return nil, err
 	}
 	if affected == 0 {
-		return nil, ErrNotFound
+		return nil, r.missOrConflict(ctx, inventoryID)
 	}
 	return r.FindByID(ctx, inventoryID)
+}
+
+// missOrConflict explains a guarded UPDATE that touched no row: the item is
+// gone (404) or its version moved on since the client read it (409).
+func (r *PostgresRepository) missOrConflict(ctx context.Context, inventoryID int64) error {
+	var exists bool
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM public.nursery_inventory WHERE inventory_id = $1)`, inventoryID,
+	).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return ErrConflict
+	}
+	return ErrNotFound
 }
 
 func (r *PostgresRepository) Delete(ctx context.Context, inventoryID int64) error {
@@ -154,7 +175,7 @@ func baseSelect() string {
 	return `
 		SELECT ni.inventory_id, ni.inventory_code, ni.nursery_id, n.nursery_name, ni.plant_id, p.scientific_name,
 			p.common_name, ni.size_id, ps.size_code, ps.display_name, ni.available_quantity,
-			ni.inventory_status::text, ni.last_updated_by, ni.last_updated_at, ni.created_at
+			ni.inventory_status::text, ni.last_updated_by, ni.last_updated_at, ni.created_at, ni.version
 		FROM public.nursery_inventory ni
 		JOIN public.nurseries n ON n.nursery_id = ni.nursery_id
 		JOIN public.plants p ON p.plant_id = ni.plant_id
@@ -261,6 +282,7 @@ func scanInventory(row interface{ Scan(dest ...any) error }) (InventoryItem, err
 		&lastUpdatedBy,
 		&item.LastUpdatedAt,
 		&item.CreatedAt,
+		&item.Version,
 	); err != nil {
 		return InventoryItem{}, err
 	}

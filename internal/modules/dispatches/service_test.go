@@ -8,6 +8,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisgeo"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -144,7 +145,11 @@ func (m *mockRepo) UpdateStatus(_ context.Context, dispatchID int64, input Updat
 	if !ok {
 		return nil, ErrNotFound
 	}
+	if d.Version != input.ExpectedVersion {
+		return nil, ErrConflict
+	}
 	d.Status = input.Status
+	d.Version++
 	return d, nil
 }
 
@@ -752,5 +757,23 @@ func TestUpdateStatus_NotFound(t *testing.T) {
 	_, err := svc(repo).UpdateStatus(context.Background(), adminActor(1), 9999, UpdateStatusRequest{Status: "DISPATCHED"})
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("UpdateStatus not found: want ErrNotFound, got %v", err)
+	}
+}
+
+func TestUpdateStatus_StaleIfMatchConflicts(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, 100)
+	nid := int64(1)
+	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", SellerNurseryID: &nid, Version: 2})
+
+	if _, err := svc(repo).UpdateStatus(rowversion.With(context.Background(), 1), ownerActor(100), 10, UpdateStatusRequest{Status: "DISPATCHED"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale If-Match: want ErrConflict, got %v", err)
+	}
+	if repo.dispatches[10].Status != "PENDING" {
+		t.Fatal("a conflicting write must not change the dispatch")
+	}
+	d, err := svc(repo).UpdateStatus(rowversion.With(context.Background(), 2), ownerActor(100), 10, UpdateStatusRequest{Status: "DISPATCHED"})
+	if err != nil || d.Status != "DISPATCHED" || d.Version != 3 {
+		t.Fatalf("matching If-Match: got %+v, %v", d, err)
 	}
 }

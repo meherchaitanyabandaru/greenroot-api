@@ -322,7 +322,7 @@ func (r *PostgresRepository) GetPreferences(ctx context.Context, userID int64) (
 func (r *PostgresRepository) UpsertPreferences(ctx context.Context, userID int64, optIn bool, source string, at time.Time) (Preferences, error) {
 	return scanPreferences(r.db.QueryRowContext(ctx, `
 		INSERT INTO public.sms_preferences (user_id, promotional_opt_in, promotional_consent_at, promotional_revoked_at, consent_source, updated_at)
-		VALUES ($1, $2, CASE WHEN $2 THEN $4::timestamp END, CASE WHEN NOT $2 THEN $4::timestamp END, $3, $4)
+		VALUES ($1, $2, CASE WHEN $2 THEN $4::timestamptz END, CASE WHEN NOT $2 THEN $4::timestamptz END, $3, $4)
 		ON CONFLICT (user_id) DO UPDATE SET
 			promotional_consent_at = CASE WHEN EXCLUDED.promotional_opt_in AND NOT sms_preferences.promotional_opt_in THEN EXCLUDED.updated_at ELSE sms_preferences.promotional_consent_at END,
 			promotional_revoked_at = CASE WHEN NOT EXCLUDED.promotional_opt_in AND sms_preferences.promotional_opt_in THEN EXCLUDED.updated_at ELSE sms_preferences.promotional_revoked_at END,

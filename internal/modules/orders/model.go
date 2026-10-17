@@ -83,14 +83,16 @@ type Order struct {
 	BuyerNurseryID *int64  `json:"buyer_nursery_id,omitempty"`
 	BuyerName      *string `json:"buyer_name,omitempty"`
 	// Seller fields
-	SellerNurseryID      *int64                   `json:"seller_nursery_id,omitempty"`
-	SellerNursery        *string                  `json:"seller_nursery,omitempty"`
-	Status               string                   `json:"order_status"`
-	TotalAmount          float64                  `json:"total_amount"`
-	Notes                *string                  `json:"notes,omitempty"`
-	OrderDate            time.Time                `json:"order_date"`
-	CreatedAt            time.Time                `json:"created_at"`
-	UpdatedAt            time.Time                `json:"updated_at"`
+	SellerNurseryID *int64    `json:"seller_nursery_id,omitempty"`
+	SellerNursery   *string   `json:"seller_nursery,omitempty"`
+	Status          string    `json:"order_status"`
+	TotalAmount     float64   `json:"total_amount"`
+	Notes           *string   `json:"notes,omitempty"`
+	OrderDate       time.Time `json:"order_date"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	// Version changes on every update; send it back as If-Match.
+	Version              int64                    `json:"version"`
 	Items                []OrderItem              `json:"items,omitempty"`
 	DeliverySnapshot     *DeliverySnapshot        `json:"delivery_snapshot,omitempty"`
 	ActiveDispatch       *ActiveDispatchSummary   `json:"active_dispatch,omitempty"`

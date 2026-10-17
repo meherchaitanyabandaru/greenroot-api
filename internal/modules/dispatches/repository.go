@@ -10,9 +10,13 @@ import (
 
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/database/pgerr"
 )
 
-var ErrNotFound = apperrs.ErrNotFound
+var (
+	ErrNotFound = apperrs.ErrNotFound
+	ErrConflict = apperrs.ErrConflict
+)
 
 type Repository interface {
 	List(ctx context.Context, input ListDispatchesRequest) ([]Dispatch, int64, error)
@@ -64,6 +68,9 @@ type UpdateStatusInput struct {
 	Status       string
 	DeliveryDate *time.Time
 	Notes        *string
+	// ExpectedVersion is the version the service read; the update applies
+	// only if the dispatch is still at it (ErrConflict otherwise).
+	ExpectedVersion int64
 }
 
 type PostgresRepository struct {
@@ -298,15 +305,22 @@ func (r *PostgresRepository) UpdateStatus(ctx context.Context, dispatchID int64,
 			delivery_date = CASE WHEN $5 = 'DELIVERED' THEN COALESCE($3, CURRENT_TIMESTAMP) ELSE COALESCE($3, delivery_date) END,
 			notes = COALESCE(NULLIF($4, ''), notes),
 			updated_at = CURRENT_TIMESTAMP
-		WHERE dispatch_id = $1
+		WHERE dispatch_id = $1 AND version = $6
 	`
-	result, err := r.db.ExecContext(ctx, query, dispatchID, input.Status, timeOrNil(input.DeliveryDate), stringOrEmpty(input.Notes), input.Status)
+	result, err := r.db.ExecContext(ctx, query, dispatchID, input.Status, timeOrNil(input.DeliveryDate), stringOrEmpty(input.Notes), input.Status, input.ExpectedVersion)
 	if err != nil {
-		return nil, err
+		return nil, pgerr.Map(err)
 	}
 	if affected, err := result.RowsAffected(); err != nil {
 		return nil, err
 	} else if affected == 0 {
+		var exists bool
+		if err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM public.dispatches WHERE dispatch_id = $1)`, dispatchID).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if exists {
+			return nil, ErrConflict
+		}
 		return nil, ErrNotFound
 	}
 	return r.FindByID(ctx, dispatchID)
@@ -585,7 +599,7 @@ func baseSelect() string {
 			u.first_name, u.mobile, d.dispatched_by, d.dispatch_date, d.delivery_date, d.destination_address,
 			ods.latitude AS delivery_latitude, ods.longitude AS delivery_longitude,
 			ods.requires_driver_ack,
-			d.notes, d.created_at, d.updated_at,
+			d.notes, d.created_at, d.updated_at, d.version,
 			d.nursery_id, d.assigned_manager_user_id, d.driver_user_id,
 			d.owner_user_id_snapshot, d.customer_user_id,
 			d.customer_name_snapshot, d.customer_mobile_snapshot,
@@ -700,7 +714,7 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 		&driverName, &driverMobile, &dispatchedBy, &dispatchDate, &deliveryDate, &destination,
 		&deliveryLat, &deliveryLon,
 		&requiresDriverAck,
-		&notes, &dispatch.CreatedAt, &updatedAt,
+		&notes, &dispatch.CreatedAt, &updatedAt, &dispatch.Version,
 		&v1NurseryID, &assignedManagerUserID, &driverUserID,
 		&ownerUserIDSnapshot, &customerUserID,
 		&customerNameSnapshot, &customerMobileSnapshot,

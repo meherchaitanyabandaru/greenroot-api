@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/clientip"
 )
@@ -37,6 +38,12 @@ func (c Config) Validate() error {
 	// an error in every environment.
 	if _, err := clientip.ParsePrefixes(c.HTTP.TrustedProxies); err != nil {
 		add("TRUSTED_PROXIES: %v", err)
+	}
+	// Empty keeps the server's zone; a typo must not silently do the same.
+	if tz := c.Database.TimeZone; tz != "" {
+		if _, err := time.LoadLocation(tz); err != nil {
+			add("DB_TIMEZONE %q is not an IANA time zone (e.g. Asia/Kolkata)", tz)
+		}
 	}
 	if c.IsProduction() {
 		errs = append(errs, c.productionProblems()...)

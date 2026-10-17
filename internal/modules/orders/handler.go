@@ -500,6 +500,8 @@ func writeOrdersError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusForbidden, "forbidden", "not allowed to access order")
 	case errors.Is(err, ErrNotFound):
 		response.Error(w, http.StatusNotFound, "not_found", "order resource not found")
+	case errors.Is(err, ErrConflict):
+		response.Error(w, http.StatusConflict, "version_conflict", "order was changed by someone else; reload and retry")
 	case errors.Is(err, ErrMissingDeliveryAddress):
 		response.Error(w, http.StatusBadRequest, "missing_delivery_address", "Add a delivery address before confirming this order.")
 	case errors.Is(err, ErrInvalidInput):

@@ -59,6 +59,10 @@ type DatabaseConfig struct {
 	MaxIdleConns    int
 	ConnMaxLifetime time.Duration
 	ConnectTimeout  time.Duration
+	// TimeZone is the session time zone: the business calendar for
+	// CURRENT_DATE, date-based public codes and date columns. Timestamps are
+	// timestamptz, so stored instants do not depend on it.
+	TimeZone string
 }
 
 type JWTConfig struct {
@@ -142,6 +146,7 @@ func Load() Config {
 			MaxIdleConns:    getInt("DB_MAX_IDLE_CONNS", 5),
 			ConnMaxLifetime: getDuration("DB_CONN_MAX_LIFETIME", 5*time.Minute),
 			ConnectTimeout:  getDuration("DB_CONNECT_TIMEOUT", 5*time.Second),
+			TimeZone:        getString("DB_TIMEZONE", "Asia/Kolkata"),
 		},
 		JWT: JWTConfig{
 			Secret:        getString("JWT_SECRET", "local-dev-change-me"),

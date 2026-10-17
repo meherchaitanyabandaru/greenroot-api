@@ -80,7 +80,7 @@ func (r *Runner) ensureTable(ctx context.Context) error {
 	if _, err := r.db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS public.schema_migrations (
 			version text PRIMARY KEY,
-			applied_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+			applied_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
 		)`); err != nil {
 		return err
 	}

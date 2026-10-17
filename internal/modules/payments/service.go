@@ -7,6 +7,7 @@ import (
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/messaging"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sms"
 )
@@ -90,8 +91,12 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, paymentI
 	if err := s.canManagePayment(ctx, actor, *current); err != nil {
 		return Payment{}, err
 	}
+	if v, ok := rowversion.Expected(ctx); ok && v != current.Version {
+		return Payment{}, ErrConflict
+	}
 	previousStatus := current.Status
 	updated, err := s.repository.UpdateStatus(ctx, paymentID, UpdatePaymentInput{
+		ExpectedVersion:      current.Version,
 		Status:               status,
 		TransactionReference: input.TransactionReference,
 		Notes:                input.Notes,

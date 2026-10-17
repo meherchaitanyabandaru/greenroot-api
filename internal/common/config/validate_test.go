@@ -106,3 +106,20 @@ func TestValidate_TrustedProxies(t *testing.T) {
 		t.Fatalf("malformed TRUSTED_PROXIES in production: err = %v", err)
 	}
 }
+
+func TestValidate_DBTimeZone(t *testing.T) {
+	c := Config{App: AppConfig{Env: "local"}}
+	for _, tz := range []string{"", "Asia/Kolkata", "UTC"} {
+		c.Database.TimeZone = tz
+		if err := c.Validate(); err != nil {
+			t.Fatalf("DB_TIMEZONE %q rejected: %v", tz, err)
+		}
+	}
+	c.Database.TimeZone = "India/Mumbai"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "DB_TIMEZONE") {
+		t.Fatalf("invalid DB_TIMEZONE accepted: %v", err)
+	}
+	if Load().Database.TimeZone != "Asia/Kolkata" {
+		t.Fatal("default DB_TIMEZONE must be the business zone Asia/Kolkata")
+	}
+}
