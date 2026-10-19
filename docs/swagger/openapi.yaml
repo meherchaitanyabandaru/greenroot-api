@@ -4690,6 +4690,78 @@ paths:
           $ref: '#/components/responses/Error'
         "404":
           $ref: '#/components/responses/Error'
+  /api/v1/market/admin/ads:
+    get:
+      tags: [Market]
+      summary: All market ads in any status (admin)
+      description: >-
+        Under-review ads first, then ads with open reports. Each row has photos, description, poster name and
+        selfie, open report count, and the nursery's strikes and posting block.
+      operationId: listMarketAdminAds
+      security:
+        - BearerAuth: []
+      parameters:
+        - { in: query, name: status, schema: { type: string, enum: [DRAFT, PUBLISHED, PAUSED, EXPIRED, ARCHIVED, SUSPENDED, REMOVED] } }
+        - { in: query, name: search, schema: { type: string }, description: Title, plant, ad code or nursery name }
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: per_page, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        "200":
+          description: "{ ads: AdminAd[], pagination }"
+        "400":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+  /api/v1/market/admin/ads/{id}/moderate:
+    post:
+      tags: [Market]
+      summary: Hide, restore or remove an ad directly (admin)
+      description: >-
+        HIDE: live or paused → SUSPENDED with the note. RESTORE: SUSPENDED → PUBLISHED, open reports dismissed.
+        REMOVE: → REMOVED with the note, open reports closed, a strike and any posting block (as an upheld report).
+        A wrong starting status is 409.
+      operationId: moderateMarketAd
+      security:
+        - BearerAuth: []
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [HIDE, RESTORE, REMOVE] }
+                note: { type: string, maxLength: 500, description: Shown to the seller; required for HIDE and REMOVE }
+      responses:
+        "200":
+          description: "{ ad: AdminAd, outcome: { strikes, blocked_until } }"
+        "400":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+        "404":
+          $ref: '#/components/responses/Error'
+        "409":
+          $ref: '#/components/responses/Error'
+  /api/v1/market/admin/nurseries/{id}/unblock:
+    post:
+      tags: [Market]
+      summary: Lift a nursery's market posting block early (admin)
+      operationId: unblockMarketNursery
+      security:
+        - BearerAuth: []
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: "{ nursery_id, blocked_until: null }"
+        "403":
+          $ref: '#/components/responses/Error'
+        "404":
+          $ref: '#/components/responses/Error'
   /api/v1/market/reports:
     get:
       tags: [Market]

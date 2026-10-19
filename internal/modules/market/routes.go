@@ -29,6 +29,9 @@ func (m Module) RegisterRoutes(r chi.Router) {
 		// Admin moderation of reported ads
 		r.Get("/reports", m.moderation.ListReports)
 		r.Post("/reports/{id}/review", m.moderation.ReviewReport)
+		r.Get("/admin/ads", m.moderation.ListAllAds)
+		r.Post("/admin/ads/{id}/moderate", m.moderation.ModerateAd)
+		r.Post("/admin/nurseries/{id}/unblock", m.moderation.UnblockNursery)
 
 		// Browse published ads from all nurseries
 		r.Get("/ads", m.handler.BrowseAds)

@@ -1085,6 +1085,30 @@ def journey_moderation():
     expect("…resume is refused", "POST", f"/market/ads/{a1}/resume", owner.token, {}, status=403)
     expect("an unknown report reason is refused", "POST", f"/market/ads/{a1}/report", rival.token, {"reason": "UGLY"}, status=400)
 
+    # 4. Admin acts directly from Admin → Local Market → All ads.
+    expect("owners cannot list all ads", "GET", "/market/admin/ads", owner.token, status=403)
+    expect("owners cannot moderate", "POST", f"/market/admin/ads/{a1}/moderate", owner.token, {"action": "REMOVE", "note": "x"}, status=403)
+    out = expect("admin lists removed ads", "GET", "/market/admin/ads?status=REMOVED&per_page=100", boss.token)
+    row = next(x for x in out["ads"] if x["id"] == a3)
+    check("…with photos, poster, strikes and block", row["photos"] and row["posted_by_name"] and row["nursery_strikes"] == 2 and row.get("nursery_blocked_until"), row)
+    expect("an unknown status filter is refused", "GET", "/market/admin/ads?status=GONE", boss.token, status=400)
+    out = expect("admin searches by ad code", "GET", f"/market/admin/ads?search={row['code']}", boss.token)
+    check("…finds it", [x["id"] for x in out["ads"]] == [a3], [x["id"] for x in out["ads"]])
+    expect("admin unblocks the nursery early", "POST", f"/market/admin/nurseries/{owner.nursery_id}/unblock", boss.token, {})
+    a4 = live_ad("Moderation four")
+    expect("hiding needs a note for the seller", "POST", f"/market/admin/ads/{a4}/moderate", boss.token, {"action": "HIDE"}, status=400)
+    expect("an unknown action is refused", "POST", f"/market/admin/ads/{a4}/moderate", boss.token, {"action": "BAN", "note": "x"}, status=400)
+    res = expect("admin hides a live ad nobody reported", "POST", f"/market/admin/ads/{a4}/moderate", boss.token, {"action": "HIDE", "note": "Photo looks copied"})
+    check("…under review with the admin's note", res["ad"]["status"] == "SUSPENDED" and "Photo looks copied" in res["ad"]["moderation_note"], res["ad"])
+    expect("…hiding twice is refused", "POST", f"/market/admin/ads/{a4}/moderate", boss.token, {"action": "HIDE", "note": "again"}, status=409)
+    res = expect("admin restores it", "POST", f"/market/admin/ads/{a4}/moderate", boss.token, {"action": "RESTORE"})
+    check("…live again, note cleared", res["ad"]["status"] == "PUBLISHED" and not res["ad"].get("moderation_note"), res["ad"])
+    expect("…restoring a live ad is refused", "POST", f"/market/admin/ads/{a4}/moderate", boss.token, {"action": "RESTORE"}, status=409)
+    res = expect("admin removes it directly", "POST", f"/market/admin/ads/{a4}/moderate", boss.token, {"action": "REMOVE", "note": "Fake stock"})
+    check("…strike 3: a 90-day block", res["outcome"]["strikes"] == 3 and res["outcome"].get("blocked_until"), res["outcome"])
+    expect("…removing twice is refused", "POST", f"/market/admin/ads/{a4}/moderate", boss.token, {"action": "REMOVE", "note": "again"}, status=409)
+    expect("…and the nursery is blocked again", "POST", "/market/ads", owner.token, {"plant_name": "Rose", "title": "Blocked"}, status=403)
+
 
 def journey_admin():
     """Admin-only routes refuse everyone else; admins cannot trade."""
@@ -1199,7 +1223,8 @@ def journey_top_items():
     check("…several nurseries, paginated", len(nurseries) >= 2 and out["pagination"]["total"] >= 20, out["pagination"])
     out = expect("admin filters one nursery", "GET", f"/top-items?nursery_id={rival.nursery_id}", boss.token)
     check("…only that nursery", all(i["nursery_id"] == rival.nursery_id for i in out["top_items"]), out)
-    out = expect("which nurseries list neem", "GET", f"/plants/{plants[1]}/top-items", buyer.token)
+    # Filtered to this nursery: every journey run adds more neem nurseries, so page 1 alone is not stable.
+    out = expect("which nurseries list neem", "GET", f"/plants/{plants[1]}/top-items?nursery_id={nid}", buyer.token)
     check("…includes this nursery", nid in [i["nursery_id"] for i in out["top_items"]], out)
     expect("owner joins the sourcing network", "POST", f"/nurseries/{nid}/sourcing-membership", owner.token,
            {"road_accessible": True, "lorry_accessible": True, "contact_visible": True, "service_radius_km": 50}, status=(200, 201))

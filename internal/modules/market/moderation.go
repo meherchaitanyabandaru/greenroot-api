@@ -165,29 +165,10 @@ func (m *moderationHandler) decide(ctx context.Context, actor ActorContext, repo
 	}
 	var outcome ReviewOutcome
 	if remove {
-		note := "Removed by GreenRoot: " + reasonLabel(report.Reason) + "."
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE public.market_ads SET status = 'REMOVED', moderation_note = $2, moderated_at = NOW(), updated_at = NOW()
-			WHERE ad_id = $1`, report.AdID, note); err != nil {
+		outcome, err = removeAd(ctx, tx, report.AdID, nurseryID, actor.UserID,
+			"Removed by GreenRoot: "+reasonLabel(report.Reason)+".")
+		if err != nil {
 			return ReviewOutcome{}, err
-		}
-		// One decision answers every open report on the ad.
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE public.market_ad_reports SET status = 'REVIEWED', reviewed_by_user_id = $2, reviewed_at = NOW()
-			WHERE ad_id = $1 AND status = 'PENDING'`, report.AdID, actor.UserID); err != nil {
-			return ReviewOutcome{}, err
-		}
-		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*) FROM public.market_ads WHERE nursery_id = $1 AND status = 'REMOVED'`, nurseryID).Scan(&outcome.Strikes); err != nil {
-			return ReviewOutcome{}, err
-		}
-		if days := blockDays(outcome.Strikes); days > 0 {
-			if err := tx.QueryRowContext(ctx, `
-				UPDATE public.nurseries
-				SET market_blocked_until = GREATEST(COALESCE(market_blocked_until, NOW()), NOW() + make_interval(days => $2))
-				WHERE nursery_id = $1 RETURNING market_blocked_until`, nurseryID, days).Scan(&outcome.BlockedUntil); err != nil {
-				return ReviewOutcome{}, err
-			}
 		}
 	} else {
 		if _, err := tx.ExecContext(ctx, `
@@ -206,6 +187,36 @@ func (m *moderationHandler) decide(ctx context.Context, actor ActorContext, repo
 		}
 	}
 	return outcome, tx.Commit()
+}
+
+// removeAd takes an ad down for good inside tx: REMOVED with the seller's
+// note, every open report on it closed as REVIEWED, and a strike for the
+// nursery (the count of its removed ads) with the matching posting block.
+func removeAd(ctx context.Context, tx *sql.Tx, adID, nurseryID, adminID int64, note string) (ReviewOutcome, error) {
+	var outcome ReviewOutcome
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE public.market_ads SET status = 'REMOVED', moderation_note = $2, moderated_at = NOW(), updated_at = NOW()
+		WHERE ad_id = $1`, adID, note); err != nil {
+		return outcome, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE public.market_ad_reports SET status = 'REVIEWED', reviewed_by_user_id = $2, reviewed_at = NOW()
+		WHERE ad_id = $1 AND status = 'PENDING'`, adID, adminID); err != nil {
+		return outcome, err
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM public.market_ads WHERE nursery_id = $1 AND status = 'REMOVED'`, nurseryID).Scan(&outcome.Strikes); err != nil {
+		return outcome, err
+	}
+	if days := blockDays(outcome.Strikes); days > 0 {
+		if err := tx.QueryRowContext(ctx, `
+			UPDATE public.nurseries
+			SET market_blocked_until = GREATEST(COALESCE(market_blocked_until, NOW()), NOW() + make_interval(days => $2))
+			WHERE nursery_id = $1 RETURNING market_blocked_until`, nurseryID, days).Scan(&outcome.BlockedUntil); err != nil {
+			return outcome, err
+		}
+	}
+	return outcome, nil
 }
 
 // blockDays is the posting block for a nursery's nth removed ad: a warning
