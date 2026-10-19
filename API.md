@@ -165,7 +165,7 @@ See `BUSINESS_RULES.md` for the full rule set. Key enforcements:
 |---|---|
 | auth | `POST /auth/send-otp`, `verify-otp`, `refresh-token`, `logout` · `GET /auth/me` |
 | users | `GET/PUT/DELETE /users/me` · `POST /users/me/onboarding` · `POST /users/me/avatar` · `GET/PUT /users/:id` · addresses, roles, sessions |
-| plants | `GET/POST /plants` · `GET/PUT/DELETE /plants/:id` · images, care-guide, categories |
+| plants | `GET/POST /plants` · `GET/PUT/DELETE /plants/:id` · images, care-guide, categories · `GET /plants/lookup` (picker: catalog + 1.66 M WFO botanical names) · `POST /plants/resolve` (botanical name → catalog plant, added on first use) · admin: `GET /botanical-names` (browse all names), `/botanical-names/families`, `/botanical-names/{wfoId}` — see `greenroot-docs/03-business-rules/plants.md` |
 | nurseries | `GET/POST /nurseries` · `GET/PUT/DELETE /nurseries/:id` · addresses, users |
 | inventory | `GET/POST /inventory` · `GET/PUT/DELETE /inventory/:id` · by nursery, by plant |
 | requests | `GET/POST /plant-requests` · `GET/PUT/DELETE /plant-requests/:id` · responses, cancel |

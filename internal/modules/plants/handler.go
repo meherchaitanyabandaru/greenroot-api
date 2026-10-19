@@ -44,6 +44,52 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, PlantsResponse{Plants: plants, Pagination: pagination})
 }
 
+// Lookup godoc
+//
+//	@Summary	Search plants for a picker: catalog plants, then botanical names not in the catalog yet
+//	@Tags		Plants
+//	@Security	BearerAuth
+//	@Param		q		query		string	false	"Search text; botanical names need 3+ characters"
+//	@Param		limit	query		int		false	"Max results (default 20, max 50)"
+//	@Success	200		{object}	LookupResponse
+//	@Router		/api/v1/plants/lookup [get]
+func (h *Handler) Lookup(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.actor(w, r); !ok {
+		return
+	}
+	results, err := h.service.Lookup(r.Context(), LookupRequest{Query: r.URL.Query().Get("q"), Limit: intQuery(r.URL.Query().Get("limit"))})
+	if err != nil {
+		writePlantsError(w, err)
+		return
+	}
+	response.OK(w, LookupResponse{Results: results})
+}
+
+// Resolve godoc
+//
+//	@Summary	Get the catalog plant for a botanical name, adding it to the catalog on first use
+//	@Tags		Plants
+//	@Security	BearerAuth
+//	@Param		request	body		ResolvePlantRequest	true	"Botanical name"
+//	@Success	200		{object}	PlantResponse
+//	@Router		/api/v1/plants/resolve [post]
+func (h *Handler) Resolve(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	var req ResolvePlantRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	plant, err := h.service.Resolve(r.Context(), actor, req)
+	if err != nil {
+		writePlantsError(w, err)
+		return
+	}
+	response.OK(w, PlantResponse{Plant: plant})
+}
+
 // Get godoc
 //
 //	@Summary	Get plant
@@ -333,6 +379,10 @@ func writePlantsError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusForbidden, "forbidden", "not allowed to manage plants")
 	case errors.Is(err, ErrNotFound):
 		response.Error(w, http.StatusNotFound, "not_found", "plant resource not found")
+	case errors.Is(err, ErrPlantRemoved):
+		response.Error(w, http.StatusConflict, "plant_removed", "this plant was removed from the catalog by an admin")
+	case errors.Is(err, ErrConflict):
+		response.Error(w, http.StatusConflict, "plant_conflict", "another plant is already linked to this botanical name")
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid plant input")
 	default:

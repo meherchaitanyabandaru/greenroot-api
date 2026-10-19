@@ -87,6 +87,14 @@ func main() {
 	record("rbac/driver-admin-forbidden", c.expect(ctx, http.MethodGet, "/api/v1/admin/dashboard", nil, driver.AccessToken, http.StatusForbidden))
 	record("rbac/admin-dashboard", c.expect(ctx, http.MethodGet, "/api/v1/admin/dashboard", nil, admin.AccessToken, http.StatusOK))
 
+	// Fresh databases seed no plant categories; make one for this run.
+	categoryIDs := []int64{}
+	if data, err := c.expectJSON(ctx, http.MethodPost, "/api/v1/plants/categories", map[string]any{"name": unique("Integration Category")}, admin.AccessToken, http.StatusCreated); err == nil {
+		categoryIDs = append(categoryIDs, nestedInt(data, "category", "id"))
+		record("plants/category-create-admin", nil)
+	} else {
+		record("plants/category-create-admin", err)
+	}
 	plantID := int64(1)
 	plantBody := map[string]any{
 		"scientific_name":     unique("Integration Plant"),
@@ -95,7 +103,7 @@ func main() {
 		"plant_type":          "TREE",
 		"light_requirement":   "FULL_SUN",
 		"water_requirement":   "MEDIUM",
-		"category_ids":        []int64{1},
+		"category_ids":        categoryIDs,
 		"care_guide":          map[string]any{"sunlight": "Full sun", "watering": "Weekly"},
 	}
 	if data, err := c.expectJSON(ctx, http.MethodPost, "/api/v1/plants", plantBody, admin.AccessToken, http.StatusCreated); err == nil {

@@ -38,10 +38,17 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Put("/categories/{categoryId}", m.handler.UpdateCategory)
 		r.Delete("/categories/{categoryId}", m.handler.DeleteCategory)
 		r.Get("/names", m.handler.Names)
+		r.Get("/lookup", m.handler.Lookup)
+		r.Post("/resolve", m.handler.Resolve)
 		r.Get("/{id}", m.handler.Get)
 		r.Put("/{id}", m.handler.Update)
 		r.Delete("/{id}", m.handler.Delete)
 		r.Post("/{id}/images", m.handler.CreateImage)
 		r.Get("/{id}/care-guide", m.handler.CareGuide)
+	})
+	router.Route("/botanical-names", func(r chi.Router) {
+		r.Get("/", m.handler.ListBotanical)
+		r.Get("/families", m.handler.BotanicalFamilies)
+		r.Get("/{wfoId}", m.handler.GetBotanical)
 	})
 }

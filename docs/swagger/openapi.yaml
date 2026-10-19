@@ -4791,6 +4791,194 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+  /api/v1/botanical-names:
+    get:
+      tags: [Plants]
+      summary: Browse all botanical names (admin)
+      description: >-
+        All ~1.66 M World Flora Online names, paginated, with the catalog plant of
+        each name's species (if any) and its English name. search matches
+        scientific names and the English/local names of catalog plants ("neem").
+        Searching without sort_by orders by best match; otherwise by scientific
+        name (or family).
+      operationId: listBotanicalNames
+      security:
+        - BearerAuth: []
+      parameters:
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: per_page, schema: { type: integer, default: 20, maximum: 100 } }
+        - { in: query, name: search, schema: { type: string }, example: cumini }
+        - { in: query, name: family, schema: { type: string }, example: Myrtaceae }
+        - { in: query, name: status, schema: { type: string, enum: [ACCEPTED, SYNONYM, UNCHECKED] } }
+        - { in: query, name: rank, schema: { type: string }, example: species }
+        - { in: query, name: in_catalog, schema: { type: boolean } }
+        - in: query
+          name: show_synonyms
+          description: List old names (synonyms) as rows. Default false — one row per plant; a search on an old name returns its accepted plant with matched_name set.
+          schema: { type: boolean, default: false }
+        - { in: query, name: sort_by, schema: { type: string, enum: [scientific_name, family] } }
+        - { in: query, name: sort_order, schema: { type: string, enum: [asc, desc] } }
+      responses:
+        "200":
+          description: One page of names
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  names:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BotanicalRow"
+                  pagination:
+                    type: object
+        "400":
+          $ref: '#/components/responses/Error'
+        "401":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+  /api/v1/botanical-names/families:
+    get:
+      tags: [Plants]
+      summary: Plant families with name counts (admin)
+      operationId: listBotanicalFamilies
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Every family with its number of names, accepted names and names whose species is in the catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  families:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        family: { type: string, example: Myrtaceae }
+                        names: { type: integer }
+                        accepted: { type: integer }
+                        in_catalog: { type: integer }
+                  total_names:
+                    type: integer
+        "401":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+  /api/v1/botanical-names/{wfoId}:
+    get:
+      tags: [Plants]
+      summary: One botanical name with its accepted name and synonyms (admin)
+      operationId: getBotanicalName
+      security:
+        - BearerAuth: []
+      parameters:
+        - { in: path, name: wfoId, required: true, schema: { type: string }, example: wfo-0000734376 }
+      responses:
+        "200":
+          description: The name, its accepted name (for a synonym) and up to 50 synonyms of the species
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    $ref: "#/components/schemas/BotanicalRow"
+                  accepted:
+                    $ref: "#/components/schemas/BotanicalRow"
+                  synonyms:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BotanicalRow"
+                  synonym_count:
+                    type: integer
+        "401":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+        "404":
+          $ref: '#/components/responses/Error'
+  /api/v1/plants/lookup:
+    get:
+      tags: [Plants]
+      summary: Plant picker search
+      description: >-
+        Catalog plants first (matched on code, scientific, common and local names),
+        then World Flora Online botanical names that are not in the catalog yet,
+        one row per species. Botanical names are searched only for 3+ characters.
+        Each result has exactly one of `plant` or `name`; pass `name.wfo_id` to
+        POST /api/v1/plants/resolve to get a catalog plant.
+      operationId: lookupPlants
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: q
+          required: false
+          schema:
+            type: string
+          example: cumini
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            default: 20
+            maximum: 50
+      responses:
+        "200":
+          description: Picker results, best match first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlantLookupResponse"
+        "401":
+          $ref: '#/components/responses/Error'
+        "500":
+          $ref: '#/components/responses/Error'
+  /api/v1/plants/resolve:
+    post:
+      tags: [Plants]
+      summary: Get or add the catalog plant for a botanical name
+      description: >-
+        Returns the catalog plant for the species of `wfo_id`, adding it to the
+        catalog on first use (any signed-in user). A synonym resolves to its
+        accepted species, so a species is never in the catalog twice; concurrent
+        calls return the same plant.
+      operationId: resolvePlant
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [wfo_id]
+              properties:
+                wfo_id:
+                  type: string
+                  example: wfo-0000318521
+      responses:
+        "200":
+          description: The catalog plant
+        "400":
+          $ref: '#/components/responses/Error'
+        "401":
+          $ref: '#/components/responses/Error'
+        "404":
+          $ref: '#/components/responses/Error'
+        "409":
+          description: "plant_removed: an admin removed this species from the catalog"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: '#/components/responses/Error'
   /api/v1/plants/sizes:
     get:
       tags:
@@ -7768,6 +7956,80 @@ components:
             type: integer
         care_guide:
           $ref: "#/components/schemas/CareGuideRequest"
+        wfo_id:
+          type: string
+          nullable: true
+          description: World Flora Online id (public.botanical_names). On update, omit to keep the link, "" to remove it.
+          example: wfo-0000557668
+    PlantLookupResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              plant:
+                type: object
+                description: Set when the plant is already in the catalog.
+              name:
+                $ref: "#/components/schemas/BotanicalName"
+    BotanicalName:
+      type: object
+      properties:
+        wfo_id:
+          type: string
+          example: wfo-0000318521
+        scientific_name:
+          type: string
+          example: Syzygium cumini
+        authorship:
+          type: string
+          nullable: true
+        family:
+          type: string
+          nullable: true
+        taxon_rank:
+          type: string
+          example: species
+        status:
+          type: string
+          enum: [ACCEPTED, SYNONYM, UNCHECKED]
+        accepted_wfo_id:
+          type: string
+          nullable: true
+        accepted_name:
+          type: string
+          nullable: true
+    BotanicalRow:
+      allOf:
+        - $ref: "#/components/schemas/BotanicalName"
+        - type: object
+          properties:
+            genus:
+              type: string
+              nullable: true
+            catalog_plant_id:
+              type: integer
+              format: int64
+              nullable: true
+            catalog_plant_code:
+              type: string
+              nullable: true
+              example: PLT-000028
+            english_name:
+              type: string
+              nullable: true
+              description: Common name of the species' catalog plant (World Flora Online has no common names).
+              example: Jamun
+            synonym_count:
+              type: integer
+              description: Old names pointing to this name (list rows only).
+            matched_name:
+              type: string
+              nullable: true
+              description: The old name that matched the search, when the row's own name did not.
+              example: Sansevieria trifasciata
     PlantImageRequest:
       type: object
       required: [image_url]

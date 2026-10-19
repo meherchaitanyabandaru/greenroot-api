@@ -21,6 +21,9 @@ type CreatePlantRequest struct {
 	WaterRequirement   *string           `json:"water_requirement"`
 	CategoryIDs        []int64           `json:"category_ids"`
 	CareGuide          *CareGuideRequest `json:"care_guide"`
+	// WfoID links the plant to public.botanical_names. On update, omitted
+	// keeps the current link and "" removes it.
+	WfoID *string `json:"wfo_id"`
 }
 
 type UpdatePlantRequest = CreatePlantRequest
@@ -89,4 +92,17 @@ type CareGuideResponse struct {
 
 type DeletePlantResponse struct {
 	Message string `json:"message"`
+}
+
+type LookupRequest struct {
+	Query string
+	Limit int
+}
+
+type LookupResponse struct {
+	Results []LookupResult `json:"results"`
+}
+
+type ResolvePlantRequest struct {
+	WfoID string `json:"wfo_id"`
 }

@@ -15,6 +15,15 @@ import (
 var (
 	ErrForbidden    = apperrs.ErrForbidden
 	ErrInvalidInput = apperrs.ErrInvalidInput
+	ErrConflict     = apperrs.ErrConflict
+	// ErrPlantRemoved: the species exists in the catalog but an admin removed it.
+	ErrPlantRemoved = fmt.Errorf("%w: plant removed from the catalog", apperrs.ErrConflict)
+)
+
+// Search cache scope for plant searches; one shared scope for all users.
+const (
+	searchModule      = "plants"
+	searchSharedScope = 0
 )
 
 type Service struct {
@@ -64,8 +73,8 @@ type cachedPlantList struct {
 // unlike orders/quotations/market ads, which are actor-personalized and
 // must never share a cache entry across users (see searchcache.go).
 func (s *Service) listSearchCached(ctx context.Context, input ListPlantsRequest) ([]Plant, Pagination, error) {
-	const module = "plants"
-	const sharedScope = 0
+	const module = searchModule
+	const sharedScope = searchSharedScope
 	// Feeds Search Suggestions with real query popularity, independent of
 	// whether this particular request is a cache hit or miss.
 	redisutil.RecordSearchTerm(ctx, s.redis, nil, module, input.Search)
@@ -112,13 +121,14 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreatePl
 		return Plant{}, ErrForbidden
 	}
 	input = normalizePlantInput(input)
-	if err := validatePlantInput(input); err != nil {
+	if err := s.validatePlant(ctx, input); err != nil {
 		return Plant{}, err
 	}
 	plant, err := s.repository.Create(ctx, input)
 	if err != nil {
 		return Plant{}, err
 	}
+	s.invalidateSearch(ctx)
 	s.audit(ctx, actor, plant.ID, auditlog.ActionCreate,
 		fmt.Sprintf("Plant %q created", plant.ScientificName), nil, input)
 	return *plant, nil
@@ -129,7 +139,7 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, plantID int64,
 		return Plant{}, ErrForbidden
 	}
 	input = normalizePlantInput(input)
-	if err := validatePlantInput(input); err != nil {
+	if err := s.validatePlant(ctx, input); err != nil {
 		return Plant{}, err
 	}
 	old, _ := s.repository.FindByID(ctx, plantID)
@@ -137,6 +147,7 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, plantID int64,
 	if err != nil {
 		return Plant{}, err
 	}
+	s.invalidateSearch(ctx)
 	s.audit(ctx, actor, plant.ID, auditlog.ActionUpdate,
 		fmt.Sprintf("Plant %q updated", plant.ScientificName), old, input)
 	return *plant, nil
@@ -150,6 +161,7 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, plantID int64)
 	if err := s.repository.Delete(ctx, plantID); err != nil {
 		return err
 	}
+	s.invalidateSearch(ctx)
 	s.audit(ctx, actor, plantID, auditlog.ActionDelete,
 		fmt.Sprintf("Plant %q deleted", nameOrID(old, plantID)), old, map[string]any{"is_active": false})
 	return nil
@@ -259,6 +271,10 @@ func normalizeListRequest(input ListPlantsRequest) ListPlantsRequest {
 
 func normalizePlantInput(input CreatePlantRequest) CreatePlantRequest {
 	input.ScientificName = strings.TrimSpace(input.ScientificName)
+	if input.WfoID != nil {
+		v := strings.TrimSpace(*input.WfoID)
+		input.WfoID = &v
+	}
 	upperOptional(input.PlantType)
 	upperOptional(input.LightRequirement)
 	upperOptional(input.WaterRequirement)
@@ -275,6 +291,86 @@ func validatePlantInput(input CreatePlantRequest) error {
 		}
 	}
 	return nil
+}
+
+// validatePlant also checks that a wfo_id names a real botanical name.
+func (s *Service) validatePlant(ctx context.Context, input CreatePlantRequest) error {
+	if err := validatePlantInput(input); err != nil {
+		return err
+	}
+	if input.WfoID == nil || *input.WfoID == "" {
+		return nil
+	}
+	ok, err := s.repository.BotanicalNameExists(ctx, *input.WfoID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
+func (s *Service) invalidateSearch(ctx context.Context) {
+	redisutil.BumpSearchGeneration(ctx, s.redis, nil, searchModule, searchSharedScope)
+}
+
+// Lookup serves every plant picker: catalog plants first (they carry prices
+// and stock), then botanical names not in the catalog yet. It reads the
+// database directly, not the search cache, so a plant resolved a moment ago
+// shows up as a catalog plant immediately.
+func (s *Service) Lookup(ctx context.Context, input LookupRequest) ([]LookupResult, error) {
+	q := strings.Join(strings.Fields(input.Query), " ")
+	limit := input.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	plants, _, err := s.repository.List(ctx, ListPlantsRequest{Page: 1, PerPage: limit, Search: q, SortBy: "scientific_name", SortOrder: "asc"})
+	if err != nil {
+		return nil, err
+	}
+	results := make([]LookupResult, 0, limit)
+	for i := range plants {
+		results = append(results, LookupResult{Plant: &plants[i]})
+	}
+	if len([]rune(q)) < minBotanicalQuery || len(results) >= limit {
+		return results, nil
+	}
+	names, err := s.repository.LookupBotanical(ctx, q, limit-len(results))
+	if err != nil {
+		return nil, err
+	}
+	for i := range names {
+		results = append(results, LookupResult{Name: &names[i]})
+	}
+	return results, nil
+}
+
+// Resolve returns the catalog plant for a botanical name, adding it to the
+// catalog on first use. Any signed-in user may do this: the name comes from
+// the curated WFO list, so it is not free-text master data.
+func (s *Service) Resolve(ctx context.Context, actor ActorContext, input ResolvePlantRequest) (Plant, error) {
+	wfoID := strings.TrimSpace(input.WfoID)
+	if wfoID == "" {
+		return Plant{}, ErrInvalidInput
+	}
+	plantID, created, err := s.repository.ResolveBotanical(ctx, wfoID)
+	if err != nil {
+		return Plant{}, err
+	}
+	plant, err := s.repository.FindByID(ctx, plantID)
+	if err != nil {
+		return Plant{}, err
+	}
+	if created {
+		s.invalidateSearch(ctx)
+		s.audit(ctx, actor, plant.ID, auditlog.ActionCreate,
+			fmt.Sprintf("Plant %q added to the catalog from botanical name %s", plant.ScientificName, wfoID), nil, map[string]any{"wfo_id": wfoID})
+	}
+	return *plant, nil
 }
 
 func canManagePlants(actor ActorContext) bool {

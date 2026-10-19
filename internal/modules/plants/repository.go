@@ -10,6 +10,7 @@ import (
 
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/database/pgerr"
 )
 
 var ErrNotFound = apperrs.ErrNotFound
@@ -28,6 +29,12 @@ type Repository interface {
 	CreateImage(ctx context.Context, plantID int64, input CreateImageRequest) (*Image, error)
 	GetCareGuide(ctx context.Context, plantID int64) (*CareGuide, error)
 	GetNamesByLanguage(ctx context.Context, plantIDs []int64, langCode string) (map[int64]string, error)
+	BotanicalNameExists(ctx context.Context, wfoID string) (bool, error)
+	LookupBotanical(ctx context.Context, query string, limit int) ([]BotanicalName, error)
+	ResolveBotanical(ctx context.Context, wfoID string) (plantID int64, created bool, err error)
+	ListBotanical(ctx context.Context, input ListBotanicalRequest) ([]BotanicalRow, int64, error)
+	BotanicalFamilies(ctx context.Context) ([]BotanicalFamily, error)
+	GetBotanical(ctx context.Context, wfoID string) (BotanicalDetailResponse, error)
 }
 
 type PostgresRepository struct {
@@ -52,7 +59,7 @@ func (r *PostgresRepository) List(ctx context.Context, input ListPlantsRequest) 
 	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
 	query := fmt.Sprintf(`
 		SELECT DISTINCT p.plant_id, p.plant_code, p.scientific_name, p.common_name, p.english_description,
-			p.plant_type, p.light_requirement, p.water_requirement, p.is_active, p.created_at, p.updated_at
+			p.plant_type, p.light_requirement, p.water_requirement, p.wfo_id, p.is_active, p.created_at, p.updated_at
 		FROM public.plants p
 		%s
 		ORDER BY %s
@@ -107,9 +114,9 @@ func (r *PostgresRepository) Create(ctx context.Context, input CreatePlantReques
 	const query = `
 		INSERT INTO public.plants (
 			plant_code, scientific_name, common_name, english_description, plant_type,
-			light_requirement, water_requirement, is_active, created_at, updated_at
+			light_requirement, water_requirement, wfo_id, is_active, created_at, updated_at
 		)
-		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING plant_id
 	`
 	var plantID int64
@@ -123,8 +130,9 @@ func (r *PostgresRepository) Create(ctx context.Context, input CreatePlantReques
 		stringOrEmpty(input.PlantType),
 		stringOrEmpty(input.LightRequirement),
 		stringOrEmpty(input.WaterRequirement),
+		stringOrEmpty(input.WfoID),
 	).Scan(&plantID); err != nil {
-		return nil, err
+		return nil, pgerr.Map(err)
 	}
 	if err := r.replaceCategories(ctx, tx, plantID, input.CategoryIDs); err != nil {
 		return nil, err
@@ -158,6 +166,7 @@ func (r *PostgresRepository) Update(ctx context.Context, plantID int64, input Up
 			plant_type = NULLIF($5, ''),
 			light_requirement = NULLIF($6, ''),
 			water_requirement = NULLIF($7, ''),
+			wfo_id = CASE WHEN $8::text IS NULL THEN wfo_id ELSE NULLIF($8, '') END,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE plant_id = $1 AND is_active = true
 	`
@@ -171,9 +180,10 @@ func (r *PostgresRepository) Update(ctx context.Context, plantID int64, input Up
 		stringOrEmpty(input.PlantType),
 		stringOrEmpty(input.LightRequirement),
 		stringOrEmpty(input.WaterRequirement),
+		input.WfoID,
 	)
 	if err != nil {
-		return nil, err
+		return nil, pgerr.Map(err)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
@@ -353,7 +363,9 @@ func buildPlantWhere(input ListPlantsRequest) (string, []any) {
 		args = append(args, input.Search)
 		index := len(args)
 		clauses = append(clauses, fmt.Sprintf(
-			`(p.plant_code ILIKE '%%' || $%d || '%%' OR p.scientific_name ILIKE '%%' || $%d || '%%' OR p.common_name ILIKE '%%' || $%d || '%%' OR p.english_description ILIKE '%%' || $%d || '%%')`,
+			`(p.plant_code ILIKE '%%' || $%d || '%%' OR p.scientific_name ILIKE '%%' || $%d || '%%' OR p.common_name ILIKE '%%' || $%d || '%%' OR p.english_description ILIKE '%%' || $%d || '%%'`+
+				` OR EXISTS (SELECT 1 FROM public.plant_names pn WHERE pn.plant_id = p.plant_id AND pn.is_active AND pn.plant_name ILIKE '%%' || $%d || '%%'))`,
+			index,
 			index,
 			index,
 			index,
@@ -407,7 +419,7 @@ func sortClause(input ListPlantsRequest) string {
 func (r *PostgresRepository) scanPlant(ctx context.Context, where string, args ...any) (*Plant, error) {
 	query := `
 		SELECT p.plant_id, p.plant_code, p.scientific_name, p.common_name, p.english_description,
-			p.plant_type, p.light_requirement, p.water_requirement, p.is_active, p.created_at, p.updated_at
+			p.plant_type, p.light_requirement, p.water_requirement, p.wfo_id, p.is_active, p.created_at, p.updated_at
 		FROM public.plants p
 		` + where
 	plant, err := scanPlantRow(r.db.QueryRowContext(ctx, query, args...))
@@ -418,13 +430,27 @@ func (r *PostgresRepository) scanPlant(ctx context.Context, where string, args .
 }
 
 func (r *PostgresRepository) replaceCategories(ctx context.Context, tx *sql.Tx, plantID int64, categoryIDs []int64) error {
+	// An unknown id failed with a 500 (foreign key); an inactive one was stored
+	// but hidden everywhere and dropped on the next save. Both are bad input.
+	unique := map[int64]bool{}
+	ids := make([]int64, 0, len(categoryIDs))
+	for _, id := range categoryIDs {
+		if id > 0 && !unique[id] {
+			unique[id] = true
+			ids = append(ids, id)
+		}
+	}
+	var active int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM public.plant_categories WHERE category_id = ANY($1::bigint[]) AND is_active`, ids).Scan(&active); err != nil {
+		return err
+	}
+	if active != len(ids) {
+		return ErrInvalidInput
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM public.plant_category_mappings WHERE plant_id = $1`, plantID); err != nil {
 		return err
 	}
-	for _, categoryID := range categoryIDs {
-		if categoryID <= 0 {
-			continue
-		}
+	for _, categoryID := range ids {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO public.plant_category_mappings (plant_id, category_id, created_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING`, plantID, categoryID); err != nil {
 			return err
 		}
@@ -641,7 +667,7 @@ func scanPlantRows(rows *sql.Rows) (Plant, error) {
 
 func scanPlant(row interface{ Scan(dest ...any) error }) (Plant, error) {
 	var plant Plant
-	var commonName, description, plantType, light, water sql.NullString
+	var commonName, description, plantType, light, water, wfoID sql.NullString
 	if err := row.Scan(
 		&plant.ID,
 		&plant.PlantCode,
@@ -651,6 +677,7 @@ func scanPlant(row interface{ Scan(dest ...any) error }) (Plant, error) {
 		&plantType,
 		&light,
 		&water,
+		&wfoID,
 		&plant.IsActive,
 		&plant.CreatedAt,
 		&plant.UpdatedAt,
@@ -662,6 +689,7 @@ func scanPlant(row interface{ Scan(dest ...any) error }) (Plant, error) {
 	plant.PlantType = nullableString(plantType)
 	plant.LightRequirement = nullableString(light)
 	plant.WaterRequirement = nullableString(water)
+	plant.WfoID = nullableString(wfoID)
 	return plant, nil
 }
 

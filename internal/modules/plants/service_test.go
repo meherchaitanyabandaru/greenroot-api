@@ -15,6 +15,9 @@ type mockRepo struct {
 	images     map[int64]*Image
 	careGuides map[int64]*CareGuide
 
+	botanicalQueries []string
+	lastBrowse       ListBotanicalRequest
+
 	nextPlantID    int64
 	nextCategoryID int64
 	nextImageID    int64
@@ -132,6 +135,46 @@ func (m *mockRepo) GetCareGuide(_ context.Context, plantID int64) (*CareGuide, e
 
 func (m *mockRepo) GetNamesByLanguage(_ context.Context, _ []int64, _ string) (map[int64]string, error) {
 	return nil, nil
+}
+
+func (m *mockRepo) BotanicalNameExists(_ context.Context, wfoID string) (bool, error) {
+	return wfoID == "wfo-known", nil
+}
+
+func (m *mockRepo) LookupBotanical(_ context.Context, query string, limit int) ([]BotanicalName, error) {
+	m.botanicalQueries = append(m.botanicalQueries, query)
+	names := []BotanicalName{{WfoID: "wfo-1", ScientificName: "Syzygium cumini"}, {WfoID: "wfo-2", ScientificName: "Syzygium jambos"}}
+	if len(names) > limit {
+		names = names[:limit]
+	}
+	return names, nil
+}
+
+func (m *mockRepo) ListBotanical(_ context.Context, in ListBotanicalRequest) ([]BotanicalRow, int64, error) {
+	m.lastBrowse = in
+	return []BotanicalRow{{BotanicalName: BotanicalName{WfoID: "wfo-1", ScientificName: "Syzygium cumini"}}}, 1657866, nil
+}
+
+func (m *mockRepo) BotanicalFamilies(context.Context) ([]BotanicalFamily, error) {
+	return []BotanicalFamily{{Family: "Myrtaceae", Names: 6000}, {Family: "Rosaceae", Names: 9000}}, nil
+}
+
+func (m *mockRepo) GetBotanical(_ context.Context, wfoID string) (BotanicalDetailResponse, error) {
+	return BotanicalDetailResponse{Name: BotanicalRow{BotanicalName: BotanicalName{WfoID: wfoID}}}, nil
+}
+
+func (m *mockRepo) ResolveBotanical(_ context.Context, wfoID string) (int64, bool, error) {
+	if wfoID != "wfo-1" {
+		return 0, false, ErrNotFound
+	}
+	for id, p := range m.plants {
+		if p.ScientificName == "Syzygium cumini" {
+			return id, false, nil
+		}
+	}
+	m.nextPlantID++
+	m.plants[m.nextPlantID] = &Plant{ID: m.nextPlantID, ScientificName: "Syzygium cumini", IsActive: true}
+	return m.nextPlantID, true, nil
 }
 
 // ─── actors ──────────────────────────────────────────────────────────────────
@@ -375,5 +418,114 @@ func TestGetCareGuide_NotFound(t *testing.T) {
 	_, err := svc(newMock()).GetCareGuide(context.Background(), 9999)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+// ─── Lookup / Resolve ────────────────────────────────────────────────────────
+
+func TestLookup_CatalogFirstThenBotanical(t *testing.T) {
+	repo := newMock()
+	repo.seedPlant(1, "Syzygium aromaticum")
+	results, err := svc(repo).Lookup(context.Background(), LookupRequest{Query: "  syzygium  ", Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 || results[0].Plant == nil || results[0].Plant.ID != 1 || results[1].Name == nil || results[1].Name.WfoID != "wfo-1" {
+		t.Fatalf("want catalog plant then one botanical name, got %+v", results)
+	}
+	if len(repo.botanicalQueries) != 1 || repo.botanicalQueries[0] != "syzygium" {
+		t.Fatalf("botanical query not trimmed: %q", repo.botanicalQueries)
+	}
+}
+
+func TestLookup_ShortQuerySkipsBotanicalNames(t *testing.T) {
+	repo := newMock()
+	if _, err := svc(repo).Lookup(context.Background(), LookupRequest{Query: "sy"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.botanicalQueries) != 0 {
+		t.Fatal("2-letter query must not search 1.66 M botanical names")
+	}
+}
+
+func TestResolve_AnySignedInUserAddsPlantOnce(t *testing.T) {
+	repo := newMock()
+	s := svc(repo)
+	first, err := s.Resolve(context.Background(), buyerActor(9), ResolvePlantRequest{WfoID: " wfo-1 "})
+	if err != nil || first.ScientificName != "Syzygium cumini" {
+		t.Fatalf("resolve: %+v %v", first, err)
+	}
+	again, err := s.Resolve(context.Background(), ownerActor(8), ResolvePlantRequest{WfoID: "wfo-1"})
+	if err != nil || again.ID != first.ID || len(repo.plants) != 1 {
+		t.Fatalf("second resolve must reuse plant %d, got %d (%d plants)", first.ID, again.ID, len(repo.plants))
+	}
+}
+
+func TestResolve_EmptyOrUnknownName(t *testing.T) {
+	s := svc(newMock())
+	if _, err := s.Resolve(context.Background(), ownerActor(1), ResolvePlantRequest{}); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("empty wfo_id: want ErrInvalidInput, got %v", err)
+	}
+	if _, err := s.Resolve(context.Background(), ownerActor(1), ResolvePlantRequest{WfoID: "wfo-nope"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown wfo_id: want ErrNotFound, got %v", err)
+	}
+}
+
+func TestCreate_UnknownWfoIDInvalid(t *testing.T) {
+	s := svc(newMock())
+	bad, good := "wfo-nope", "wfo-known"
+	if _, err := s.Create(context.Background(), adminActor(1), CreatePlantRequest{ScientificName: "X y", WfoID: &bad}); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("unknown wfo_id: want ErrInvalidInput, got %v", err)
+	}
+	if _, err := s.Create(context.Background(), adminActor(1), CreatePlantRequest{ScientificName: "X y", WfoID: &good}); err != nil {
+		t.Errorf("known wfo_id rejected: %v", err)
+	}
+}
+
+func TestEscapeLike(t *testing.T) {
+	if got := escapeLike(`50%_a\b`); got != `50\%\_a\\b` {
+		t.Fatalf("escapeLike = %q", got)
+	}
+}
+
+// ─── Botanical browse (admin) ────────────────────────────────────────────────
+
+func TestListBotanical_AdminOnlyAndNormalised(t *testing.T) {
+	repo := newMock()
+	s := svc(repo)
+	if _, _, err := s.ListBotanical(context.Background(), ownerActor(1), ListBotanicalRequest{}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("owner: want ErrForbidden, got %v", err)
+	}
+	names, page, err := s.ListBotanical(context.Background(), adminActor(1), ListBotanicalRequest{PerPage: 500, Search: "  syzygium   cumini ", Status: "accepted", Rank: " Species"})
+	if err != nil || len(names) != 1 {
+		t.Fatalf("admin list: %v %v", names, err)
+	}
+	if page.Total != 1657866 || page.PerPage != 100 || page.TotalPages != 16579 {
+		t.Fatalf("pagination: %+v", page)
+	}
+	if in := repo.lastBrowse; in.Search != "syzygium cumini" || in.Status != "ACCEPTED" || in.Rank != "species" || in.Page != 1 {
+		t.Fatalf("not normalised: %+v", in)
+	}
+	if _, _, err := s.ListBotanical(context.Background(), adminActor(1), ListBotanicalRequest{Status: "DOUBTFUL"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("bad status: want ErrInvalidInput, got %v", err)
+	}
+}
+
+func TestBotanicalFamilies_TotalsNames(t *testing.T) {
+	resp, err := svc(newMock()).BotanicalFamilies(context.Background(), adminActor(1))
+	if err != nil || resp.TotalNames != 15000 || len(resp.Families) != 2 {
+		t.Fatalf("families: %+v %v", resp, err)
+	}
+	if _, err := svc(newMock()).BotanicalFamilies(context.Background(), buyerActor(1)); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("buyer: want ErrForbidden, got %v", err)
+	}
+}
+
+func TestSearchKey_MatchesSQLNormalisation(t *testing.T) {
+	if got := searchKey("Malus × domestica"); got != "malus domestica" {
+		t.Fatalf("searchKey = %q", got)
+	}
+	if got := searchKey("×Citrofortunella"); got != "citrofortunella" {
+		t.Fatalf("searchKey = %q", got)
 	}
 }

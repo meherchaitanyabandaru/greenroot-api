@@ -16,6 +16,7 @@ type Plant struct {
 	PlantType          *string    `json:"plant_type,omitempty"`
 	LightRequirement   *string    `json:"light_requirement,omitempty"`
 	WaterRequirement   *string    `json:"water_requirement,omitempty"`
+	WfoID              *string    `json:"wfo_id,omitempty"`
 	IsActive           bool       `json:"is_active"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
@@ -62,4 +63,24 @@ type CareGuide struct {
 	Notes       *string    `json:"notes,omitempty"`
 	CreatedAt   *time.Time `json:"created_at,omitempty"`
 	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
+}
+
+// BotanicalName is one World Flora Online name (public.botanical_names) that is
+// not in the catalog yet. POST /plants/resolve turns it into a catalog plant.
+type BotanicalName struct {
+	WfoID          string  `json:"wfo_id"`
+	ScientificName string  `json:"scientific_name"`
+	Authorship     *string `json:"authorship,omitempty"`
+	Family         *string `json:"family,omitempty"`
+	TaxonRank      string  `json:"taxon_rank"`
+	Status         string  `json:"status"`
+	// Set for a SYNONYM: resolving it yields the accepted species.
+	AcceptedWfoID *string `json:"accepted_wfo_id,omitempty"`
+	AcceptedName  *string `json:"accepted_name,omitempty"`
+}
+
+// LookupResult is one plant-picker row: exactly one of Plant or Name is set.
+type LookupResult struct {
+	Plant *Plant         `json:"plant,omitempty"`
+	Name  *BotanicalName `json:"name,omitempty"`
 }
