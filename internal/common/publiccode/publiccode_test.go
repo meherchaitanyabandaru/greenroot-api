@@ -22,7 +22,7 @@ func TestFormatDateBased(t *testing.T) {
 
 func TestAllSpecsHaveValidShape(t *testing.T) {
 	specs := []Spec{
-		Users, Plants, Nurseries, Inventory, Requests, Orders, Dispatches,
+		Users, Plants, Nurseries, Requests, Orders, Dispatches,
 		Payments, Drivers, Vehicles, Attachments, Notifications, UserSubscriptions,
 	}
 

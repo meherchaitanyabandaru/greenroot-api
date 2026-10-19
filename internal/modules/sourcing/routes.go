@@ -24,14 +24,6 @@ func (m Module) RegisterRoutes(r chi.Router) {
 		r.Delete("/", m.handler.LeaveNetwork)
 	})
 
-	// Featured plants (top-20 "we usually have this" per nursery)
-	r.Route("/nurseries/{nurseryId}/featured-plants", func(r chi.Router) {
-		r.Get("/", m.handler.ListFeaturedPlants)
-		r.Post("/", m.handler.AddFeaturedPlant)
-		r.Put("/{featuredId}", m.handler.UpdateFeaturedPlant)
-		r.Delete("/{featuredId}", m.handler.DeleteFeaturedPlant)
-	})
-
 	// Network discovery — returns only approved, publicly safe nursery info
 	r.Route("/sourcing-network/nurseries", func(r chi.Router) {
 		r.Get("/", m.handler.ListNearby)

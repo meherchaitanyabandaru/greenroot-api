@@ -13,7 +13,7 @@ type Summary struct {
 	ApprovedNurseries  int64   `json:"approved_nurseries"`
 	SuspendedNurseries int64   `json:"suspended_nurseries"`
 	Plants             int64   `json:"plants"`
-	InventoryItems     int64   `json:"inventory_items"`
+	TopItems           int64   `json:"top_items"`
 	PlantRequests      int64   `json:"plant_requests"`
 	Orders             int64   `json:"orders"`
 	ActiveOrders       int64   `json:"active_orders"`

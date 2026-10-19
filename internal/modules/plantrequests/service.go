@@ -12,10 +12,9 @@ import (
 )
 
 var (
-	ErrForbidden             = apperrs.ErrForbidden
-	ErrInvalidInput          = apperrs.ErrInvalidInput
-	ErrInsufficientInventory = errors.New("insufficient inventory")
-	ErrInvalidTransition     = errors.New("invalid status transition")
+	ErrForbidden         = apperrs.ErrForbidden
+	ErrInvalidInput      = apperrs.ErrInvalidInput
+	ErrInvalidTransition = errors.New("invalid status transition")
 )
 
 type Service struct {
@@ -149,15 +148,7 @@ func (s *Service) CreateResponse(ctx context.Context, actor ActorContext, reques
 	if err := validateNewResponse(input); err != nil {
 		return Response{}, err
 	}
-	if input.Status == "AVAILABLE" || input.Status == "PARTIAL" {
-		available, err := s.repository.InventoryAvailable(ctx, input.SupplierNurseryID, request.PlantID, request.SizeID)
-		if err != nil {
-			return Response{}, err
-		}
-		if available < input.AvailableQuantity {
-			return Response{}, ErrInsufficientInventory
-		}
-	}
+	// The supplier states what it can offer; nurseries keep no stock in the app.
 	response, err := s.repository.CreateResponse(ctx, requestID, actor.UserID, input)
 	if err != nil {
 		return Response{}, err

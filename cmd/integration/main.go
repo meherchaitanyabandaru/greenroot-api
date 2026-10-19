@@ -131,18 +131,17 @@ func main() {
 	record("nurseries/address-create", c.expect(ctx, http.MethodPost, fmt.Sprintf("/api/v1/nurseries/%d/addresses", nurseryID), map[string]any{"address_line1": "Integration Street", "city": "Hyderabad", "state": "Telangana", "country": "India", "postal_code": "500001", "is_primary": true}, admin.AccessToken, http.StatusCreated))
 	record("nurseries/users-list", c.expect(ctx, http.MethodGet, "/api/v1/nurseries/1/users", nil, nursery.AccessToken, http.StatusOK))
 
-	inventoryID := int64(0)
-	inventoryBody := map[string]any{"nursery_id": 1, "plant_id": 1, "size_id": 1, "available_quantity": 20, "inventory_status": "AVAILABLE"}
-	if data, err := c.expectJSON(ctx, http.MethodPost, "/api/v1/inventory", inventoryBody, nursery.AccessToken, http.StatusCreated, http.StatusOK); err == nil {
-		inventoryID = nestedInt(data, "inventory", "id")
-		record("inventory/create-nursery", nil)
+	topItemID := int64(0)
+	topItemBody := map[string]any{"nursery_id": 1, "plant_id": 1, "size_id": 1, "unit_price": 120}
+	if data, err := c.expectJSON(ctx, http.MethodPost, "/api/v1/top-items", topItemBody, nursery.AccessToken, http.StatusCreated, http.StatusConflict); err == nil {
+		topItemID = nestedInt(data, "top_item", "id")
+		record("top-items/create-nursery", nil)
 	} else {
-		record("inventory/create-nursery", err)
+		record("top-items/create-nursery", err)
 	}
-	record("inventory/list", c.expect(ctx, http.MethodGet, "/api/v1/inventory?page=1&per_page=5", nil, admin.AccessToken, http.StatusOK))
-	if inventoryID > 0 {
-		inventoryBody["available_quantity"] = 25
-		record("inventory/update-nursery", c.expect(ctx, http.MethodPut, fmt.Sprintf("/api/v1/inventory/%d", inventoryID), inventoryBody, nursery.AccessToken, http.StatusOK))
+	record("top-items/list", c.expect(ctx, http.MethodGet, "/api/v1/top-items?page=1&per_page=5", nil, admin.AccessToken, http.StatusOK))
+	if topItemID > 0 {
+		record("top-items/update-nursery", c.expect(ctx, http.MethodPut, fmt.Sprintf("/api/v1/top-items/%d", topItemID), map[string]any{"plant_id": 1, "size_id": 1, "unit_price": 150}, nursery.AccessToken, http.StatusOK))
 	}
 
 	requestID := int64(0)

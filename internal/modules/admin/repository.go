@@ -30,7 +30,7 @@ func (r *PostgresRepository) Summary(ctx context.Context) (Summary, error) {
 		{"SELECT COUNT(*) FROM public.nurseries WHERE UPPER(COALESCE(status,'')) IN ('ACTIVE','APPROVED')", &s.ApprovedNurseries},
 		{"SELECT COUNT(*) FROM public.nurseries WHERE UPPER(COALESCE(status,'')) = 'SUSPENDED'", &s.SuspendedNurseries},
 		{"SELECT COUNT(*) FROM public.plants WHERE is_active = TRUE", &s.Plants},
-		{"SELECT COUNT(*) FROM public.nursery_inventory", &s.InventoryItems},
+		{"SELECT COUNT(*) FROM public.nursery_top_items", &s.TopItems},
 		{"SELECT COUNT(*) FROM public.plant_requests WHERE COALESCE(status,'') <> 'CANCELLED'", &s.PlantRequests},
 		{"SELECT COUNT(*) FROM public.orders WHERE UPPER(COALESCE(status,'')) <> 'CANCELLED'", &s.Orders},
 		{"SELECT COUNT(*) FROM public.orders WHERE UPPER(COALESCE(status,'')) IN ('CONFIRMED','LOADING','LOADING_COMPLETED','DISPATCH_CREATED','DISPATCHED','IN_TRANSIT')", &s.ActiveOrders},

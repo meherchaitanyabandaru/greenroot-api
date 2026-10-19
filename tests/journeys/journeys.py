@@ -391,7 +391,7 @@ def approved_driver(boss, owner):
 
 
 def team(boss):
-    """Approved owner + manager + buyer + approved driver + two stocked plants."""
+    """Approved owner + manager + buyer + approved driver + two plants listed as top items."""
     owner = approved_owner(boss)
     manager = User(first="Manager", activity="MANAGER")
     expect("manager accepts invite", "POST", f"/invites/{invite(owner, 'MANAGER_INVITE', manager)}/accept", manager.token, {})
@@ -408,8 +408,8 @@ def team(boss):
             _, found = call("GET", f"/plants?search={urllib.parse.quote(name)}", owner.token)
             body = {"plant": found["plants"][0]}
         plants.append(body["plant"]["id"])
-        expect("stock plant", "POST", "/inventory", owner.token,
-               {"nursery_id": owner.nursery_id, "plant_id": body["plant"]["id"], "size_id": size, "available_quantity": 100, "inventory_status": "AVAILABLE"}, status=(201, 409))
+        expect("list plant as a top item", "POST", "/top-items", owner.token,
+               {"nursery_id": owner.nursery_id, "plant_id": body["plant"]["id"], "size_id": size, "unit_price": 150}, status=(201, 409))
     return owner, manager, buyer, driver, plants
 
 
@@ -422,8 +422,8 @@ def journey_nursery():
     nid = n["nursery"]["id"]
     check("new nursery is PENDING", n["nursery"]["status"] == "PENDING", n["nursery"]["status"])
     expect("a second nursery for the same owner is refused", "POST", "/nurseries", owner.token, dict(body, name="Second"), status=409)
-    expect("pending nursery cannot stock plants", "POST", "/inventory", owner.token,
-           {"nursery_id": nid, "plant_id": 1, "size_id": 2, "available_quantity": 5}, status=(402, 403))
+    expect("pending nursery cannot list top items", "POST", "/top-items", owner.token,
+           {"nursery_id": nid, "plant_id": 1, "size_id": 2}, status=(402, 403))
     expect("pending nursery cannot create a quotation", "POST", "/quotations", owner.token,
            {"quotation_type": "CUSTOMER", "nursery_id": nid, "recipient_name": "x", "recipient_mobile": "9876543210", "items": [{"plant_id": 1, "quantity": 1, "unit_price": 1, "total_price": 1}]}, status=(402, 403))
     expect("owner cannot approve their own nursery", "PUT", f"/nurseries/{nid}/status", owner.token, {"status": "APPROVED"}, status=403)
@@ -972,6 +972,85 @@ def journey_redis():
     check("lock keys never linger", not redis.keys("lock:*"), redis.keys("lock:*"))
 
 
+def journey_top_items():
+    """Top items: a nursery's showcase (not stock). Owner, its managers or admin edit; max 20; no duplicates; display order; notes + photos; sourcing network shows them."""
+    boss = admin()
+    owner, manager, buyer, driver, plants = team(boss)
+    rival = approved_owner(boss, "Rival")
+    nid = owner.nursery_id
+    _, sizes = call("GET", "/plants/sizes")
+    size_ids = [x["id"] for x in sizes["sizes"]]
+    _, catalog = call("GET", "/plants?per_page=50", owner.token)
+    plant_ids = [p["id"] for p in catalog["plants"]]
+
+    out = expect("owner's top items", "GET", f"/nurseries/{nid}/top-items", owner.token)
+    items = out["top_items"]
+    check("team() listed two, in display order 0, 1", [i["display_order"] for i in items] == [0, 1], items)
+    check("…code TOP-, price kept, no stock fields", items[0]["top_item_code"].startswith("TOP-") and items[0].get("unit_price") == 150
+          and "available_quantity" not in items[0] and "inventory_status" not in items[0], items[0])
+    check("…owner can edit", items[0]["capabilities"]["can_edit"] is True, items[0]["capabilities"])
+
+    first = items[0]
+    expect("same plant and size twice is refused", "POST", "/top-items", owner.token,
+           {"nursery_id": nid, "plant_id": first["plant_id"], "size_id": first["size_id"]}, status=409)
+    expect("negative price is refused", "POST", "/top-items", owner.token, {"nursery_id": nid, "plant_id": plant_ids[2], "size_id": size_ids[0], "unit_price": -5}, status=400)
+    expect("display order outside 0–19 is refused", "POST", "/top-items", owner.token, {"nursery_id": nid, "plant_id": plant_ids[2], "size_id": size_ids[0], "display_order": 20}, status=400)
+    expect("unknown nursery", "POST", "/top-items", boss.token, {"nursery_id": 999999999, "plant_id": plant_ids[2], "size_id": size_ids[0]}, status=404)
+    expect("a rival owner cannot add to this nursery", "POST", "/top-items", rival.token, {"nursery_id": nid, "plant_id": plant_ids[2], "size_id": size_ids[0]}, status=403)
+    out = expect("the nursery's manager adds one with notes and photos", "POST", "/top-items", manager.token,
+                 {"nursery_id": nid, "plant_id": plant_ids[2], "size_id": size_ids[0], "quality_notes": "Grafted, 2 ft", "photos": ["https://cdn.example/p1.jpg"]}, status=201)
+    check("…notes and photos saved, appended last (2)", out["top_item"]["quality_notes"] == "Grafted, 2 ft" and out["top_item"]["photos"] == ["https://cdn.example/p1.jpg"]
+          and out["top_item"]["display_order"] == 2, out["top_item"])
+    expect("manager removes it again", "DELETE", f"/top-items/{out['top_item']['id']}", manager.token)
+    expect("six photos are refused", "POST", "/top-items", owner.token, {"nursery_id": nid, "plant_id": plant_ids[2], "size_id": size_ids[0], "photos": ["a"] * 6}, status=400)
+    expect("a rival's manager-less owner cannot use this nursery", "POST", "/top-items", rival.token, {"nursery_id": nid, "plant_id": plant_ids[3], "size_id": size_ids[0]}, status=403)
+    expect("a buyer cannot add top items", "POST", "/top-items", buyer.token, {"nursery_id": nid, "plant_id": plant_ids[2], "size_id": size_ids[0]}, status=403)
+    expect("a rival owner cannot edit this item", "PUT", f"/top-items/{first['id']}", rival.token, {"plant_id": first["plant_id"], "size_id": first["size_id"], "unit_price": 1}, status=403)
+    expect("a rival owner cannot delete this item", "DELETE", f"/top-items/{first['id']}", rival.token, status=403)
+    out = expect("buyer reads the nursery's top items", "GET", f"/nurseries/{nid}/top-items", buyer.token)
+    check("…read-only for the buyer", all(not i["capabilities"]["can_edit"] for i in out["top_items"]), out)
+    expect("no sign-in, no top items", "GET", "/top-items", None, status=401)
+
+    out = expect("owner changes price and moves it last", "PUT", f"/top-items/{first['id']}", owner.token,
+                 {"plant_id": first["plant_id"], "size_id": first["size_id"], "unit_price": 175.5, "display_order": 5})
+    check("…saved", out["top_item"]["unit_price"] == 175.5 and out["top_item"]["display_order"] == 5, out["top_item"])
+    out = expect("owner clears the price", "PUT", f"/top-items/{first['id']}", owner.token, {"plant_id": first["plant_id"], "size_id": first["size_id"]})
+    check("…no price, order kept", "unit_price" not in out["top_item"] and out["top_item"]["display_order"] == 5, out["top_item"])
+    expect("a stale If-Match is refused", "PUT", f"/top-items/{first['id']}", owner.token, {"plant_id": first["plant_id"], "size_id": first["size_id"]},
+           status=409, headers={"If-Match": "1"})
+
+    # Fill to the limit of 20
+    pairs = [(p, z) for p in plant_ids for z in size_ids if (p, z) not in {(i["plant_id"], i["size_id"]) for i in items}]
+    added = 0
+    for p, z in pairs[:18]:
+        code, _ = call("POST", "/top-items", owner.token, {"nursery_id": nid, "plant_id": p, "size_id": z})
+        added += code == 201
+    check("owner fills the list to 20", added == 18, added)
+    p, z = pairs[18]
+    out = expect("the 21st top item is refused", "POST", "/top-items", owner.token, {"nursery_id": nid, "plant_id": p, "size_id": z}, status=409)
+    check("…code top_items_limit", err_code(out) == "top_items_limit", out)
+    out = expect("admin cannot pass the limit either", "POST", "/top-items", boss.token, {"nursery_id": nid, "plant_id": p, "size_id": z}, status=409)
+    expect("owner removes one", "DELETE", f"/top-items/{first['id']}", owner.token)
+    expect("…and can add again", "POST", "/top-items", owner.token, {"nursery_id": nid, "plant_id": p, "size_id": z}, status=201)
+    expect("a removed item is gone", "GET", f"/top-items/{first['id']}", owner.token, status=404)
+
+    # Admin view across nurseries
+    out = expect("admin lists top items of all nurseries", "GET", "/top-items?per_page=100", boss.token)
+    nurseries = {i["nursery_id"] for i in out["top_items"]}
+    check("…several nurseries, paginated", len(nurseries) >= 2 and out["pagination"]["total"] >= 20, out["pagination"])
+    out = expect("admin filters one nursery", "GET", f"/top-items?nursery_id={rival.nursery_id}", boss.token)
+    check("…only that nursery", all(i["nursery_id"] == rival.nursery_id for i in out["top_items"]), out)
+    out = expect("which nurseries list neem", "GET", f"/plants/{plants[1]}/top-items", buyer.token)
+    check("…includes this nursery", nid in [i["nursery_id"] for i in out["top_items"]], out)
+    expect("owner joins the sourcing network", "POST", f"/nurseries/{nid}/sourcing-membership", owner.token,
+           {"road_accessible": True, "lorry_accessible": True, "contact_visible": True, "service_radius_km": 50}, status=(200, 201))
+    out = expect("rival finds the nursery in the network", "GET", f"/sourcing-network/nurseries/{nid}", rival.token)
+    shown = out.get("nursery", out).get("top_items", [])
+    check("…with its top items (at most 20)", 0 < len(shown) <= 20 and all("plant_name" in x and "photos" in x for x in shown), shown[:2])
+    out = expect("owner dashboard counts top items", "GET", "/me/owner-dashboard", owner.token)
+    check("…20", out.get("top_items", out.get("dashboard", {}).get("top_items", {})).get("total") == 20, out)
+
+
 JOURNEYS = [
     ("auth", journey_auth),
     ("accounts", journey_accounts),
@@ -979,6 +1058,7 @@ JOURNEYS = [
     ("quotation", journey_quotation),
     ("order", journey_order),
     ("dispatch", journey_dispatch),
+    ("top_items", journey_top_items),
     ("payments", journey_payments),
     ("market", journey_market),
     ("admin", journey_admin),

@@ -14,7 +14,6 @@ type mockRepo struct {
 	requests  map[int64]*PlantRequest
 	responses map[int64]*Response
 	members   map[string]bool // "nurseryID:userID"
-	inventory map[string]int  // "nurseryID:plantID" → quantity
 	nextReqID int64
 	nextResID int64
 }
@@ -24,14 +23,12 @@ func newMock() *mockRepo {
 		requests:  make(map[int64]*PlantRequest),
 		responses: make(map[int64]*Response),
 		members:   make(map[string]bool),
-		inventory: make(map[string]int),
 		nextReqID: 100,
 		nextResID: 200,
 	}
 }
 
-func mk(a, b int64) string   { return fmt.Sprintf("%d:%d", a, b) }
-func mkPI(n, p int64) string { return fmt.Sprintf("%d:%d", n, p) }
+func mk(a, b int64) string { return fmt.Sprintf("%d:%d", a, b) }
 
 func (m *mockRepo) seedMember(nurseryID, userID int64) {
 	m.members[mk(nurseryID, userID)] = true
@@ -142,14 +139,6 @@ func (m *mockRepo) UpdateResponse(_ context.Context, id int64, input UpdateRespo
 }
 
 func (m *mockRepo) RecomputeRequestStatus(_ context.Context, _ int64) error { return nil }
-
-func (m *mockRepo) InventoryAvailable(_ context.Context, nurseryID, plantID int64, _ *int16) (int, error) {
-	qty, ok := m.inventory[mkPI(nurseryID, plantID)]
-	if !ok {
-		return 0, nil
-	}
-	return qty, nil
-}
 
 func (m *mockRepo) IsNurseryMember(_ context.Context, nurseryID, userID int64) (bool, error) {
 	return m.members[mk(nurseryID, userID)], nil
@@ -398,7 +387,6 @@ func TestCreateResponse_AvailableSuccess(t *testing.T) {
 	repo := newMock()
 	repo.seedMember(2, 20)            // supplier is nursery 2
 	repo.seedRequest(1, 1, "OPEN", 5) // requesting nursery 1
-	repo.inventory[mkPI(2, 5)] = 100  // plenty in stock
 
 	resp, err := svc(repo).CreateResponse(context.Background(), ownerActor(20), 1, CreateResponseRequest{
 		SupplierNurseryID: 2,
@@ -417,7 +405,6 @@ func TestCreateResponse_SameNurseryForbidden(t *testing.T) {
 	repo := newMock()
 	repo.seedMember(1, 10)
 	repo.seedRequest(1, 1, "OPEN", 5) // requesting nursery 1
-	repo.inventory[mkPI(1, 5)] = 100
 
 	_, err := svc(repo).CreateResponse(context.Background(), ownerActor(10), 1, CreateResponseRequest{
 		SupplierNurseryID: 1, // same as requesting
@@ -429,27 +416,10 @@ func TestCreateResponse_SameNurseryForbidden(t *testing.T) {
 	}
 }
 
-func TestCreateResponse_InsufficientInventory(t *testing.T) {
+func TestCreateResponse_NotAvailable(t *testing.T) {
 	repo := newMock()
 	repo.seedMember(2, 20)
 	repo.seedRequest(1, 1, "OPEN", 5)
-	repo.inventory[mkPI(2, 5)] = 2 // only 2 in stock
-
-	_, err := svc(repo).CreateResponse(context.Background(), ownerActor(20), 1, CreateResponseRequest{
-		SupplierNurseryID: 2,
-		AvailableQuantity: 10, // wants to offer 10 but only has 2
-		Status:            "AVAILABLE",
-	})
-	if !errors.Is(err, ErrInsufficientInventory) {
-		t.Errorf("want ErrInsufficientInventory, got %v", err)
-	}
-}
-
-func TestCreateResponse_NotAvailable_NoInventoryCheck(t *testing.T) {
-	repo := newMock()
-	repo.seedMember(2, 20)
-	repo.seedRequest(1, 1, "OPEN", 5)
-	// no inventory seeded — but status is NOT_AVAILABLE, so no check needed
 
 	_, err := svc(repo).CreateResponse(context.Background(), ownerActor(20), 1, CreateResponseRequest{
 		SupplierNurseryID: 2,

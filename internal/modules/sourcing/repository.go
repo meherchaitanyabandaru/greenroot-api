@@ -26,12 +26,6 @@ type Repository interface {
 	ListNearby(ctx context.Context, q NearbyQuery) ([]NearbyNursery, int64, error)
 	GetNurseryProfile(ctx context.Context, nurseryID int64) (*NearbyNursery, error)
 
-	// Featured plants
-	ListFeaturedPlants(ctx context.Context, nurseryID int64) ([]FeaturedPlant, error)
-	AddFeaturedPlant(ctx context.Context, nurseryID int64, userID int64, req CreateFeaturedPlantRequest) (*FeaturedPlant, error)
-	UpdateFeaturedPlant(ctx context.Context, featuredID int64, req UpdateFeaturedPlantRequest) (*FeaturedPlant, error)
-	DeleteFeaturedPlant(ctx context.Context, featuredID int64) error
-
 	// Sourcing posts
 	ListPosts(ctx context.Context, q ListPostsQuery) ([]SourcingPost, int64, error)
 	GetPost(ctx context.Context, postID int64) (*SourcingPost, error)
@@ -113,13 +107,13 @@ func (r *PostgresRepository) ListNearby(ctx context.Context, q NearbyQuery) ([]N
 	args := []any{}
 	clauses := []string{"snm.is_active = true"}
 
-	// Plant name filter (matches against featured plants)
+	// Plant name filter (matches against the nursery's top items)
 	if q.PlantName != "" {
 		args = append(args, "%"+q.PlantName+"%")
 		clauses = append(clauses, fmt.Sprintf(`EXISTS (
-			SELECT 1 FROM public.nursery_featured_plants nfp
-			JOIN public.plants p ON p.plant_id = nfp.plant_id
-			WHERE nfp.nursery_id = snm.nursery_id AND nfp.is_active = true
+			SELECT 1 FROM public.nursery_top_items ti
+			JOIN public.plants p ON p.plant_id = ti.plant_id
+			WHERE ti.nursery_id = snm.nursery_id
 			  AND (p.scientific_name ILIKE $%d OR p.common_name ILIKE $%d)
 		)`, len(args), len(args)))
 	}
@@ -158,16 +152,21 @@ func (r *PostgresRepository) ListNearby(ctx context.Context, q NearbyQuery) ([]N
 	args = append(args, perPage, offset)
 
 	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
+	// DISTINCT ON needs ORDER BY nursery_id, so the nearest-first order is
+	// applied outside it.
 	dataQ := fmt.Sprintf(`
-		SELECT DISTINCT ON (snm.nursery_id)
-			snm.nursery_id, n.nursery_name, na.city, %s AS distance_km,
-			snm.is_road_accessible, snm.is_lorry_accessible,
-			CASE WHEN snm.is_contact_visible THEN n.mobile ELSE NULL END AS contact_number
-		FROM public.sourcing_network_members snm
-		JOIN public.nurseries n ON n.nursery_id = snm.nursery_id
-		LEFT JOIN public.nursery_addresses na ON na.nursery_id = snm.nursery_id AND na.is_primary = true
-		%s
-		ORDER BY snm.nursery_id, distance_km ASC NULLS LAST
+		SELECT * FROM (
+			SELECT DISTINCT ON (snm.nursery_id)
+				snm.nursery_id, n.nursery_name, na.city, %s AS distance_km,
+				snm.is_road_accessible, snm.is_lorry_accessible,
+				CASE WHEN snm.is_contact_visible THEN n.mobile ELSE NULL END AS contact_number
+			FROM public.sourcing_network_members snm
+			JOIN public.nurseries n ON n.nursery_id = snm.nursery_id
+			LEFT JOIN public.nursery_addresses na ON na.nursery_id = snm.nursery_id AND na.is_primary = true
+			%s
+			ORDER BY snm.nursery_id, distance_km ASC NULLS LAST
+		) nearby
+		ORDER BY distance_km ASC NULLS LAST, nursery_id
 		LIMIT $%d OFFSET $%d
 	`, distanceExpr, where, len(args)-1, len(args))
 
@@ -195,14 +194,27 @@ func (r *PostgresRepository) ListNearby(ctx context.Context, q NearbyQuery) ([]N
 		if contact.Valid {
 			nn.ContactNumber = &contact.String
 		}
-		// Load top 5 featured plants for each nursery
-		nn.FeaturedPlants, _ = r.listTopFeaturedPlants(ctx, nn.NurseryID, 5)
 		nurseries = append(nurseries, nn)
 	}
-	if nurseries == nil {
-		nurseries = []NearbyNursery{}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
 	}
-	return nurseries, total, rows.Err()
+	if nurseries == nil {
+		return []NearbyNursery{}, total, nil
+	}
+	// Top 5 items of every nursery on this page in one query.
+	ids := make([]int64, len(nurseries))
+	for i, nn := range nurseries {
+		ids[i] = nn.NurseryID
+	}
+	items, err := r.topItems(ctx, ids, 5)
+	if err != nil {
+		return nil, 0, err
+	}
+	for i := range nurseries {
+		nurseries[i].TopItems = items[nurseries[i].NurseryID]
+	}
+	return nurseries, total, nil
 }
 
 func (r *PostgresRepository) GetNurseryProfile(ctx context.Context, nurseryID int64) (*NearbyNursery, error) {
@@ -231,109 +243,57 @@ func (r *PostgresRepository) GetNurseryProfile(ctx context.Context, nurseryID in
 	if contact.Valid {
 		nn.ContactNumber = &contact.String
 	}
-	nn.FeaturedPlants, _ = r.listTopFeaturedPlants(ctx, nurseryID, 20)
+	items, err := r.topItems(ctx, []int64{nurseryID}, 20)
+	if err != nil {
+		return nil, err
+	}
+	nn.TopItems = items[nurseryID]
 	return &nn, nil
 }
 
-// ---- Featured plants ----
-
-func (r *PostgresRepository) ListFeaturedPlants(ctx context.Context, nurseryID int64) ([]FeaturedPlant, error) {
-	return r.listTopFeaturedPlants(ctx, nurseryID, 20)
-}
-
-func (r *PostgresRepository) listTopFeaturedPlants(ctx context.Context, nurseryID int64, limit int) ([]FeaturedPlant, error) {
-	const q = `
-		SELECT nfp.featured_id, nfp.nursery_id, nfp.plant_id,
-			COALESCE(p.common_name, p.scientific_name) AS plant_name,
-			nfp.display_order, nfp.approximate_quantity, nfp.approximate_size,
-			nfp.quality_notes, nfp.photos, nfp.is_active, nfp.created_at, nfp.updated_at
-		FROM public.nursery_featured_plants nfp
-		JOIN public.plants p ON p.plant_id = nfp.plant_id
-		WHERE nfp.nursery_id = $1 AND nfp.is_active = true
-		ORDER BY nfp.display_order ASC
-		LIMIT $2
-	`
-	rows, err := r.db.QueryContext(ctx, q, nurseryID, limit)
+// topItems returns up to perNursery top items for each nursery, in display
+// order; every requested nursery gets a non-nil slice.
+func (r *PostgresRepository) topItems(ctx context.Context, nurseryIDs []int64, perNursery int) (map[int64][]TopItem, error) {
+	out := make(map[int64][]TopItem, len(nurseryIDs))
+	for _, id := range nurseryIDs {
+		out[id] = []TopItem{}
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT nursery_id, plant_id, plant_name, size_name, unit_price, quality_notes, photos
+		FROM (
+			SELECT ti.nursery_id, ti.plant_id, COALESCE(p.common_name, p.scientific_name) AS plant_name,
+				ps.display_name AS size_name, ti.unit_price, ti.quality_notes, ti.photos,
+				row_number() OVER (PARTITION BY ti.nursery_id ORDER BY ti.display_order, ti.top_item_id) AS rank
+			FROM public.nursery_top_items ti
+			JOIN public.plants p ON p.plant_id = ti.plant_id
+			JOIN public.plant_sizes ps ON ps.size_id = ti.size_id
+			WHERE ti.nursery_id = ANY($1)
+		) ranked
+		WHERE rank <= $2
+		ORDER BY nursery_id, rank`, nurseryIDs, perNursery)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanFeaturedPlants(rows)
-}
-
-func (r *PostgresRepository) AddFeaturedPlant(ctx context.Context, nurseryID int64, userID int64, req CreateFeaturedPlantRequest) (*FeaturedPlant, error) {
-	order := req.DisplayOrder
-	if order < 1 {
-		order = 1
+	for rows.Next() {
+		var nurseryID int64
+		var item TopItem
+		var price sql.NullFloat64
+		var notes sql.NullString
+		var photos []byte
+		if err := rows.Scan(&nurseryID, &item.PlantID, &item.PlantName, &item.SizeName, &price, &notes, &photos); err != nil {
+			return nil, err
+		}
+		if price.Valid {
+			item.UnitPrice = &price.Float64
+		}
+		item.QualityNotes = nullStr(notes)
+		if err := json.Unmarshal(photos, &item.Photos); err != nil || item.Photos == nil {
+			item.Photos = []string{}
+		}
+		out[nurseryID] = append(out[nurseryID], item)
 	}
-	photos, _ := json.Marshal(req.Photos)
-	const q = `
-		INSERT INTO public.nursery_featured_plants
-			(nursery_id, plant_id, display_order, approximate_quantity, approximate_size, quality_notes, photos, added_by_user_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (nursery_id, plant_id) DO UPDATE
-			SET display_order = $3, approximate_quantity = $4, approximate_size = $5,
-				quality_notes = $6, photos = $7, is_active = true, updated_at = CURRENT_TIMESTAMP
-		RETURNING featured_id
-	`
-	var id int64
-	if err := r.db.QueryRowContext(ctx, q, nurseryID, req.PlantID, order,
-		intPtrOrNil(req.ApproximateQuantity), strPtrOrNil(req.ApproximateSize),
-		strPtrOrNil(req.QualityNotes), string(photos), userID,
-	).Scan(&id); err != nil {
-		return nil, err
-	}
-	return r.findFeaturedPlant(ctx, id)
-}
-
-func (r *PostgresRepository) UpdateFeaturedPlant(ctx context.Context, featuredID int64, req UpdateFeaturedPlantRequest) (*FeaturedPlant, error) {
-	photos, _ := json.Marshal(req.Photos)
-	result, err := r.db.ExecContext(ctx, `
-		UPDATE public.nursery_featured_plants
-		SET display_order = $2, approximate_quantity = $3, approximate_size = $4,
-			quality_notes = $5, photos = $6, is_active = $7, updated_at = CURRENT_TIMESTAMP
-		WHERE featured_id = $1`,
-		featuredID, req.DisplayOrder, intPtrOrNil(req.ApproximateQuantity),
-		strPtrOrNil(req.ApproximateSize), strPtrOrNil(req.QualityNotes), string(photos), req.IsActive,
-	)
-	if err != nil {
-		return nil, err
-	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return nil, ErrNotFound
-	}
-	return r.findFeaturedPlant(ctx, featuredID)
-}
-
-func (r *PostgresRepository) DeleteFeaturedPlant(ctx context.Context, featuredID int64) error {
-	result, err := r.db.ExecContext(ctx,
-		`UPDATE public.nursery_featured_plants SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE featured_id = $1`,
-		featuredID)
-	if err != nil {
-		return err
-	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-func (r *PostgresRepository) findFeaturedPlant(ctx context.Context, id int64) (*FeaturedPlant, error) {
-	const q = `
-		SELECT nfp.featured_id, nfp.nursery_id, nfp.plant_id,
-			COALESCE(p.common_name, p.scientific_name) AS plant_name,
-			nfp.display_order, nfp.approximate_quantity, nfp.approximate_size,
-			nfp.quality_notes, nfp.photos, nfp.is_active, nfp.created_at, nfp.updated_at
-		FROM public.nursery_featured_plants nfp
-		JOIN public.plants p ON p.plant_id = nfp.plant_id
-		WHERE nfp.featured_id = $1
-	`
-	row := r.db.QueryRowContext(ctx, q, id)
-	fp, err := scanFeaturedPlant(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	return fp, err
+	return out, rows.Err()
 }
 
 // ---- Sourcing posts ----
@@ -629,44 +589,6 @@ func scanMember(row interface{ Scan(...any) error }) (*Member, error) {
 		return nil, err
 	}
 	return &m, nil
-}
-
-func scanFeaturedPlants(rows *sql.Rows) ([]FeaturedPlant, error) {
-	var result []FeaturedPlant
-	for rows.Next() {
-		fp, err := scanFeaturedPlant(rows)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, *fp)
-	}
-	if result == nil {
-		result = []FeaturedPlant{}
-	}
-	return result, rows.Err()
-}
-
-func scanFeaturedPlant(row interface{ Scan(...any) error }) (*FeaturedPlant, error) {
-	var fp FeaturedPlant
-	var photosJSON string
-	var approxQty sql.NullInt32
-	var approxSize, qualityNotes sql.NullString
-	if err := row.Scan(&fp.ID, &fp.NurseryID, &fp.PlantID, &fp.PlantName,
-		&fp.DisplayOrder, &approxQty, &approxSize, &qualityNotes,
-		&photosJSON, &fp.IsActive, &fp.CreatedAt, &fp.UpdatedAt); err != nil {
-		return nil, err
-	}
-	if approxQty.Valid {
-		v := int(approxQty.Int32)
-		fp.ApproximateQuantity = &v
-	}
-	fp.ApproximateSize = nullStr(approxSize)
-	fp.QualityNotes = nullStr(qualityNotes)
-	_ = json.Unmarshal([]byte(photosJSON), &fp.Photos)
-	if fp.Photos == nil {
-		fp.Photos = []string{}
-	}
-	return &fp, nil
 }
 
 func scanPost(row interface{ Scan(...any) error }) (SourcingPost, error) {

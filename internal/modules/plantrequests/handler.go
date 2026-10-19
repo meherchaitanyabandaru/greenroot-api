@@ -246,8 +246,6 @@ func writeRequestsError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusForbidden, "forbidden", "not allowed to manage plant requests")
 	case errors.Is(err, ErrNotFound):
 		response.Error(w, http.StatusNotFound, "not_found", "plant request resource not found")
-	case errors.Is(err, ErrInsufficientInventory):
-		response.Error(w, http.StatusConflict, "insufficient_inventory", "supplier inventory cannot satisfy this response")
 	case errors.Is(err, ErrInvalidTransition):
 		response.Error(w, http.StatusConflict, "invalid_transition", "invalid status transition for this request")
 	case errors.Is(err, ErrInvalidInput):

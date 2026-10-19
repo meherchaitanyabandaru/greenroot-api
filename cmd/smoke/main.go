@@ -104,7 +104,7 @@ func main() {
 		"device_id_external": "greenroot-smoke",
 	}, c.token, http.StatusCreated, http.StatusOK))
 
-	record("inventory/list", c.expect(ctx, http.MethodGet, "/api/v1/inventory?page=1&per_page=5", nil, c.token, http.StatusOK))
+	record("top-items/list", c.expect(ctx, http.MethodGet, "/api/v1/top-items?page=1&per_page=5", nil, c.token, http.StatusOK))
 	record("plant-requests/list", c.expect(ctx, http.MethodGet, "/api/v1/plant-requests?page=1&per_page=5", nil, c.token, http.StatusOK, http.StatusForbidden))
 	record("orders/list", c.expect(ctx, http.MethodGet, "/api/v1/orders?page=1&per_page=5", nil, c.token, http.StatusOK))
 	record("payments/list", c.expect(ctx, http.MethodGet, "/api/v1/payments?page=1&per_page=5", nil, c.token, http.StatusOK))

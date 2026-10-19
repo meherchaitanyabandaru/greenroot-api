@@ -13,7 +13,7 @@ tags:
   - name: Users
   - name: Plants
   - name: Nurseries
-  - name: Inventory
+  - name: Top Items
   - name: Plant Requests
   - name: Orders
   - name: Payments
@@ -608,10 +608,12 @@ paths:
       responses:
         "200":
           description: Nursery users
-  /api/v1/inventory:
+  /api/v1/top-items:
     get:
-      tags: [Inventory]
-      summary: List inventory
+      tags: [Top Items]
+      summary: List top items across nurseries (showcase, not stock)
+      security:
+        - BearerAuth: []
       parameters:
         - name: page
           in: query
@@ -621,11 +623,12 @@ paths:
           in: query
           schema:
             type: integer
+            maximum: 100
         - name: search
           in: query
           schema:
             type: string
-          description: Search by nursery, scientific name, common name, or size.
+          description: Search by top item code, nursery, scientific or common name.
         - name: nursery_id
           in: query
           schema:
@@ -638,16 +641,12 @@ paths:
           in: query
           schema:
             type: integer
-        - name: inventory_status
-          in: query
-          schema:
-            type: string
-            enum: [AVAILABLE, LOW_STOCK, OUT_OF_STOCK, RESERVED, DISCONTINUED]
         - name: sort_by
           in: query
           schema:
             type: string
-            enum: [id, nursery_name, scientific_name, common_name, size_code, available_quantity, inventory_status, last_updated_at, created_at]
+            enum: [nursery_name, scientific_name, unit_price, updated_at, created_at]
+          description: Default is nursery, then each nursery's display order.
         - name: sort_order
           in: query
           schema:
@@ -655,10 +654,14 @@ paths:
             enum: [asc, desc]
       responses:
         "200":
-          description: Inventory list
+          description: Top items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopItemList"
     post:
-      tags: [Inventory]
-      summary: Create inventory item
+      tags: [Top Items]
+      summary: Add a top item (nursery owner, its managers, or admin; at most 20 per nursery)
       security:
         - BearerAuth: []
       requestBody:
@@ -666,52 +669,58 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/InventoryRequest"
+              $ref: "#/components/schemas/TopItemCreateRequest"
       responses:
         "201":
-          description: Inventory item created
-  /api/v1/inventory/{id}:
+          description: Top item added
+        "409":
+          description: "`top_items_limit` (20 reached) or `already_listed` (same plant and size)"
+  /api/v1/top-items/{id}:
     get:
-      tags: [Inventory]
-      summary: Get inventory item
-      parameters:
-        - $ref: "#/components/parameters/InventoryID"
-      responses:
-        "200":
-          description: Inventory item
-    put:
-      tags: [Inventory]
-      summary: Update inventory item
+      tags: [Top Items]
+      summary: Get a top item
       security:
         - BearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/InventoryID"
+        - $ref: "#/components/parameters/TopItemID"
+      responses:
+        "200":
+          description: Top item
+    put:
+      tags: [Top Items]
+      summary: Update a top item (stays in its nursery)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TopItemID"
         - $ref: "#/components/parameters/IfMatch"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/InventoryRequest"
+              $ref: "#/components/schemas/TopItemUpdateRequest"
       responses:
         "200":
-          description: Inventory item updated
+          description: Top item updated
         "409":
           $ref: "#/components/responses/VersionConflict"
     delete:
-      tags: [Inventory]
-      summary: Delete inventory item
+      tags: [Top Items]
+      summary: Remove a top item
       security:
         - BearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/InventoryID"
+        - $ref: "#/components/parameters/TopItemID"
       responses:
         "200":
-          description: Inventory item deleted
-  /api/v1/nurseries/{nurseryId}/inventory:
+          description: Top item removed
+  /api/v1/nurseries/{nurseryId}/top-items:
     get:
-      tags: [Inventory]
-      summary: List inventory by nursery
+      tags: [Top Items]
+      summary: A nursery's top items, in display order
+      security:
+        - BearerAuth: []
       parameters:
         - name: nurseryId
           in: path
@@ -721,11 +730,17 @@ paths:
             format: int64
       responses:
         "200":
-          description: Nursery inventory
-  /api/v1/plants/{plantId}/inventory:
+          description: Nursery top items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopItemList"
+  /api/v1/plants/{plantId}/top-items:
     get:
-      tags: [Inventory]
-      summary: List inventory by plant
+      tags: [Top Items]
+      summary: Nurseries that list this plant as a top item
+      security:
+        - BearerAuth: []
       parameters:
         - name: plantId
           in: path
@@ -735,7 +750,11 @@ paths:
             format: int64
       responses:
         "200":
-          description: Plant inventory
+          description: Top items for the plant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopItemList"
   /api/v1/plant-requests:
     get:
       tags: [Plant Requests]
@@ -3863,159 +3882,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/NurseriesNurseryResponse'
-          description: OK
-        "400":
-          $ref: '#/components/responses/Error'
-        "401":
-          $ref: '#/components/responses/Error'
-        "403":
-          $ref: '#/components/responses/Error'
-        "404":
-          $ref: '#/components/responses/Error'
-        "500":
-          $ref: '#/components/responses/Error'
-  /api/v1/nurseries/{nurseryId}/featured-plants:
-    get:
-      tags:
-        - Sourcing
-      summary: List featured plants
-      operationId: getNurseriesBynurseryIdFeaturedPlants
-      security:
-        - BearerAuth: []
-      parameters:
-        - in: path
-          name: nurseryId
-          required: true
-          schema:
-            type: integer
-            format: int64
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SourcingFeaturedPlantsResponse'
-          description: OK
-        "400":
-          $ref: '#/components/responses/Error'
-        "401":
-          $ref: '#/components/responses/Error'
-        "403":
-          $ref: '#/components/responses/Error'
-        "404":
-          $ref: '#/components/responses/Error'
-        "500":
-          $ref: '#/components/responses/Error'
-    post:
-      tags:
-        - Sourcing
-      summary: Add featured plant
-      operationId: postNurseriesBynurseryIdFeaturedPlants
-      security:
-        - BearerAuth: []
-      parameters:
-        - in: path
-          name: nurseryId
-          required: true
-          schema:
-            type: integer
-            format: int64
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SourcingCreateFeaturedPlantRequest'
-        required: true
-      responses:
-        "201":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SourcingFeaturedPlantResponse'
-          description: Created
-        "400":
-          $ref: '#/components/responses/Error'
-        "401":
-          $ref: '#/components/responses/Error'
-        "403":
-          $ref: '#/components/responses/Error'
-        "404":
-          $ref: '#/components/responses/Error'
-        "500":
-          $ref: '#/components/responses/Error'
-  /api/v1/nurseries/{nurseryId}/featured-plants/{featuredId}:
-    delete:
-      tags:
-        - Sourcing
-      summary: Delete featured plant
-      operationId: deleteNurseriesBynurseryIdFeaturedPlantsByfeaturedId
-      security:
-        - BearerAuth: []
-      parameters:
-        - in: path
-          name: nurseryId
-          required: true
-          schema:
-            type: integer
-            format: int64
-        - in: path
-          name: featuredId
-          required: true
-          schema:
-            type: integer
-            format: int64
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-          description: OK
-        "400":
-          $ref: '#/components/responses/Error'
-        "401":
-          $ref: '#/components/responses/Error'
-        "403":
-          $ref: '#/components/responses/Error'
-        "404":
-          $ref: '#/components/responses/Error'
-        "500":
-          $ref: '#/components/responses/Error'
-    put:
-      tags:
-        - Sourcing
-      summary: Update featured plant
-      operationId: putNurseriesBynurseryIdFeaturedPlantsByfeaturedId
-      security:
-        - BearerAuth: []
-      parameters:
-        - in: path
-          name: nurseryId
-          required: true
-          schema:
-            type: integer
-            format: int64
-        - in: path
-          name: featuredId
-          required: true
-          schema:
-            type: integer
-            format: int64
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SourcingUpdateFeaturedPlantRequest'
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SourcingFeaturedPlantResponse'
           description: OK
         "400":
           $ref: '#/components/responses/Error'
@@ -7665,7 +7531,7 @@ components:
       schema:
         type: integer
         format: int64
-    InventoryID:
+    TopItemID:
       name: id
       in: path
       required: true
@@ -8153,9 +8019,9 @@ components:
         role_code:
           type: string
           example: OWNER
-    InventoryRequest:
+    TopItemCreateRequest:
       type: object
-      required: [nursery_id, plant_id, size_id, available_quantity]
+      required: [nursery_id, plant_id, size_id]
       properties:
         nursery_id:
           type: integer
@@ -8165,12 +8031,126 @@ components:
           format: int64
         size_id:
           type: integer
-        available_quantity:
+        unit_price:
+          type: number
+          minimum: 0
+          nullable: true
+          description: Optional indicative price per plant.
+        display_order:
           type: integer
           minimum: 0
-        inventory_status:
+          maximum: 19
+          description: Position in the nursery's list; omitted = appended at the end.
+        quality_notes:
           type: string
-          enum: [AVAILABLE, LOW_STOCK, OUT_OF_STOCK, RESERVED, DISCONTINUED]
+          maxLength: 500
+          nullable: true
+        photos:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+    TopItemUpdateRequest:
+      type: object
+      required: [plant_id, size_id]
+      properties:
+        plant_id:
+          type: integer
+          format: int64
+        size_id:
+          type: integer
+        unit_price:
+          type: number
+          minimum: 0
+          nullable: true
+        display_order:
+          type: integer
+          minimum: 0
+          maximum: 19
+        quality_notes:
+          type: string
+          maxLength: 500
+          nullable: true
+        photos:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+    TopItem:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        top_item_code:
+          type: string
+          example: TOP-000001
+        nursery_id:
+          type: integer
+          format: int64
+        nursery_name:
+          type: string
+        plant_id:
+          type: integer
+          format: int64
+        scientific_name:
+          type: string
+        common_name:
+          type: string
+        size_id:
+          type: integer
+        size_code:
+          type: string
+        size_name:
+          type: string
+        unit_price:
+          type: number
+        display_order:
+          type: integer
+        quality_notes:
+          type: string
+        photos:
+          type: array
+          items:
+            type: string
+        updated_by_user_id:
+          type: integer
+          format: int64
+        updated_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+        capabilities:
+          type: object
+          properties:
+            can_edit:
+              type: boolean
+            can_delete:
+              type: boolean
+    TopItemList:
+      type: object
+      properties:
+        top_items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopItem"
+        pagination:
+          type: object
+          properties:
+            page:
+              type: integer
+            per_page:
+              type: integer
+            total:
+              type: integer
+              format: int64
+            total_pages:
+              type: integer
     PlantRequestRequest:
       type: object
       required: [requesting_nursery_id, plant_id, quantity_required]
@@ -8876,12 +8856,10 @@ components:
           type: integer
         managers:
           type: integer
-    AuthInventoryMetrics:
+    AuthTopItemMetrics:
       type: object
       properties:
-        available:
-          type: integer
-        total_items:
+        total:
           type: integer
     AuthOrderMetrics:
       type: object
@@ -8905,8 +8883,8 @@ components:
           $ref: '#/components/schemas/AuthQuoteMetrics'
         connections:
           $ref: '#/components/schemas/AuthConnectionMetrics'
-        inventory:
-          $ref: '#/components/schemas/AuthInventoryMetrics'
+        top_items:
+          $ref: '#/components/schemas/AuthTopItemMetrics'
         nursery_id:
           type: integer
           format: int64
@@ -10407,7 +10385,7 @@ components:
           type: boolean
         can_manage_addresses:
           type: boolean
-        can_manage_inventory:
+        can_manage_top_items:
           type: boolean
         can_manage_users:
           type: boolean
@@ -12014,27 +11992,6 @@ components:
           type: object
           additionalProperties:
             type: string
-    SourcingCreateFeaturedPlantRequest:
-      type: object
-      properties:
-        approximate_quantity:
-          type: integer
-          nullable: true
-        approximate_size:
-          type: string
-          nullable: true
-        display_order:
-          type: integer
-        photos:
-          type: array
-          items:
-            type: string
-        plant_id:
-          type: integer
-          format: int64
-        quality_notes:
-          type: string
-          nullable: true
     SourcingCreatePostRequest:
       type: object
       properties:
@@ -12083,55 +12040,25 @@ components:
         responder_nursery_id:
           type: integer
           format: int64
-    SourcingFeaturedPlant:
+    SourcingTopItem:
       type: object
+      description: A nursery's top item as the sourcing network shows it (showcase, not stock).
       properties:
-        approximate_quantity:
-          type: integer
-          nullable: true
-        approximate_size:
-          type: string
-          nullable: true
-        created_at:
-          type: string
-          format: date-time
-        display_order:
-          type: integer
-        id:
-          type: integer
-          format: int64
-        is_active:
-          type: boolean
-        nursery_id:
-          type: integer
-          format: int64
-        photos:
-          type: array
-          items:
-            type: string
         plant_id:
           type: integer
           format: int64
         plant_name:
           type: string
+        size_name:
+          type: string
+        unit_price:
+          type: number
         quality_notes:
           type: string
-          nullable: true
-        updated_at:
-          type: string
-          format: date-time
-    SourcingFeaturedPlantResponse:
-      type: object
-      properties:
-        featured_plant:
-          $ref: '#/components/schemas/SourcingFeaturedPlant'
-    SourcingFeaturedPlantsResponse:
-      type: object
-      properties:
-        featured_plants:
+        photos:
           type: array
           items:
-            $ref: '#/components/schemas/SourcingFeaturedPlant'
+            type: string
     SourcingJoinNetworkRequest:
       type: object
       properties:
@@ -12193,10 +12120,10 @@ components:
         distance_km:
           type: number
           nullable: true
-        featured_plants:
+        top_items:
           type: array
           items:
-            $ref: '#/components/schemas/SourcingFeaturedPlant'
+            $ref: '#/components/schemas/SourcingTopItem'
         lorry_accessible:
           type: boolean
         nursery_id:
@@ -12364,26 +12291,6 @@ components:
           format: date-time
         urgency:
           type: string
-    SourcingUpdateFeaturedPlantRequest:
-      type: object
-      properties:
-        approximate_quantity:
-          type: integer
-          nullable: true
-        approximate_size:
-          type: string
-          nullable: true
-        display_order:
-          type: integer
-        is_active:
-          type: boolean
-        photos:
-          type: array
-          items:
-            type: string
-        quality_notes:
-          type: string
-          nullable: true
     SourcingUpdatePostRequest:
       type: object
       properties:

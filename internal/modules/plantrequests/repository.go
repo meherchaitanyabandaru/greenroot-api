@@ -25,7 +25,6 @@ type Repository interface {
 	CreateResponse(ctx context.Context, requestID int64, actorID int64, input CreateResponseRequest) (*Response, error)
 	UpdateResponse(ctx context.Context, responseID int64, input UpdateResponseRequest) (*Response, error)
 	RecomputeRequestStatus(ctx context.Context, requestID int64) error
-	InventoryAvailable(ctx context.Context, supplierNurseryID int64, plantID int64, sizeID *int16) (int, error)
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 }
 
@@ -303,22 +302,6 @@ func (r *PostgresRepository) RecomputeRequestStatus(ctx context.Context, request
 		`UPDATE public.plant_requests SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE request_id = $1`,
 		requestID, newStatus)
 	return err
-}
-
-func (r *PostgresRepository) InventoryAvailable(ctx context.Context, supplierNurseryID int64, plantID int64, sizeID *int16) (int, error) {
-	query := `
-		SELECT COALESCE(SUM(available_quantity), 0)
-		FROM public.nursery_inventory
-		WHERE nursery_id = $1 AND plant_id = $2 AND status IN ('AVAILABLE', 'LOW_STOCK')
-	`
-	args := []any{supplierNurseryID, plantID}
-	if sizeID != nil {
-		args = append(args, *sizeID)
-		query += fmt.Sprintf(" AND size_id = $%d", len(args))
-	}
-	var available int
-	err := r.db.QueryRowContext(ctx, query, args...).Scan(&available)
-	return available, err
 }
 
 func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error) {

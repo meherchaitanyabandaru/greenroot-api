@@ -111,53 +111,6 @@ func (s *Service) GetNurseryProfile(ctx context.Context, actor ActorContext, nur
 	return *nn, nil
 }
 
-// ---- Featured plants ----
-
-func (s *Service) ListFeaturedPlants(ctx context.Context, actor ActorContext, nurseryID int64) ([]FeaturedPlant, error) {
-	if !canSource(actor) {
-		return nil, ErrForbidden
-	}
-	return s.repository.ListFeaturedPlants(ctx, nurseryID)
-}
-
-func (s *Service) AddFeaturedPlant(ctx context.Context, actor ActorContext, nurseryID int64, req CreateFeaturedPlantRequest) (FeaturedPlant, error) {
-	if err := s.canManageNursery(ctx, actor, nurseryID); err != nil {
-		return FeaturedPlant{}, err
-	}
-	if req.PlantID <= 0 {
-		return FeaturedPlant{}, ErrInvalidInput
-	}
-	fp, err := s.repository.AddFeaturedPlant(ctx, nurseryID, actor.UserID, req)
-	if err != nil {
-		return FeaturedPlant{}, err
-	}
-	s.audit(ctx, actor, "nursery_featured_plants", fp.ID, actionInsert, req)
-	return *fp, nil
-}
-
-func (s *Service) UpdateFeaturedPlant(ctx context.Context, actor ActorContext, nurseryID int64, featuredID int64, req UpdateFeaturedPlantRequest) (FeaturedPlant, error) {
-	if err := s.canManageNursery(ctx, actor, nurseryID); err != nil {
-		return FeaturedPlant{}, err
-	}
-	fp, err := s.repository.UpdateFeaturedPlant(ctx, featuredID, req)
-	if err != nil {
-		return FeaturedPlant{}, err
-	}
-	s.audit(ctx, actor, "nursery_featured_plants", featuredID, actionUpdate, req)
-	return *fp, nil
-}
-
-func (s *Service) DeleteFeaturedPlant(ctx context.Context, actor ActorContext, nurseryID int64, featuredID int64) error {
-	if err := s.canManageNursery(ctx, actor, nurseryID); err != nil {
-		return err
-	}
-	if err := s.repository.DeleteFeaturedPlant(ctx, featuredID); err != nil {
-		return err
-	}
-	s.audit(ctx, actor, "nursery_featured_plants", featuredID, actionDelete, nil)
-	return nil
-}
-
 // ---- Sourcing posts ----
 
 func (s *Service) ListPosts(ctx context.Context, actor ActorContext, q ListPostsQuery) ([]SourcingPost, Pagination, error) {

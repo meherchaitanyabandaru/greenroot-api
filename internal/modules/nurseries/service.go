@@ -754,7 +754,7 @@ func enrichNursery(actor NurseryActor, nursery Nursery) Nursery {
 			CanReject:          isAdmin && status == "PENDING",
 			CanSuspend:         isAdmin && active,
 			CanReactivate:      isAdmin && status == "SUSPENDED",
-			CanManageInventory: (isAdmin || isOwner) && active,
+			CanManageTopItems:  (isAdmin || isOwner) && active,
 			CanManageUsers:     (isAdmin || isOwner) && !deleted,
 			CanManageAddresses: (isAdmin || isOwner) && !deleted,
 		}

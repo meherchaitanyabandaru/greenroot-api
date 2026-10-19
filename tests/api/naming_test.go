@@ -38,7 +38,7 @@ var (
 	snake = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
 
 	// Mass nouns read wrongly in the plural.
-	singularTables = map[string]bool{"nursery_inventory": true, "platform_config": true, "vehicle_tracking": true}
+	singularTables = map[string]bool{"platform_config": true, "vehicle_tracking": true}
 
 	// Tables whose key is not a surrogate <entity>_id.
 	naturalKeys = map[string]bool{

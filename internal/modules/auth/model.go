@@ -71,7 +71,7 @@ type OwnerDashboard struct {
 	BuyOrders   OrderMetrics      `json:"buy_orders"`
 	SellQuotes  QuoteMetrics      `json:"sell_quotations"`
 	BuyQuotes   QuoteMetrics      `json:"buy_quotations"`
-	Inventory   InventoryMetrics  `json:"inventory"`
+	TopItems    TopItemMetrics    `json:"top_items"`
 	Connections ConnectionMetrics `json:"connections"`
 }
 
@@ -90,9 +90,9 @@ type QuoteMetrics struct {
 	Rejected int `json:"rejected"`
 }
 
-type InventoryMetrics struct {
-	TotalItems int `json:"total_items"`
-	Available  int `json:"available"`
+// TopItemMetrics counts the nursery's showcase items (max 20).
+type TopItemMetrics struct {
+	Total int `json:"total"`
 }
 
 type ConnectionMetrics struct {

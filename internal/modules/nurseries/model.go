@@ -45,7 +45,7 @@ type NurseryCapabilities struct {
 	CanReject          bool `json:"can_reject"`
 	CanSuspend         bool `json:"can_suspend"`
 	CanReactivate      bool `json:"can_reactivate"`
-	CanManageInventory bool `json:"can_manage_inventory"`
+	CanManageTopItems  bool `json:"can_manage_top_items"`
 	CanManageUsers     bool `json:"can_manage_users"`
 	CanManageAddresses bool `json:"can_manage_addresses"`
 }

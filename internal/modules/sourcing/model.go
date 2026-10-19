@@ -30,31 +30,25 @@ type Member struct {
 // NearbyNursery is a discovery-safe summary of a network member.
 // Sensitive business data (customers, orders, financials) is never included.
 type NearbyNursery struct {
-	NurseryID       int64           `json:"nursery_id"`
-	NurseryName     string          `json:"nursery_name"`
-	Village         *string         `json:"village,omitempty"`
-	DistanceKM      *float64        `json:"distance_km,omitempty"`
-	RoadAccessible  bool            `json:"road_accessible"`
-	LorryAccessible bool            `json:"lorry_accessible"`
-	ContactNumber   *string         `json:"contact_number,omitempty"`
-	FeaturedPlants  []FeaturedPlant `json:"featured_plants,omitempty"`
+	NurseryID       int64     `json:"nursery_id"`
+	NurseryName     string    `json:"nursery_name"`
+	Village         *string   `json:"village,omitempty"`
+	DistanceKM      *float64  `json:"distance_km,omitempty"`
+	RoadAccessible  bool      `json:"road_accessible"`
+	LorryAccessible bool      `json:"lorry_accessible"`
+	ContactNumber   *string   `json:"contact_number,omitempty"`
+	TopItems        []TopItem `json:"top_items"`
 }
 
-// FeaturedPlant is one of the nursery's top-20 "we usually have this" plants.
-// NOT inventory — approximate only.
-type FeaturedPlant struct {
-	ID                  int64     `json:"id"`
-	NurseryID           int64     `json:"nursery_id"`
-	PlantID             int64     `json:"plant_id"`
-	PlantName           string    `json:"plant_name"`
-	DisplayOrder        int16     `json:"display_order"`
-	ApproximateQuantity *int      `json:"approximate_quantity,omitempty"`
-	ApproximateSize     *string   `json:"approximate_size,omitempty"`
-	QualityNotes        *string   `json:"quality_notes,omitempty"`
-	Photos              []string  `json:"photos"`
-	IsActive            bool      `json:"is_active"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+// TopItem is the network view of one of the nursery's top items
+// (topitems module). Not stock — a showcase.
+type TopItem struct {
+	PlantID      int64    `json:"plant_id"`
+	PlantName    string   `json:"plant_name"`
+	SizeName     string   `json:"size_name"`
+	UnitPrice    *float64 `json:"unit_price,omitempty"`
+	QualityNotes *string  `json:"quality_notes,omitempty"`
+	Photos       []string `json:"photos"`
 }
 
 // SourcingPost is a NEED or AVAILABLE announcement broadcast to nearby members.
@@ -133,24 +127,6 @@ type NearbyQuery struct {
 	PerPage   int      `json:"-"`
 }
 
-type CreateFeaturedPlantRequest struct {
-	PlantID             int64    `json:"plant_id"`
-	DisplayOrder        int16    `json:"display_order"`
-	ApproximateQuantity *int     `json:"approximate_quantity,omitempty"`
-	ApproximateSize     *string  `json:"approximate_size,omitempty"`
-	QualityNotes        *string  `json:"quality_notes,omitempty"`
-	Photos              []string `json:"photos"`
-}
-
-type UpdateFeaturedPlantRequest struct {
-	DisplayOrder        int16    `json:"display_order"`
-	ApproximateQuantity *int     `json:"approximate_quantity,omitempty"`
-	ApproximateSize     *string  `json:"approximate_size,omitempty"`
-	QualityNotes        *string  `json:"quality_notes,omitempty"`
-	Photos              []string `json:"photos"`
-	IsActive            bool     `json:"is_active"`
-}
-
 type CreatePostRequest struct {
 	NurseryID    int64   `json:"nursery_id"`
 	PostType     string  `json:"post_type"`
@@ -203,14 +179,6 @@ type MemberResponse struct {
 type NearbyNurseriesResponse struct {
 	Nurseries  []NearbyNursery `json:"nurseries"`
 	Pagination Pagination      `json:"pagination"`
-}
-
-type FeaturedPlantResponse struct {
-	FeaturedPlant FeaturedPlant `json:"featured_plant"`
-}
-
-type FeaturedPlantsResponse struct {
-	FeaturedPlants []FeaturedPlant `json:"featured_plants"`
 }
 
 type PostWrapResponse struct {

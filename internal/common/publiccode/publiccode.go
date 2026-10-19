@@ -22,7 +22,6 @@ var (
 	Users             = Spec{Key: "users", Prefix: "USR", Width: 6}
 	Plants            = Spec{Key: "plants", Prefix: "PLT", Width: 6}
 	Nurseries         = Spec{Key: "nurseries", Prefix: "NUR", Width: 6}
-	Inventory         = Spec{Key: "nursery_inventory", Prefix: "INV", Width: 6}
 	Requests          = Spec{Key: "plant_requests", Prefix: "REQ", Width: 4, DateBased: true}
 	Orders            = Spec{Key: "orders", Prefix: "ORD", Width: 4, DateBased: true}
 	Dispatches        = Spec{Key: "dispatches", Prefix: "DSP", Width: 4, DateBased: true}

@@ -546,10 +546,7 @@ func (r *PostgresRepository) GetOwnerDashboard(ctx context.Context, userID int64
 		query string
 		dest  []any
 	}{
-		// Was `status`, a column that does not exist: the error was swallowed
-		// and owners always saw 0 inventory.
-		{`SELECT COUNT(*), COALESCE(SUM(CASE WHEN status = 'AVAILABLE' THEN 1 ELSE 0 END), 0)
-			FROM public.nursery_inventory WHERE nursery_id = $1`, []any{&d.Inventory.TotalItems, &d.Inventory.Available}},
+		{`SELECT COUNT(*) FROM public.nursery_top_items WHERE nursery_id = $1`, []any{&d.TopItems.Total}},
 		{`SELECT COUNT(*) FROM public.nursery_users WHERE nursery_id = $1 AND role = 'MANAGER' AND status = 'ACTIVE'`, []any{&d.Connections.Managers}},
 		// Orders and dispatches carry the selling nursery in orders.seller_nursery_id;
 		// orders.nursery_id and dispatches.nursery_id are not populated.

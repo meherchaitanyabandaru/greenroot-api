@@ -64,11 +64,6 @@ type VehicleDisplays struct {
 	NextActions Actions `json:"next_actions"`
 }
 
-type InventoryDisplays struct {
-	Operator    Display `json:"operator"`
-	NextActions Actions `json:"next_actions"`
-}
-
 type Actions struct {
 	Customer []string `json:"customer,omitempty"`
 	Operator []string `json:"operator,omitempty"`
@@ -178,14 +173,6 @@ func Vehicle(status string) VehicleDisplays {
 	return VehicleDisplays{
 		Operator:    vehicleDisplay(status),
 		NextActions: vehicleActions(status),
-	}
-}
-
-func Inventory(status string) InventoryDisplays {
-	status = strings.ToUpper(strings.TrimSpace(status))
-	return InventoryDisplays{
-		Operator:    inventoryDisplay(status),
-		NextActions: inventoryActions(status),
 	}
 }
 
@@ -335,7 +322,7 @@ func nurseryActions(status string) Actions {
 	case "PENDING":
 		return Actions{Owner: []string{"View Application"}, Operator: []string{"Approve Nursery", "Reject Nursery"}}
 	case "APPROVED", "ACTIVE":
-		return Actions{Owner: []string{"Manage Nursery", "Manage Inventory"}, Operator: []string{"Edit Nursery", "Suspend Nursery"}}
+		return Actions{Owner: []string{"Manage Nursery", "Manage Top Items"}, Operator: []string{"Edit Nursery", "Suspend Nursery"}}
 	case "SUSPENDED":
 		return Actions{Owner: []string{"View Nursery"}, Operator: []string{"Reactivate Nursery", "Edit Nursery"}}
 	case "REJECTED":
@@ -359,23 +346,6 @@ func vehicleActions(status string) Actions {
 		return Actions{Operator: []string{"View Vehicle"}}
 	default:
 		return Actions{Operator: []string{"View Vehicle"}}
-	}
-}
-
-func inventoryActions(status string) Actions {
-	switch status {
-	case "AVAILABLE":
-		return Actions{Operator: []string{"Edit Stock", "Reserve Stock", "Discontinue Stock"}}
-	case "LOW_STOCK":
-		return Actions{Operator: []string{"Restock", "Edit Stock"}}
-	case "OUT_OF_STOCK":
-		return Actions{Operator: []string{"Restock", "Discontinue Stock"}}
-	case "RESERVED":
-		return Actions{Operator: []string{"Edit Reservation", "Release Stock"}}
-	case "DISCONTINUED":
-		return Actions{Operator: []string{"View Stock"}}
-	default:
-		return Actions{Operator: []string{"View Stock"}}
 	}
 }
 
@@ -658,24 +628,6 @@ func vehicleDisplay(status string) Display {
 		return Display{"Maintenance", "Vehicle In Maintenance", "Avoid assigning this vehicle.", "warning"}
 	case "RETIRED":
 		return Display{"Retired", "Vehicle Retired", "Vehicle is no longer in service.", "neutral"}
-	default:
-		label := pretty(status)
-		return Display{label, label, "", "neutral"}
-	}
-}
-
-func inventoryDisplay(status string) Display {
-	switch status {
-	case "AVAILABLE":
-		return Display{"Available", "Stock Available", "This item can be sold.", "success"}
-	case "LOW_STOCK":
-		return Display{"Low Stock", "Low Stock", "Restock soon.", "warning"}
-	case "OUT_OF_STOCK":
-		return Display{"Out of Stock", "Out of Stock", "This item needs restocking.", "error"}
-	case "RESERVED":
-		return Display{"Reserved", "Stock Reserved", "Quantity is held for an order or request.", "info"}
-	case "DISCONTINUED":
-		return Display{"Discontinued", "Stock Discontinued", "This item is no longer sold.", "neutral"}
 	default:
 		label := pretty(status)
 		return Display{label, label, "", "neutral"}

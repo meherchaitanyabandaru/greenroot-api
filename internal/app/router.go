@@ -21,7 +21,6 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/drivers"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/email"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/health"
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/inventory"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/invites"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/market"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/messaging"
@@ -38,6 +37,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sourcing"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/storage"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/subscriptions"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/topitems"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/tracking"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/users"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/vehicles"
@@ -101,7 +101,7 @@ func NewRouter(deps Dependencies) chi.Router {
 		audit.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		dispatches.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...).RegisterRoutes(r)
 		drivers.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...).RegisterRoutes(r)
-		inventory.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
+		topitems.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		market.NewModule(deps.DB, deps.JWT, deps.Redis).RegisterRoutes(r)
 		invites.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...).RegisterRoutes(r)
 		notifications.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)

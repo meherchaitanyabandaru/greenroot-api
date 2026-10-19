@@ -67,24 +67,6 @@ func (m *mockRepo) GetNurseryProfile(_ context.Context, nurseryID int64) (*Nearb
 	return nn, nil
 }
 
-func (m *mockRepo) ListFeaturedPlants(_ context.Context, nurseryID int64) ([]FeaturedPlant, error) {
-	return nil, nil
-}
-
-func (m *mockRepo) AddFeaturedPlant(_ context.Context, nurseryID, userID int64, req CreateFeaturedPlantRequest) (*FeaturedPlant, error) {
-	fp := &FeaturedPlant{ID: m.next(), NurseryID: nurseryID, PlantID: req.PlantID}
-	return fp, nil
-}
-
-func (m *mockRepo) UpdateFeaturedPlant(_ context.Context, featuredID int64, req UpdateFeaturedPlantRequest) (*FeaturedPlant, error) {
-	fp := &FeaturedPlant{ID: featuredID}
-	return fp, nil
-}
-
-func (m *mockRepo) DeleteFeaturedPlant(_ context.Context, featuredID int64) error {
-	return nil
-}
-
 func (m *mockRepo) ListPosts(_ context.Context, q ListPostsQuery) ([]SourcingPost, int64, error) {
 	var result []SourcingPost
 	for _, p := range m.posts {
@@ -193,13 +175,6 @@ func TestGetNurseryProfile_BuyerForbidden(t *testing.T) {
 	}
 }
 
-func TestListFeaturedPlants_ManagerSuccess(t *testing.T) {
-	_, err := svc(newMock()).ListFeaturedPlants(context.Background(), managerActor(10), 1)
-	if err != nil {
-		t.Fatalf("manager should list featured plants: %v", err)
-	}
-}
-
 // ─── JoinNetwork / LeaveNetwork ──────────────────────────────────────────────
 
 func TestJoinNetwork_MemberSuccess(t *testing.T) {
@@ -236,38 +211,6 @@ func TestLeaveNetwork_MemberSuccess(t *testing.T) {
 	err := svc(repo).LeaveNetwork(context.Background(), ownerActor(10), 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-// ─── AddFeaturedPlant ─────────────────────────────────────────────────────────
-
-func TestAddFeaturedPlant_MemberSuccess(t *testing.T) {
-	repo := newMock()
-	repo.seedMember(1, 10)
-
-	fp, err := svc(repo).AddFeaturedPlant(context.Background(), ownerActor(10), 1, CreateFeaturedPlantRequest{PlantID: 5})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if fp.PlantID != 5 {
-		t.Errorf("want PlantID 5, got %d", fp.PlantID)
-	}
-}
-
-func TestAddFeaturedPlant_ZeroPlantIDInvalid(t *testing.T) {
-	repo := newMock()
-	repo.seedMember(1, 10)
-
-	_, err := svc(repo).AddFeaturedPlant(context.Background(), ownerActor(10), 1, CreateFeaturedPlantRequest{PlantID: 0})
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("want ErrInvalidInput for PlantID=0, got %v", err)
-	}
-}
-
-func TestAddFeaturedPlant_NonMemberForbidden(t *testing.T) {
-	_, err := svc(newMock()).AddFeaturedPlant(context.Background(), ownerActor(10), 1, CreateFeaturedPlantRequest{PlantID: 5})
-	if !errors.Is(err, ErrForbidden) {
-		t.Errorf("want ErrForbidden for non-member, got %v", err)
 	}
 }
 
