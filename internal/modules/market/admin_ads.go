@@ -287,3 +287,50 @@ func (m *moderationHandler) UnblockNursery(w http.ResponseWriter, r *http.Reques
 	}
 	response.OK(w, map[string]any{"nursery_id": id, "blocked_until": nil})
 }
+
+// BlockedNursery is a nursery currently barred from posting market ads.
+type BlockedNursery struct {
+	NurseryID    int64     `json:"nursery_id"`
+	NurseryName  string    `json:"nursery_name"`
+	Strikes      int       `json:"strikes"`
+	BlockedUntil time.Time `json:"blocked_until"`
+}
+
+// ListBlockedNurseries godoc
+//
+//	@Summary	Nurseries currently blocked from posting market ads (admin)
+//	@Tags		Market
+//	@Security	BearerAuth
+//	@Router		/api/v1/market/admin/blocked-nurseries [get]
+func (m *moderationHandler) ListBlockedNurseries(w http.ResponseWriter, r *http.Request) {
+	if _, ok := m.adminOnly(w, r); !ok {
+		return
+	}
+	rows, err := m.db.QueryContext(r.Context(), `
+		SELECT n.nursery_id, n.nursery_name,
+		       (SELECT count(*) FROM public.market_ads x WHERE x.nursery_id = n.nursery_id AND x.status = 'REMOVED'),
+		       n.market_blocked_until
+		FROM public.nurseries n
+		WHERE n.market_blocked_until > NOW()
+		ORDER BY n.market_blocked_until DESC
+		LIMIT 200`)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer rows.Close()
+	out := []BlockedNursery{}
+	for rows.Next() {
+		var b BlockedNursery
+		if err := rows.Scan(&b.NurseryID, &b.NurseryName, &b.Strikes, &b.BlockedUntil); err != nil {
+			writeError(w, err)
+			return
+		}
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, map[string]any{"nurseries": out})
+}

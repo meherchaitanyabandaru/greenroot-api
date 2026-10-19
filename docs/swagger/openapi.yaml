@@ -4746,6 +4746,19 @@ paths:
           $ref: '#/components/responses/Error'
         "409":
           $ref: '#/components/responses/Error'
+  /api/v1/market/admin/blocked-nurseries:
+    get:
+      tags: [Market]
+      summary: Nurseries currently blocked from posting market ads (admin)
+      description: Latest block first, up to 200, each with its strike count (removed ads).
+      operationId: listMarketBlockedNurseries
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: "{ nurseries: [{ nursery_id, nursery_name, strikes, blocked_until }] }"
+        "403":
+          $ref: '#/components/responses/Error'
   /api/v1/market/admin/nurseries/{id}/unblock:
     post:
       tags: [Market]

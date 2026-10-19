@@ -32,6 +32,7 @@ func (m Module) RegisterRoutes(r chi.Router) {
 		r.Get("/admin/ads", m.moderation.ListAllAds)
 		r.Post("/admin/ads/{id}/moderate", m.moderation.ModerateAd)
 		r.Post("/admin/nurseries/{id}/unblock", m.moderation.UnblockNursery)
+		r.Get("/admin/blocked-nurseries", m.moderation.ListBlockedNurseries)
 
 		// Browse published ads from all nurseries
 		r.Get("/ads", m.handler.BrowseAds)
