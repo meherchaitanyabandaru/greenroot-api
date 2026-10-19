@@ -45,6 +45,9 @@ type UserSubscription struct {
 	PlanID           int64                           `json:"plan_id"`
 	PlanCode         string                          `json:"plan_code"`
 	PlanName         string                          `json:"plan_name"`
+	UserName         *string                         `json:"user_name,omitempty"`
+	UserMobile       *string                         `json:"user_mobile,omitempty"`
+	NurseryName      *string                         `json:"nursery_name,omitempty"` // the subscriber's owned nursery
 	StartDate        time.Time                       `json:"start_date"`
 	EndDate          *time.Time                      `json:"end_date,omitempty"`
 	Status           string                          `json:"subscription_status"`

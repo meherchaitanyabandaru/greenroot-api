@@ -73,7 +73,8 @@ func (r *PostgresRepository) List(ctx context.Context, input ListNurseriesReques
 		SELECT DISTINCT n.nursery_id, n.nursery_code, n.nursery_name, n.mobile,
 			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
 			n.created_at, n.updated_at, n.created_by_user_id, n.updated_by_user_id, n.rejection_reason, n.rejected_at,
-			n.logo_url, n.brand_icon_key, n.brand_color
+			n.logo_url, n.brand_icon_key, n.brand_color,
+			(SELECT NULLIF(TRIM(CONCAT_WS(' ', ou.first_name, ou.last_name)), '') FROM public.users ou WHERE ou.user_id = n.owner_user_id)
 		FROM public.nurseries n
 		%s
 		ORDER BY n.nursery_id DESC
@@ -835,7 +836,8 @@ func (r *PostgresRepository) ListByUserID(ctx context.Context, userID int64) ([]
 		SELECT DISTINCT n.nursery_id, n.nursery_code, n.nursery_name, n.mobile,
 			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
 			n.created_at, n.updated_at, n.created_by_user_id, n.updated_by_user_id, n.rejection_reason, n.rejected_at,
-			n.logo_url, n.brand_icon_key, n.brand_color
+			n.logo_url, n.brand_icon_key, n.brand_color,
+			(SELECT NULLIF(TRIM(CONCAT_WS(' ', ou.first_name, ou.last_name)), '') FROM public.users ou WHERE ou.user_id = n.owner_user_id)
 		FROM public.nurseries n
 		JOIN public.nursery_users nu ON nu.nursery_id = n.nursery_id
 		WHERE nu.user_id = $1
@@ -970,7 +972,8 @@ func (r *PostgresRepository) scanNursery(ctx context.Context, where string, args
 		SELECT n.nursery_id, n.nursery_code, n.nursery_name, n.mobile,
 			n.email, n.website, n.description, COALESCE(n.status::text, ''), n.owner_user_id,
 			n.created_at, n.updated_at, n.created_by_user_id, n.updated_by_user_id, n.rejection_reason, n.rejected_at,
-			n.logo_url, n.brand_icon_key, n.brand_color
+			n.logo_url, n.brand_icon_key, n.brand_color,
+			(SELECT NULLIF(TRIM(CONCAT_WS(' ', ou.first_name, ou.last_name)), '') FROM public.users ou WHERE ou.user_id = n.owner_user_id)
 		FROM public.nurseries n
 		` + where
 	nursery, err := scanNurseryRow(r.db.QueryRowContext(ctx, query, args...))
@@ -1036,17 +1039,18 @@ func scanNurseryRows(rows *sql.Rows) (Nursery, error) {
 func scanNursery(row interface{ Scan(dest ...any) error }) (Nursery, error) {
 	var nursery Nursery
 	var code, mobile, email, website, description, rejectionReason sql.NullString
-	var logoURL, brandIconKey, brandColor sql.NullString
+	var logoURL, brandIconKey, brandColor, ownerName sql.NullString
 	var ownerUserID, createdBy, updatedBy sql.NullInt64
 	var rejectedAt sql.NullTime
 	if err := row.Scan(
 		&nursery.ID, &code, &nursery.Name, &mobile, &email, &website, &description,
 		&nursery.Status, &ownerUserID, &nursery.CreatedAt, &nursery.UpdatedAt, &createdBy, &updatedBy,
 		&rejectionReason, &rejectedAt,
-		&logoURL, &brandIconKey, &brandColor,
+		&logoURL, &brandIconKey, &brandColor, &ownerName,
 	); err != nil {
 		return Nursery{}, err
 	}
+	nursery.OwnerName = nullableString(ownerName)
 	nursery.Code = nullableString(code)
 	nursery.NurseryCode = nullableString(code)
 	nursery.Mobile = nullableString(mobile)

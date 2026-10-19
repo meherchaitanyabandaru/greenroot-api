@@ -260,6 +260,9 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 	if err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(stringOrEmpty(input.DispatchNumber)) == "" {
+		input.DispatchNumber = &dispatchCode
+	}
 
 	const query = `
 		INSERT INTO public.dispatches (

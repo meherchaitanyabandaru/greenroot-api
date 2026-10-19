@@ -38,14 +38,55 @@ func (r *PostgresRepository) Summary(ctx context.Context) (Summary, error) {
 		{"SELECT COUNT(*) FROM public.dispatches WHERE COALESCE(status,'') <> 'CANCELLED'", &s.Dispatches},
 		{"SELECT COUNT(*) FROM public.notifications", &s.Notifications},
 		{"SELECT COUNT(*) FROM public.drivers WHERE UPPER(COALESCE(approval_status,'')) = 'APPROVED' AND COALESCE(status::text,'') = 'ACTIVE'", &s.ActiveDrivers},
+		{"SELECT COUNT(*) FROM public.orders WHERE created_at >= date_trunc('day', now())", &s.OrdersToday},
+		{"SELECT COUNT(*) FROM public.dispatches WHERE created_at >= date_trunc('day', now())", &s.DispatchesToday},
+		{"SELECT COUNT(*) FROM public.dispatches WHERE status IN ('ACCEPTED','DISPATCHED','IN_TRANSIT')", &s.ActiveTrips},
+		{"SELECT COUNT(*) FROM public.payments WHERE status = 'PENDING'", &s.PendingPayments},
+		{"SELECT COUNT(*) FROM public.security_audit_logs WHERE event_type = 'LOGIN_FAILED' AND created_at >= now() - interval '24 hours'", &s.FailedLogins24h},
+		{"SELECT COUNT(*) FROM public.client_crash_reports WHERE received_at >= now() - interval '24 hours'", &s.CrashReports24h},
+		{"SELECT COUNT(*) FROM public.botanical_names", &s.BotanicalNames},
 	}
 	for _, q := range queries {
 		if err := r.db.QueryRowContext(ctx, q.name).Scan(q.dest); err != nil {
 			return s, err
 		}
 	}
-	_ = r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(amount),0) FROM public.payments WHERE status::text='SUCCESS'`).Scan(&s.Revenue)
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(amount), 0),
+			COALESCE(SUM(amount) FILTER (WHERE payment_for = 'ORDER'), 0),
+			COALESCE(SUM(amount) FILTER (WHERE payment_for = 'SUBSCRIPTION'), 0)
+		FROM public.payments WHERE status = 'SUCCESS'`).Scan(&s.Revenue, &s.OrderRevenue, &s.SubscriptionRevenue); err != nil {
+		return s, err
+	}
+	trend, err := r.trend(ctx)
+	if err != nil {
+		return s, err
+	}
+	s.Trend = trend
 	return s, nil
+}
+
+// trend returns orders and dispatches created per business day for the last 7 days.
+func (r *PostgresRepository) trend(ctx context.Context) ([]DayTotals, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT to_char(d, 'YYYY-MM-DD'),
+			(SELECT COUNT(*) FROM public.orders WHERE created_at >= d AND created_at < d + interval '1 day'),
+			(SELECT COUNT(*) FROM public.dispatches WHERE created_at >= d AND created_at < d + interval '1 day')
+		FROM generate_series(date_trunc('day', now()) - interval '6 days', date_trunc('day', now()), interval '1 day') AS d
+		ORDER BY d`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	days := make([]DayTotals, 0, 7)
+	for rows.Next() {
+		var d DayTotals
+		if err := rows.Scan(&d.Day, &d.Orders, &d.Dispatches); err != nil {
+			return nil, err
+		}
+		days = append(days, d)
+	}
+	return days, rows.Err()
 }
 
 func (r *PostgresRepository) ListUsers(ctx context.Context, input ListUsersRequest) ([]User, int64, error) {

@@ -17,6 +17,7 @@ type AuditLog struct {
 	OldData     *string   `json:"old_data,omitempty"`
 	NewData     *string   `json:"new_data,omitempty"`
 	UserID      *int64    `json:"user_id,omitempty"`
+	UserName    *string   `json:"user_name,omitempty"`
 	RequestID   *string   `json:"request_id,omitempty"`
 	NurseryID   *int64    `json:"nursery_id,omitempty"`
 	SourceIP    *string   `json:"source_ip,omitempty"`
@@ -29,6 +30,7 @@ type SecurityLog struct {
 	EventType   string    `json:"event_type"`
 	Description *string   `json:"description,omitempty"`
 	UserID      *int64    `json:"user_id,omitempty"`
+	UserName    *string   `json:"user_name,omitempty"`
 	NurseryID   *int64    `json:"nursery_id,omitempty"`
 	RequestID   *string   `json:"request_id,omitempty"`
 	IPAddress   *string   `json:"ip_address,omitempty"`

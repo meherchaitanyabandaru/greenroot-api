@@ -31,7 +31,8 @@ func (r *PostgresRepository) List(ctx context.Context, in ListRequest) ([]AuditL
 		       record_id, action_type,
 		       description, old_data::text, new_data::text,
 		       user_id, request_id, nursery_id,
-		       source_ip, user_agent, changed_at
+		       source_ip, user_agent, changed_at,
+		       (SELECT NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), '') FROM public.users u WHERE u.user_id = audit_logs.user_id)
 		FROM public.audit_logs %s
 		ORDER BY audit_id DESC
 		LIMIT $%d OFFSET $%d`, where, len(args)-1, len(args))
@@ -45,14 +46,14 @@ func (r *PostgresRepository) List(ctx context.Context, in ListRequest) ([]AuditL
 	out := []AuditLog{}
 	for rows.Next() {
 		var a AuditLog
-		var desc, oldd, newd, ip, ua, reqID sql.NullString
+		var desc, oldd, newd, ip, ua, reqID, userName sql.NullString
 		var userID, nurseryID sql.NullInt64
 		if err := rows.Scan(
 			&a.ID, &a.Module, &a.EntityType,
 			&a.RecordID, &a.Action,
 			&desc, &oldd, &newd,
 			&userID, &reqID, &nurseryID,
-			&ip, &ua, &a.ChangedAt,
+			&ip, &ua, &a.ChangedAt, &userName,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -67,6 +68,9 @@ func (r *PostgresRepository) List(ctx context.Context, in ListRequest) ([]AuditL
 		}
 		if userID.Valid {
 			a.UserID = &userID.Int64
+		}
+		if userName.Valid {
+			a.UserName = &userName.String
 		}
 		if reqID.Valid {
 			a.RequestID = &reqID.String
@@ -109,7 +113,8 @@ func (r *PostgresRepository) ListSecurity(ctx context.Context, in ListSecurityRe
 		SELECT security_audit_log_id, event_type, description,
 		       user_id, nursery_id, request_id,
 		       ip_address, device_info::text, metadata::text,
-		       created_at
+		       created_at,
+		       (SELECT NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), '') FROM public.users u WHERE u.user_id = security_audit_logs.user_id)
 		FROM public.security_audit_logs %s
 		ORDER BY security_audit_log_id DESC
 		LIMIT $%d OFFSET $%d`, where, len(args)-1, len(args))
@@ -123,13 +128,13 @@ func (r *PostgresRepository) ListSecurity(ctx context.Context, in ListSecurityRe
 	out := []SecurityLog{}
 	for rows.Next() {
 		var s SecurityLog
-		var desc, deviceInfo, metadata, reqID, ip sql.NullString
+		var desc, deviceInfo, metadata, reqID, ip, userName sql.NullString
 		var userID, nurseryID sql.NullInt64
 		if err := rows.Scan(
 			&s.ID, &s.EventType, &desc,
 			&userID, &nurseryID, &reqID,
 			&ip, &deviceInfo, &metadata,
-			&s.CreatedAt,
+			&s.CreatedAt, &userName,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -138,6 +143,9 @@ func (r *PostgresRepository) ListSecurity(ctx context.Context, in ListSecurityRe
 		}
 		if userID.Valid {
 			s.UserID = &userID.Int64
+		}
+		if userName.Valid {
+			s.UserName = &userName.String
 		}
 		if nurseryID.Valid {
 			s.NurseryID = &nurseryID.Int64

@@ -22,6 +22,24 @@ type Summary struct {
 	Notifications      int64   `json:"notifications"`
 	ActiveDrivers      int64   `json:"active_drivers"`
 	Revenue            float64 `json:"revenue"`
+
+	// "Today" is the business day (DB session time zone, Asia/Kolkata).
+	OrdersToday         int64       `json:"orders_today"`
+	DispatchesToday     int64       `json:"dispatches_today"`
+	ActiveTrips         int64       `json:"active_trips"` // ACCEPTED, DISPATCHED, IN_TRANSIT
+	PendingPayments     int64       `json:"pending_payments"`
+	OrderRevenue        float64     `json:"order_revenue"`        // successful order payments
+	SubscriptionRevenue float64     `json:"subscription_revenue"` // successful subscription payments
+	FailedLogins24h     int64       `json:"failed_logins_24h"`
+	CrashReports24h     int64       `json:"crash_reports_24h"`
+	BotanicalNames      int64       `json:"botanical_names"`
+	Trend               []DayTotals `json:"trend"` // last 7 business days, oldest first
+}
+
+type DayTotals struct {
+	Day        string `json:"day"` // YYYY-MM-DD
+	Orders     int64  `json:"orders"`
+	Dispatches int64  `json:"dispatches"`
 }
 
 type User struct {

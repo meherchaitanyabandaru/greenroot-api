@@ -616,7 +616,7 @@ func (r *PostgresRepository) CreateOrderAndConvert(ctx context.Context, q *Quota
 	if err != nil {
 		return 0, err
 	}
-	orderNumber := fmt.Sprintf("%s-%d", orderCode, now.UnixNano()%10000)
+	orderNumber := orderCode // same identifier as orders created directly
 
 	var nurseryID sql.NullInt64
 	if q.NurseryID != nil {

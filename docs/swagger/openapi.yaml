@@ -4791,6 +4791,59 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+  /api/v1/market/reports:
+    get:
+      tags: [Market]
+      summary: Reported market ads (admin)
+      description: Reports nurseries filed with POST /market/ads/{id}/report, pending first, with the ad, its nursery and the reporter.
+      operationId: listMarketReports
+      security:
+        - BearerAuth: []
+      parameters:
+        - { in: query, name: status, schema: { type: string, enum: [PENDING, REVIEWED, DISMISSED] } }
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: per_page, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        "200":
+          description: One page of reports
+        "401":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+  /api/v1/market/reports/{id}/review:
+    post:
+      tags: [Market]
+      summary: Close a report, optionally archiving the ad (admin)
+      operationId: reviewMarketReport
+      security:
+        - BearerAuth: []
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [REVIEWED, DISMISSED] }
+                archive_ad: { type: boolean, description: Also take the ad down }
+      responses:
+        "200":
+          description: The updated report
+        "400":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+        "404":
+          $ref: '#/components/responses/Error'
+        "409":
+          description: already_reviewed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/botanical-names:
     get:
       tags: [Plants]

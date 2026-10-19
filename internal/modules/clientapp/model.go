@@ -49,6 +49,7 @@ type CrashReportRequest struct {
 type CrashReport struct {
 	ID          int64             `json:"id"`
 	UserID      *int64            `json:"user_id,omitempty"`
+	UserName    string            `json:"user_name,omitempty"`
 	Platform    string            `json:"platform"`
 	AppVersion  string            `json:"app_version"`
 	BuildNumber string            `json:"build_number,omitempty"`

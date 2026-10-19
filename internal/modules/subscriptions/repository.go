@@ -365,8 +365,11 @@ func baseSubscriptionSelect() string {
 			us.created_at, us.updated_at,
 			lp.payment_id, lp.payment_code, lp.amount, lp.payment_method, lp.transaction_reference,
 			lp.status, lp.paid_at, lp.provider, lp.provider_payment_id,
-			lp.provider_order_id, lp.created_at
+			lp.provider_order_id, lp.created_at,
+			NULLIF(TRIM(CONCAT_WS(' ', su.first_name, su.last_name)), ''), su.mobile,
+			(SELECT n.nursery_name FROM public.nurseries n WHERE n.owner_user_id = us.user_id AND n.status <> 'DELETED' ORDER BY n.nursery_id LIMIT 1)
 		FROM public.user_subscriptions us
+		LEFT JOIN public.users su ON su.user_id = us.user_id
 		JOIN public.subscription_plans sp ON sp.plan_id = us.plan_id
 		LEFT JOIN LATERAL (
 			SELECT payment_id, payment_code, amount, payment_method, transaction_reference, status,
@@ -381,7 +384,7 @@ func baseSubscriptionSelect() string {
 }
 
 func baseSubscriptionCount() string {
-	return "SELECT COUNT(*) FROM public.user_subscriptions us JOIN public.subscription_plans sp ON sp.plan_id = us.plan_id"
+	return "SELECT COUNT(*) FROM public.user_subscriptions us JOIN public.subscription_plans sp ON sp.plan_id = us.plan_id LEFT JOIN public.users su ON su.user_id = us.user_id"
 }
 
 func buildSubscriptionWhere(input ListSubscriptionsRequest) (string, []any) {
@@ -397,7 +400,7 @@ func buildSubscriptionWhere(input ListSubscriptionsRequest) (string, []any) {
 	}
 	if input.Search != "" {
 		args = append(args, "%"+input.Search+"%")
-		clauses = append(clauses, fmt.Sprintf("(us.subscription_code ILIKE $%d OR sp.plan_code ILIKE $%d OR sp.plan_name ILIKE $%d)", len(args), len(args), len(args)))
+		clauses = append(clauses, fmt.Sprintf("(us.subscription_code ILIKE $%[1]d OR sp.plan_code ILIKE $%[1]d OR sp.plan_name ILIKE $%[1]d OR su.first_name ILIKE $%[1]d OR su.last_name ILIKE $%[1]d OR su.mobile ILIKE $%[1]d)", len(args)))
 	}
 	return "WHERE " + strings.Join(clauses, " AND "), args
 }
@@ -442,6 +445,7 @@ func scanSubscription(row interface{ Scan(dest ...any) error }) (UserSubscriptio
 	var paymentAmount sql.NullFloat64
 	var paymentCode, paymentMethod, txRef, paymentStatus, provider, providerPaymentID, providerOrderID sql.NullString
 	var paymentDate, paymentCreatedAt sql.NullTime
+	var userName, userMobile, nurseryName sql.NullString
 	if err := row.Scan(
 		&subscription.ID,
 		&subscription.SubscriptionCode,
@@ -466,8 +470,20 @@ func scanSubscription(row interface{ Scan(dest ...any) error }) (UserSubscriptio
 		&providerPaymentID,
 		&providerOrderID,
 		&paymentCreatedAt,
+		&userName,
+		&userMobile,
+		&nurseryName,
 	); err != nil {
 		return UserSubscription{}, err
+	}
+	if userName.Valid {
+		subscription.UserName = &userName.String
+	}
+	if userMobile.Valid {
+		subscription.UserMobile = &userMobile.String
+	}
+	if nurseryName.Valid {
+		subscription.NurseryName = &nurseryName.String
 	}
 	if endDate.Valid {
 		subscription.EndDate = &endDate.Time

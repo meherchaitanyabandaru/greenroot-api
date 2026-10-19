@@ -450,10 +450,8 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateOr
 	if err := s.canCreate(ctx, actor, input); err != nil {
 		return Order{}, err
 	}
+	// Empty: the repository uses the order's public code (ORD-YYYYMMDD-NNNN).
 	orderNumber := strings.TrimSpace(stringOrEmpty(input.OrderNumber))
-	if orderNumber == "" {
-		orderNumber = fmt.Sprintf("GR-ORD-%d", time.Now().UnixNano())
-	}
 	order, err := s.repository.Create(ctx, actor.UserID, input, orderNumber)
 	if err != nil {
 		return Order{}, err

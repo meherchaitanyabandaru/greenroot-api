@@ -179,12 +179,12 @@ See `BUSINESS_RULES.md` for the full rule set. Key enforcements:
 | notifications | `GET/POST /notifications` · read, delete · devices, templates |
 | attachments | `GET/POST /attachments` · `GET/DELETE /attachments/:id` |
 | audit | `GET /audit-logs` |
-| admin | `GET /admin/dashboard` · `GET /admin/users` |
+| admin | `GET /admin/dashboard` (real metrics, business-day "today", 7-day `trend`) · `GET /admin/users` · `GET /admin/crash-reports` (with `user_name`) |
 | health | `GET /health` · `/healthz` · `/readyz` |
 | quotations | `POST /quotations/:id/send` · `POST /quotations/:id/convert-to-order` |
 | invites | `POST /invites` · `GET /invites/:uuid` · accept, cancel · nursery invites + managers |
 | me/workspaces | `GET /me/workspaces` — returns PERSONAL, OWNED_NURSERY, MANAGER_NURSERY, DRIVER workspaces |
-| market | `GET/POST /market/ads` · browse, mine, saved, publish/pause/resume/renew/archive · enquiries |
+| market | `GET/POST /market/ads` · browse, mine, saved, publish/pause/resume/renew/archive · enquiries · admin moderation: `GET /market/reports`, `POST /market/reports/{id}/review` (`REVIEWED`/`DISMISSED`, optional `archive_ad`) |
 | ratings | `GET /ratings` · `POST /ratings/app` · order + trip submit and fetch |
 | email | `GET /email/status` · sender, templates (+ preview, test send), messages · `POST /users/me/email/send-code`, `/users/me/email/verify` — see [`greenroot-infra/docs/messaging.md`](../greenroot-infra/docs/messaging.md) |
 | messaging (core) | No routes. `messaging.Notifier` fans business events (payments, welcome) out to the SMS and email channels; `internal/common/otp` is shared by login OTP and email verification |

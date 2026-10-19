@@ -455,10 +455,7 @@ func normalizeCreate(req CreateDispatchRequest) (CreateDispatchInput, error) {
 			return CreateDispatchInput{}, ErrInvalidInput
 		}
 	}
-	if req.DispatchNumber == nil || strings.TrimSpace(*req.DispatchNumber) == "" {
-		number := fmt.Sprintf("GR-DSP-%d", time.Now().UnixNano())
-		req.DispatchNumber = &number
-	}
+	// Empty dispatch number: the repository uses the public code (DSP-YYYYMMDD-NNNN).
 	return CreateDispatchInput{OrderID: req.OrderID, DispatchNumber: req.DispatchNumber, VehicleID: req.VehicleID, DriverID: req.DriverID, DispatchDate: dispatchDate, DestinationAddress: req.DestinationAddress, Notes: req.Notes, Items: req.Items}, nil
 }
 

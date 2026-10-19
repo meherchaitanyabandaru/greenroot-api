@@ -8,7 +8,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type Module struct{ handler *Handler }
+type Module struct {
+	handler    *Handler
+	moderation *moderationHandler
+}
 
 func NewModule(db *sql.DB, jwt *jwtplatform.Service, rdb *redis.Client) Module {
 	repo := NewRepository(db)
@@ -18,11 +21,15 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service, rdb *redis.Client) Module {
 	} else {
 		svc = NewService(repo)
 	}
-	return Module{handler: NewHandler(svc, jwt)}
+	return Module{handler: NewHandler(svc, jwt), moderation: &moderationHandler{db: db, jwt: jwt, service: svc}}
 }
 
 func (m Module) RegisterRoutes(r chi.Router) {
 	r.Route("/market", func(r chi.Router) {
+		// Admin moderation of reported ads
+		r.Get("/reports", m.moderation.ListReports)
+		r.Post("/reports/{id}/review", m.moderation.ReviewReport)
+
 		// Browse published ads from all nurseries
 		r.Get("/ads", m.handler.BrowseAds)
 

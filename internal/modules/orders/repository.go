@@ -127,6 +127,9 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 	if err != nil {
 		return nil, err
 	}
+	if orderNumber == "" {
+		orderNumber = orderCode // one human-readable identifier unless the caller sets its own
+	}
 
 	const query = `
 		INSERT INTO public.orders (

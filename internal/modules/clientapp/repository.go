@@ -75,7 +75,7 @@ func (r *PostgresRepository) ListCrashReports(ctx context.Context, in ListCrashR
 	}
 	args = append(args, in.PerPage, (in.Page-1)*in.PerPage)
 	// #nosec G201 -- where is built from fixed fragments with $n placeholders; values are bound args.
-	q := fmt.Sprintf("SELECT %s FROM public.client_crash_reports%s ORDER BY received_at DESC, client_crash_report_id DESC LIMIT $%d OFFSET $%d",
+	q := fmt.Sprintf("SELECT %s, (SELECT NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), '') FROM public.users u WHERE u.user_id = client_crash_reports.user_id) FROM public.client_crash_reports%s ORDER BY received_at DESC, client_crash_report_id DESC LIMIT $%d OFFSET $%d",
 		crashColumns, where, len(args)-1, len(args))
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -86,18 +86,19 @@ func (r *PostgresRepository) ListCrashReports(ctx context.Context, in ListCrashR
 	var out []CrashReport
 	for rows.Next() {
 		var (
-			c                                          CrashReport
-			userID                                     sql.NullInt64
-			build, osVersion, device, stack, requestID sql.NullString
-			ctxJSON                                    []byte
+			c                                                    CrashReport
+			userID                                               sql.NullInt64
+			build, osVersion, device, stack, requestID, userName sql.NullString
+			ctxJSON                                              []byte
 		)
 		if err := rows.Scan(&c.ID, &userID, &c.Platform, &c.AppVersion, &build, &osVersion, &device,
-			&c.ErrorType, &c.Message, &stack, &ctxJSON, &c.IsFatal, &c.OccurredAt, &c.ReceivedAt, &requestID); err != nil {
+			&c.ErrorType, &c.Message, &stack, &ctxJSON, &c.IsFatal, &c.OccurredAt, &c.ReceivedAt, &requestID, &userName); err != nil {
 			return nil, 0, err
 		}
 		if userID.Valid {
 			c.UserID = &userID.Int64
 		}
+		c.UserName = userName.String
 		c.BuildNumber, c.OSVersion, c.DeviceModel = build.String, osVersion.String, device.String
 		c.StackTrace, c.RequestID = stack.String, requestID.String
 		if err := json.Unmarshal(ctxJSON, &c.Context); err != nil {
