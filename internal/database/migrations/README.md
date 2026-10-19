@@ -1,25 +1,39 @@
 # Database migrations
 
-The only place schema changes live. Files are embedded in the API binary and
-applied by `cmd/migrate`, which records each one in `public.schema_migrations`.
+**Before launch there are none.** The schema's single source of truth is
+[`greenroot-infra/db/postgresql/schema.sql`](../../../../greenroot-infra/db/postgresql/schema.sql).
+The 20 migrations written up to 2026-10-19 were folded into it.
+
+## Changing the schema now (pre-launch)
+
+1. Change your local database (psql), or edit `schema.sql` directly.
+2. If you changed the database, regenerate the file:
+   `greenroot-infra/scripts/dump-schema.sh`
+3. Rebuild your database from the file: `greenroot-infra/scripts/reset-dbs.sh`
+4. `DATABASE_URL=... go run ./cmd/sqlcheck ./internal/...` and the API tests.
+
+## After launch
+
+Production data can't be rebuilt, so every change becomes a migration here
+again, applied by `cmd/migrate` (which already runs in CI and blocks a
+production start while one is pending):
+
+- **Name:** `<YYYYMMDD>_<NN>_<description>.up.sql` plus a `.down.sql`
+  (manual rollback aid; the runner only runs `up`).
+- **Transactions:** each file runs in one transaction with its version record.
+  No `BEGIN`/`COMMIT` or psql meta-commands. For `CREATE INDEX CONCURRENTLY`
+  put `-- migrate:no-transaction` in the file (plain DDL ending in `;`).
+- **Idempotent where practical** (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`).
+- **Never edit an applied migration** — the runner checks checksums.
+- **Domain lists:** status columns carry `ck_*` CHECK constraints mirroring the
+  Go validators; a new value needs a migration (drop and re-add the
+  constraint `NOT VALID`, then `VALIDATE CONSTRAINT`).
+- After applying, run `dump-schema.sh` so `schema.sql` stays the full picture.
 
 ```bash
-go run ./cmd/migrate status                 # what is applied / pending
-go run ./cmd/migrate up                     # apply pending, in order
-go run ./cmd/migrate baseline <version>     # record versions as applied without running them
+go run ./cmd/migrate status   # what is applied / pending
+go run ./cmd/migrate up       # apply pending, in order
 ```
 
-- **Roles:** in production `cmd/migrate` connects with `MIGRATE_DATABASE_URL` (the `greenroot_migrator` role from `greenroot-infra/db/postgresql/roles.sql`); the API's `DATABASE_URL` role cannot run DDL. Locally both fall back to `DATABASE_URL`. Objects created by migrations are owned by `greenroot_owner` and granted to the app automatically (default privileges).
-- **Deploy:** run `migrate up` before starting the new API. In production the API **refuses to start** while migrations are pending; elsewhere it logs a warning.
-- **Existing databases that predate the runner** (migrated by hand): run `migrate baseline <last version already applied>` once, then `migrate up`. For a database built from the 2026-07-25 `schema.sql`, that is `baseline 20260725_order_documents_verifications`.
-- **Fresh local databases** come from `greenroot-infra/db/postgresql/schema.sql`, which includes the `schema_migrations` rows, so nothing is pending.
-
-## Writing a migration
-
-1. **Name:** add `<YYYYMMDD>_<NN>_<description>.up.sql` and a matching `.down.sql` (down files are for manual rollback; the runner only runs `up`).
-2. **Transactions:** each file runs in one transaction with its version record. Do not write `BEGIN`/`COMMIT` or psql meta-commands (`\set`).
-3. **Concurrent indexes:** for `CREATE INDEX CONCURRENTLY` on live tables, put `-- migrate:no-transaction` in the file. Statements then run one at a time, so keep that file to plain DDL ending in `;`.
-4. **Idempotent where practical:** use `IF NOT EXISTS`, and `ON CONFLICT DO NOTHING` / `WHERE NOT EXISTS` for seed rows, so a re-run never overwrites admin edits.
-5. **Never edit an applied migration.** The runner checks file checksums and stops on changes; add a new migration instead.
-6. **Domain lists:** status columns carry `ck_*` CHECK constraints that mirror the Go validators. A new status value needs a migration that drops and re-adds the constraint (`NOT VALID`, then `VALIDATE CONSTRAINT`).
-7. **After applying locally:** refresh the fresh-install snapshot with `greenroot-infra/scripts/dump-schema.sh` and check the diff contains only your change.
+In production `cmd/migrate` uses `MIGRATE_DATABASE_URL` (the
+`greenroot_migrator` role from `greenroot-infra/db/postgresql/roles.sql`).

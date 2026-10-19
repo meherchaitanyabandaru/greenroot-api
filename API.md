@@ -11,7 +11,7 @@ Go 1.26.9 · chi router · PostgreSQL + PostGIS · Redis (optional) · JWT/OTP a
 Run locally (port 8080):
 ```bash
 cd greenroot-api
-DATABASE_URL='postgres:///greenroot?host=/tmp' go run ./cmd/migrate up   # apply pending migrations first
+# fresh DB: ../greenroot-infra/scripts/reset-dbs.sh (schema.sql is the schema; no migrations before launch)
 DATABASE_URL='postgres:///greenroot?host=/tmp' JWT_SECRET='local-dev-change-me' LOG_DIR='/tmp/gr-logs' go run ./cmd/api
 
 # With Redis rate-limiting (optional):
@@ -281,7 +281,7 @@ Dev / integration test users (OTP `123456` for all):
 
 Results: `test-log/smoke/results.log` and `test-log/integration/`.
 
-API integration tests (`tests/api`, run in CI): start the API on `:8080`, then `go test -count=1 ./tests/...`. They seed their own fixtures and need only `schema.sql` + `seed-master.sql` + `seed-dev-admin.sql` (do **not** load `seed-dev-data.sql`; its mobiles clash with the fixtures). Rate-limit buckets (`rl:*`) are cleared before each login by the test helper (all tests log in from 127.0.0.1); `ratelimit_test.go` proves the limits themselves (429 after 10 verifies with forged headers, after 5 sends per mobile). Current result: 72 pass, 3 skip (fixtures; see the standards doc §6). `tests/test-api.sh` still needs dev data and is not a CI gate — it becomes Go tests in Phase 3.
+API integration tests (`tests/api`, run in CI): start the API on `:8080`, then `go test -count=1 ./tests/...`. They seed their own fixtures and need only `schema.sql` + `seed-master.sql` + `seed-dev-admin.sql` (not the API dev-data script — its users clash with the fixtures). Rate-limit buckets (`rl:*`) are cleared before each login by the test helper (all tests log in from 127.0.0.1); `ratelimit_test.go` proves the limits themselves (429 after 10 verifies with forged headers, after 5 sends per mobile). Current result: 72 pass, 3 skip (fixtures; see the standards doc §6). `tests/test-api.sh` still needs dev data and is not a CI gate — it becomes Go tests in Phase 3.
 
 ---
 
@@ -390,7 +390,7 @@ Only returns ads with a confirmed `pickup_location`. Combines with all existing 
 - [ ] Real FCM, S3, Razorpay/PayU integrations
 - [ ] Expand integration tests — edge cases + negative paths
 - [x] CI: gofmt, vet, race tests, builds, OpenAPI drift, govulncheck, gosec, gitleaks, integration job (2026-10-17). CD/deploy still pending.
-- [x] Missing DB indexes review (2026-10-16: all 75 unindexed FKs checked against repository SQL; 4 indexes added in `internal/database/migrations/20261016_02_fk_lookup_indexes.up.sql`)
+- [x] Missing DB indexes review (2026-10-16: all 75 unindexed FKs checked against repository SQL; 4 indexes added; now part of `greenroot-infra/db/postgresql/schema.sql`)
 - [ ] Slow-query logging (server settings documented in `greenroot-infra/docs/operations/database-operations.md`; enable on the production host)
 - [ ] Admin and mobile send `If-Match` with the `version` they loaded (API ready since 2026-10-17)
 - [ ] Go money type: replace `float64` amounts with integer paise / decimal (D2)

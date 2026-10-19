@@ -45,15 +45,12 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS b ON t (y);
 	}
 }
 
-// The real migration set must load, be ordered, and keep the concurrent
-// index build out of a transaction.
+// The real migration set (empty before launch) must load, be ordered, and
+// keep concurrent index builds out of a transaction.
 func TestEmbeddedMigrations(t *testing.T) {
 	ms, err := Load(migrations.FS)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(ms) < 6 {
-		t.Fatalf("expected the embedded migrations, got %d", len(ms))
 	}
 	for i := 1; i < len(ms); i++ {
 		if ms[i-1].Version >= ms[i].Version {

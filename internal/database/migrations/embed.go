@@ -4,5 +4,9 @@ package migrations
 
 import "embed"
 
-//go:embed *.sql
+// "*" rather than "*.sql": before launch the folder holds no migrations
+// (greenroot-infra/db/postgresql/schema.sql is the schema), and an embed
+// pattern that matches nothing does not compile. Load only reads *.up.sql.
+//
+//go:embed *
 var FS embed.FS

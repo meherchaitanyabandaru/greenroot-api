@@ -1,3 +1,0 @@
--- Intentionally no-op.
--- This migration only backfills vehicle records from driver onboarding data.
--- Removing those rows during rollback could delete real fleet records.
