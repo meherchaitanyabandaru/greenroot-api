@@ -3,6 +3,7 @@ package market
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,18 +15,28 @@ import (
 )
 
 // Moderation of reported market ads (Admin → Local Market). Nurseries report
-// ads with POST /market/ads/{id}/report; admins review each report and may
-// archive the ad. Admin-only.
+// ads with POST /market/ads/{id}/report; a serious report (seriousReasons)
+// hides the ad as SUSPENDED at once. An admin then decides:
+//   - DISMISS: the report was wrong; a suspended ad goes live again.
+//   - REMOVE:  the ad is REMOVED for good, every open report on it closes,
+//     and the nursery gets a strike. Strike 2 blocks posting for 30 days,
+//     strike 3+ for 90 days; the admin can suspend the nursery as well.
 
 // AdReport is one report with enough context to decide without a second call.
 type AdReport struct {
-	ID                    int64      `json:"id"`
-	AdID                  int64      `json:"ad_id"`
-	AdCode                string     `json:"ad_code"`
-	AdTitle               string     `json:"ad_title"`
-	AdStatus              string     `json:"ad_status"`
-	AdNurseryName         string     `json:"ad_nursery_name"`
+	ID            int64    `json:"id"`
+	AdID          int64    `json:"ad_id"`
+	AdCode        string   `json:"ad_code"`
+	AdTitle       string   `json:"ad_title"`
+	AdStatus      string   `json:"ad_status"`
+	AdNurseryName string   `json:"ad_nursery_name"`
+	AdDescription *string  `json:"ad_description,omitempty"`
+	AdPhotos      []string `json:"ad_photos"`
+	// AdNurseryStrikes counts the nursery's ads GreenRoot already removed.
+	AdNurseryStrikes      int        `json:"ad_nursery_strikes"`
+	AdNurseryBlockedUntil *time.Time `json:"ad_nursery_blocked_until,omitempty"`
 	Reason                string     `json:"reason"`
+	Serious               bool       `json:"serious"` // hid the ad on report
 	Notes                 *string    `json:"notes,omitempty"`
 	Status                string     `json:"status"` // PENDING | REVIEWED | DISMISSED
 	ReportedByName        *string    `json:"reported_by_name,omitempty"`
@@ -36,8 +47,13 @@ type AdReport struct {
 }
 
 type ReviewReportRequest struct {
-	Status    string `json:"status"`     // REVIEWED (action taken) or DISMISSED
-	ArchiveAd bool   `json:"archive_ad"` // also take the ad down
+	Decision string `json:"decision"` // REMOVE (report upheld) or DISMISS
+}
+
+// ReviewOutcome tells the admin what the decision did to the seller.
+type ReviewOutcome struct {
+	Strikes      int        `json:"strikes"`
+	BlockedUntil *time.Time `json:"blocked_until,omitempty"`
 }
 
 type moderationHandler struct {
@@ -108,9 +124,9 @@ func (m *moderationHandler) ReviewReport(w http.ResponseWriter, r *http.Request)
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	req.Status = strings.ToUpper(strings.TrimSpace(req.Status))
-	if req.Status != "REVIEWED" && req.Status != "DISMISSED" {
-		writeError(w, fmt.Errorf("%w: status must be REVIEWED or DISMISSED", ErrInvalidInput))
+	req.Decision = strings.ToUpper(strings.TrimSpace(req.Decision))
+	if req.Decision != "REMOVE" && req.Decision != "DISMISS" {
+		writeError(w, fmt.Errorf("%w: decision must be REMOVE or DISMISS", ErrInvalidInput))
 		return
 	}
 	report, err := m.getReport(r.Context(), id)
@@ -122,16 +138,8 @@ func (m *moderationHandler) ReviewReport(w http.ResponseWriter, r *http.Request)
 		response.Error(w, http.StatusConflict, "already_reviewed", "this report was already "+strings.ToLower(report.Status))
 		return
 	}
-	if req.ArchiveAd && report.AdStatus != StatusArchived {
-		if _, err := m.service.ArchiveAd(r.Context(), actor, report.AdID); err != nil {
-			writeError(w, err)
-			return
-		}
-	}
-	if _, err := m.db.ExecContext(r.Context(), `
-		UPDATE public.market_ad_reports
-		SET status = $2, reviewed_by_user_id = $3, reviewed_at = CURRENT_TIMESTAMP
-		WHERE report_id = $1 AND status = 'PENDING'`, id, req.Status, actor.UserID); err != nil {
+	outcome, err := m.decide(r.Context(), actor, report, req.Decision == "REMOVE")
+	if err != nil {
 		writeError(w, err)
 		return
 	}
@@ -140,11 +148,112 @@ func (m *moderationHandler) ReviewReport(w http.ResponseWriter, r *http.Request)
 		writeError(w, err)
 		return
 	}
-	response.OK(w, map[string]any{"report": updated})
+	response.OK(w, map[string]any{"report": updated, "outcome": outcome})
+}
+
+func (m *moderationHandler) decide(ctx context.Context, actor ActorContext, report AdReport, remove bool) (ReviewOutcome, error) {
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ReviewOutcome{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var nurseryID int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT nursery_id FROM public.market_ads WHERE ad_id = $1 FOR UPDATE`, report.AdID).Scan(&nurseryID); err != nil {
+		return ReviewOutcome{}, err
+	}
+	var outcome ReviewOutcome
+	if remove {
+		note := "Removed by GreenRoot: " + reasonLabel(report.Reason) + "."
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE public.market_ads SET status = 'REMOVED', moderation_note = $2, moderated_at = NOW(), updated_at = NOW()
+			WHERE ad_id = $1`, report.AdID, note); err != nil {
+			return ReviewOutcome{}, err
+		}
+		// One decision answers every open report on the ad.
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE public.market_ad_reports SET status = 'REVIEWED', reviewed_by_user_id = $2, reviewed_at = NOW()
+			WHERE ad_id = $1 AND status = 'PENDING'`, report.AdID, actor.UserID); err != nil {
+			return ReviewOutcome{}, err
+		}
+		if err := tx.QueryRowContext(ctx,
+			`SELECT count(*) FROM public.market_ads WHERE nursery_id = $1 AND status = 'REMOVED'`, nurseryID).Scan(&outcome.Strikes); err != nil {
+			return ReviewOutcome{}, err
+		}
+		if days := blockDays(outcome.Strikes); days > 0 {
+			if err := tx.QueryRowContext(ctx, `
+				UPDATE public.nurseries
+				SET market_blocked_until = GREATEST(COALESCE(market_blocked_until, NOW()), NOW() + make_interval(days => $2))
+				WHERE nursery_id = $1 RETURNING market_blocked_until`, nurseryID, days).Scan(&outcome.BlockedUntil); err != nil {
+				return ReviewOutcome{}, err
+			}
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE public.market_ad_reports SET status = 'DISMISSED', reviewed_by_user_id = $2, reviewed_at = NOW()
+			WHERE report_id = $1 AND status = 'PENDING'`, report.ID, actor.UserID); err != nil {
+			return ReviewOutcome{}, err
+		}
+		// A suspended ad goes live again once no serious report is left open.
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE public.market_ads SET status = 'PUBLISHED', moderation_note = NULL, moderated_at = NOW(), updated_at = NOW()
+			WHERE ad_id = $1 AND status = 'SUSPENDED'
+			  AND NOT EXISTS (SELECT 1 FROM public.market_ad_reports
+			                  WHERE ad_id = $1 AND status = 'PENDING' AND reason = ANY($2))`,
+			report.AdID, seriousReasonCodes()); err != nil {
+			return ReviewOutcome{}, err
+		}
+	}
+	return outcome, tx.Commit()
+}
+
+// blockDays is the posting block for a nursery's nth removed ad: a warning
+// first, then 30 days, then 90.
+func blockDays(strikes int) int {
+	switch {
+	case strikes >= 3:
+		return 90
+	case strikes == 2:
+		return 30
+	default:
+		return 0
+	}
+}
+
+func seriousReasonCodes() []string {
+	codes := make([]string, 0, len(seriousReasons))
+	for code := range seriousReasons {
+		codes = append(codes, code)
+	}
+	return codes
+}
+
+func reasonLabel(code string) string {
+	if what, ok := seriousReasons[code]; ok {
+		return what
+	}
+	switch code {
+	case "SCAM":
+		return "a scam"
+	case "FRAUD":
+		return "fake information"
+	case "SPAM":
+		return "spam"
+	case "WRONG_PLANT":
+		return "wrong or misleading plant details"
+	case "DUPLICATE":
+		return "a duplicate listing"
+	default:
+		return "breaking the market rules"
+	}
 }
 
 const reportSelect = `
 	SELECT rp.report_id, a.ad_id, a.ad_code, a.title, a.status, an.nursery_name,
+		a.description, a.photos,
+		(SELECT count(*) FROM public.market_ads x WHERE x.nursery_id = a.nursery_id AND x.status = 'REMOVED'),
+		CASE WHEN an.market_blocked_until > NOW() THEN an.market_blocked_until END,
 		rp.reason, rp.notes, rp.status,
 		NULLIF(TRIM(CONCAT_WS(' ', ru.first_name, ru.last_name)), ''), rn.nursery_name,
 		NULLIF(TRIM(CONCAT_WS(' ', vu.first_name, vu.last_name)), ''), rp.reviewed_at, rp.created_at
@@ -159,10 +268,15 @@ func scanReport(row interface{ Scan(...any) error }) (AdReport, error) {
 	var rep AdReport
 	var notes, reportedBy, reviewedBy sql.NullString
 	var reviewedAt sql.NullTime
+	var photos []byte
 	if err := row.Scan(&rep.ID, &rep.AdID, &rep.AdCode, &rep.AdTitle, &rep.AdStatus, &rep.AdNurseryName,
+		&rep.AdDescription, &photos, &rep.AdNurseryStrikes, &rep.AdNurseryBlockedUntil,
 		&rep.Reason, &notes, &rep.Status, &reportedBy, &rep.ReportedByNurseryName, &reviewedBy, &reviewedAt, &rep.CreatedAt); err != nil {
 		return AdReport{}, err
 	}
+	rep.AdPhotos = []string{}
+	_ = json.Unmarshal(photos, &rep.AdPhotos)
+	_, rep.Serious = seriousReasons[rep.Reason]
 	if notes.Valid {
 		rep.Notes = &notes.String
 	}
@@ -185,8 +299,8 @@ func (m *moderationHandler) listReports(ctx context.Context, status string, page
 	}
 	rows, err := m.db.QueryContext(ctx, reportSelect+`
 		WHERE $1 = '' OR rp.status = $1
-		ORDER BY (rp.status = 'PENDING') DESC, rp.created_at DESC
-		LIMIT $2 OFFSET $3`, status, perPage, (page-1)*perPage)
+		ORDER BY (rp.status = 'PENDING') DESC, (rp.reason = ANY($4)) DESC, rp.created_at DESC
+		LIMIT $2 OFFSET $3`, status, perPage, (page-1)*perPage, seriousReasonCodes())
 	if err != nil {
 		return nil, 0, err
 	}

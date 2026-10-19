@@ -981,6 +981,64 @@ def journey_market():
     expect("a closed chat cannot be cancelled", "POST", f"{chat}/cancel", rival.token, {}, status=409)
 
 
+def journey_moderation():
+    """Reported ads: a serious report hides the ad at once; the admin restores or removes it; removals are strikes that block posting."""
+    boss = admin()
+    owner, _, _, _, _ = team(boss)
+    rival = approved_owner(boss, "Reporter")
+
+    def live_ad(title):
+        a = expect(f"owner posts '{title}'", "POST", "/market/ads", owner.token,
+                   {"plant_name": "Rose", "title": title, "price_per_unit": 50, "photos": ["https://example.com/a.jpg"]}, status=201)["ad"]
+        expect("…and publishes it", "POST", f"/market/ads/{a['id']}/publish", owner.token, {})
+        return a["id"]
+
+    def pending_report(ad_id):
+        out = expect("admin opens the report queue", "GET", "/market/reports?status=PENDING&per_page=100", boss.token)
+        return next(r for r in out["reports"] if r["ad_id"] == ad_id)
+
+    def decide(report_id, decision, status=200):
+        return expect(f"admin decides {decision}", "POST", f"/market/reports/{report_id}/review", boss.token, {"decision": decision}, status=status)
+
+    # 1. A nudity report hides the ad before anyone reviews it; dismissing restores it.
+    a1 = live_ad("Moderation one")
+    expect("a rival reports nude images", "POST", f"/market/ads/{a1}/report", rival.token, {"reason": "EXPLICIT_CONTENT"})
+    out = expect("the rival browses the market", "GET", "/market/ads?per_page=50", rival.token)
+    check("…the reported ad is hidden at once", a1 not in [x["id"] for x in out["ads"]], [x["id"] for x in out["ads"]])
+    expect("…and its page is gone for others", "GET", f"/market/ads/{a1}", rival.token, status=404)
+    mine = expect("the owner opens the ad", "GET", f"/market/ads/{a1}", owner.token)["ad"]
+    check("…sees it under review with a reason", mine["status"] == "SUSPENDED" and "review" in (mine.get("moderation_note") or ""), mine)
+    expect("…cannot edit it", "PATCH", f"/market/ads/{a1}", owner.token, {"title": "sneaky fix"}, status=409)
+    expect("…cannot republish it", "POST", f"/market/ads/{a1}/resume", owner.token, {}, status=400)
+    expect("…cannot archive it to dodge review", "POST", f"/market/ads/{a1}/archive", owner.token, {}, status=400)
+    rep = pending_report(a1)
+    check("…the admin sees it flagged serious, with photos and strikes", rep["serious"] and rep["ad_photos"] and rep["ad_nursery_strikes"] == 0, rep)
+    expect("a decision must be REMOVE or DISMISS", "POST", f"/market/reports/{rep['id']}/review", boss.token, {"decision": "MAYBE"}, status=400)
+    decide(rep["id"], "DISMISS")
+    mine = expect("the owner opens the ad again", "GET", f"/market/ads/{a1}", owner.token)["ad"]
+    check("…it is live again and the note is gone", mine["status"] == "PUBLISHED" and not mine.get("moderation_note"), mine)
+    decide(rep["id"], "REMOVE", status=409)
+
+    # 2. A removal is strike one: a warning, no block.
+    a2 = live_ad("Moderation two")
+    expect("a rival reports a banned item", "POST", f"/market/ads/{a2}/report", rival.token, {"reason": "PROHIBITED"})
+    res = decide(pending_report(a2)["id"], "REMOVE")
+    check("…strike 1, no posting block", res["outcome"]["strikes"] == 1 and not res["outcome"].get("blocked_until"), res["outcome"])
+    check("…the ad is REMOVED", res["report"]["ad_status"] == "REMOVED", res["report"])
+
+    # 3. A non-serious report leaves the ad up; removing it is strike two: 30-day block.
+    a3 = live_ad("Moderation three")
+    expect("a rival reports a scam", "POST", f"/market/ads/{a3}/report", rival.token, {"reason": "SCAM"})
+    still = expect("the owner opens the scam-reported ad", "GET", f"/market/ads/{a3}", owner.token)["ad"]
+    check("…a scam report alone does not hide it", still["status"] == "PUBLISHED", still["status"])
+    res = decide(pending_report(a3)["id"], "REMOVE")
+    check("…strike 2 blocks posting", res["outcome"]["strikes"] == 2 and res["outcome"].get("blocked_until"), res["outcome"])
+    expect("a blocked nursery cannot post a new ad", "POST", "/market/ads", owner.token, {"plant_name": "Rose", "title": "Blocked"}, status=403)
+    expect("…nor bring a paused ad back", "POST", f"/market/ads/{a1}/pause", owner.token, {})
+    expect("…resume is refused", "POST", f"/market/ads/{a1}/resume", owner.token, {}, status=403)
+    expect("an unknown report reason is refused", "POST", f"/market/ads/{a1}/report", rival.token, {"reason": "UGLY"}, status=400)
+
+
 def journey_admin():
     """Admin-only routes refuse everyone else; admins cannot trade."""
     boss = admin()
@@ -1115,6 +1173,7 @@ JOURNEYS = [
     ("top_items", journey_top_items),
     ("payments", journey_payments),
     ("market", journey_market),
+    ("moderation", journey_moderation),
     ("admin", journey_admin),
     ("redis", journey_redis),
 ]

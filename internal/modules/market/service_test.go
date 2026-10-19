@@ -19,6 +19,7 @@ type mockRepo struct {
 	saves         map[string]bool // "adID:nurseryID" → saved
 	enquiryExists map[string]bool // "adID:nurseryID"
 	lastOfferBody string
+	blockedUntil  map[int64]*time.Time
 	nextAdID      int64
 	nextEnqID     int64
 }
@@ -32,6 +33,7 @@ func newMock() *mockRepo {
 		enquiries:     make(map[int64]Enquiry),
 		saves:         make(map[string]bool),
 		enquiryExists: make(map[string]bool),
+		blockedUntil:  make(map[int64]*time.Time),
 		nextAdID:      100,
 		nextEnqID:     200,
 	}
@@ -153,6 +155,17 @@ func (m *mockRepo) SetAdStatus(_ context.Context, id int64, status string, _ *ti
 }
 
 func (m *mockRepo) SetExpiry(_ context.Context, _ int64, _ time.Time) error { return nil }
+
+func (m *mockRepo) ModerateAd(_ context.Context, id int64, status string, note *string) error {
+	ad := m.ads[id]
+	ad.Status, ad.ModerationNote = status, note
+	m.ads[id] = ad
+	return nil
+}
+
+func (m *mockRepo) PostingBlockedUntil(_ context.Context, nurseryID int64) (*time.Time, error) {
+	return m.blockedUntil[nurseryID], nil
+}
 
 func (m *mockRepo) RecordView(_ context.Context, _ int64, _ int64) error { return nil }
 
@@ -889,5 +902,82 @@ func TestMyAds_OwnerSeesOwnAds(t *testing.T) {
 	}
 	if total != 1 || ads[0].NurseryID != 1 {
 		t.Errorf("want 1 ad for nursery 1, got %d", total)
+	}
+}
+
+// ─── Moderation ──────────────────────────────────────────────────────────────
+
+func TestSeriousReportHidesTheAdAtOnce(t *testing.T) {
+	ctx := context.Background()
+	for reason, wantHidden := range map[string]bool{"EXPLICIT_CONTENT": true, "PROHIBITED": true, "SPAM": false, "SCAM": false} {
+		repo := newMock()
+		repo.seedNursery(1, true, 10)
+		repo.seedNursery(2, true, 20)
+		repo.seedAd(1, 1, StatusPublished)
+		if err := svc(repo).ReportAd(ctx, ownerActor(20), 1, ReportAdRequest{Reason: reason}); err != nil {
+			t.Fatalf("%s: %v", reason, err)
+		}
+		hidden := repo.ads[1].Status == StatusSuspended
+		if hidden != wantHidden {
+			t.Errorf("%s: hidden = %v, want %v", reason, hidden, wantHidden)
+		}
+		if hidden && (repo.ads[1].ModerationNote == nil || *repo.ads[1].ModerationNote == "") {
+			t.Errorf("%s: the seller needs a note saying why", reason)
+		}
+	}
+}
+
+func TestSuspendedAdIsFrozenForTheSeller(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, true, 10)
+	repo.seedAd(1, 1, StatusSuspended)
+	s := svc(repo)
+	ctx := context.Background()
+	title := "Back again"
+	if _, err := s.UpdateAd(ctx, ownerActor(10), 1, UpdateAdRequest{Title: &title}); !errors.Is(err, ErrConflict) {
+		t.Errorf("edit under review: want ErrConflict, got %v", err)
+	}
+	for name, fn := range map[string]func(context.Context, ActorContext, int64) (Ad, error){
+		"publish": s.PublishAd, "resume": s.ResumeAd, "archive": s.ArchiveAd,
+	} {
+		if _, err := fn(ctx, ownerActor(10), 1); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("%s under review: want ErrInvalidInput, got %v", name, err)
+		}
+	}
+	ad, err := s.GetAd(ctx, ownerActor(10), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ad.Capabilities.CanEdit || ad.Capabilities.CanArchive {
+		t.Errorf("no edit/archive buttons under review: %+v", ad.Capabilities)
+	}
+}
+
+func TestBlockedNurseryCannotPost(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, true, 10)
+	until := time.Now().Add(30 * 24 * time.Hour)
+	repo.blockedUntil[1] = &until
+	repo.seedAd(1, 1, StatusDraft)
+	repo.seedAd(2, 1, StatusPaused)
+	s := svc(repo)
+	ctx := context.Background()
+
+	if _, err := s.CreateAd(ctx, ownerActor(10), CreateAdRequest{Title: "x", PlantName: "Rose"}); !errors.Is(err, ErrForbidden) {
+		t.Errorf("create while blocked: want ErrForbidden, got %v", err)
+	}
+	if _, err := s.PublishAd(ctx, ownerActor(10), 1); !errors.Is(err, ErrForbidden) {
+		t.Errorf("publish while blocked: want ErrForbidden, got %v", err)
+	}
+	if _, err := s.ResumeAd(ctx, ownerActor(10), 2); !errors.Is(err, ErrForbidden) {
+		t.Errorf("resume while blocked: want ErrForbidden, got %v", err)
+	}
+}
+
+func TestBlockDays(t *testing.T) {
+	for strikes, want := range map[int]int{0: 0, 1: 0, 2: 30, 3: 90, 7: 90} {
+		if got := blockDays(strikes); got != want {
+			t.Errorf("blockDays(%d) = %d, want %d", strikes, got, want)
+		}
 	}
 }

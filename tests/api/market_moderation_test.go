@@ -8,8 +8,10 @@ import (
 )
 
 // TestMarketModeration: a report filed by another nursery reaches the admin
-// queue; only admins can see and close it; closing with archive_ad takes the
-// ad down; a closed report cannot be closed again.
+// queue; only admins can see and decide it; a dismissed report leaves the ad
+// live; a closed report cannot be decided again. REMOVE and strikes run in the
+// journeys, which use fresh nurseries (a strike here would pile up on the
+// shared fixture nursery across runs and block its posting).
 func TestMarketModeration(t *testing.T) {
 	ownerToken := login(t, ownerPhone)
 	secondOwnerToken := login(t, secondOwnerPhone)
@@ -46,9 +48,9 @@ func TestMarketModeration(t *testing.T) {
 	}
 
 	review := fmt.Sprintf("/api/v1/market/reports/%d/review", reportID)
-	assertStatus(t, post(t, review, map[string]any{"status": "REVIEWED"}, ownerToken), http.StatusForbidden)
-	assertStatus(t, post(t, review, map[string]any{"status": "MAYBE"}, adminToken), http.StatusBadRequest)
-	resp := post(t, review, map[string]any{"status": "REVIEWED", "archive_ad": true}, adminToken)
+	assertStatus(t, post(t, review, map[string]any{"decision": "REMOVE"}, ownerToken), http.StatusForbidden)
+	assertStatus(t, post(t, review, map[string]any{"decision": "MAYBE"}, adminToken), http.StatusBadRequest)
+	resp := post(t, review, map[string]any{"decision": "DISMISS"}, adminToken)
 	var reviewed struct {
 		Report struct {
 			Status         string `json:"status"`
@@ -57,8 +59,8 @@ func TestMarketModeration(t *testing.T) {
 		} `json:"report"`
 	}
 	decode(t, resp, &reviewed)
-	if reviewed.Report.Status != "REVIEWED" || reviewed.Report.AdStatus != "ARCHIVED" || reviewed.Report.ReviewedByName == "" {
+	if reviewed.Report.Status != "DISMISSED" || reviewed.Report.AdStatus != "PUBLISHED" || reviewed.Report.ReviewedByName == "" {
 		t.Fatalf("review result: %+v", reviewed.Report)
 	}
-	assertStatus(t, post(t, review, map[string]any{"status": "DISMISSED"}, adminToken), http.StatusConflict)
+	assertStatus(t, post(t, review, map[string]any{"decision": "REMOVE"}, adminToken), http.StatusConflict)
 }

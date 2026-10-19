@@ -71,6 +71,9 @@ func (s *Service) CreateAd(ctx context.Context, actor ActorContext, req CreateAd
 	if err != nil || !active {
 		return Ad{}, fmt.Errorf("%w: nursery must be ACTIVE to post ads", ErrForbidden)
 	}
+	if err := s.checkPostingAllowed(ctx, nurseryID); err != nil {
+		return Ad{}, err
+	}
 	ad, err := s.repo.CreateAd(ctx, nurseryID, actor.UserID, req)
 	if err != nil {
 		return Ad{}, err
@@ -228,8 +231,11 @@ func (s *Service) UpdateAd(ctx context.Context, actor ActorContext, id int64, re
 	if err := s.requireOwner(ctx, actor, ad.NurseryID); err != nil {
 		return Ad{}, err
 	}
-	if ad.Status == StatusArchived {
-		return Ad{}, fmt.Errorf("%w: archived ads cannot be edited", ErrInvalidInput)
+	switch ad.Status {
+	case StatusArchived, StatusRemoved:
+		return Ad{}, fmt.Errorf("%w: this ad is closed and cannot be edited", ErrInvalidInput)
+	case StatusSuspended:
+		return Ad{}, fmt.Errorf("%w: this ad is under review and cannot be edited", ErrConflict)
 	}
 	if req.Photos != nil && len(req.Photos) > 10 {
 		return Ad{}, fmt.Errorf("%w: maximum 10 photos allowed", ErrInvalidInput)
@@ -292,7 +298,7 @@ func (s *Service) ArchiveAd(ctx context.Context, actor ActorContext, id int64) (
 		})
 }
 
-func (s *Service) adTransition(ctx context.Context, actor ActorContext, id int64, _ string, allowed []string, fn func(context.Context) error) (Ad, error) {
+func (s *Service) adTransition(ctx context.Context, actor ActorContext, id int64, target string, allowed []string, fn func(context.Context) error) (Ad, error) {
 	if !canAccessMarket(actor) {
 		return Ad{}, ErrForbidden
 	}
@@ -305,6 +311,11 @@ func (s *Service) adTransition(ctx context.Context, actor ActorContext, id int64
 	}
 	if !contains(allowed, ad.Status) {
 		return Ad{}, fmt.Errorf("%w: cannot transition from %s", ErrInvalidInput, ad.Status)
+	}
+	if target == StatusPublished {
+		if err := s.checkPostingAllowed(ctx, ad.NurseryID); err != nil {
+			return Ad{}, err
+		}
 	}
 	if err := fn(ctx); err != nil {
 		return Ad{}, err
@@ -453,6 +464,15 @@ func (s *Service) SavedAds(ctx context.Context, actor ActorContext, q AdsQuery) 
 
 var validReasons = map[string]bool{
 	"SPAM": true, "WRONG_PLANT": true, "DUPLICATE": true, "FRAUD": true, "OTHER": true,
+	"EXPLICIT_CONTENT": true, "SCAM": true, "PROHIBITED": true,
+}
+
+// seriousReasons hide the ad on the first report, before any admin looks:
+// leaving nude images or banned items up while waiting costs more than a
+// wrongly hidden ad, which an admin restores.
+var seriousReasons = map[string]string{
+	"EXPLICIT_CONTENT": "nude or sexual images",
+	"PROHIBITED":       "a banned or illegal item",
 }
 
 func (s *Service) ReportAd(ctx context.Context, actor ActorContext, adID int64, req ReportAdRequest) error {
@@ -460,7 +480,7 @@ func (s *Service) ReportAd(ctx context.Context, actor ActorContext, adID int64, 
 		return ErrForbidden
 	}
 	if !validReasons[req.Reason] {
-		return fmt.Errorf("%w: reason must be SPAM, WRONG_PLANT, DUPLICATE, FRAUD, or OTHER", ErrInvalidInput)
+		return fmt.Errorf("%w: reason must be SPAM, WRONG_PLANT, DUPLICATE, FRAUD, SCAM, EXPLICIT_CONTENT, PROHIBITED or OTHER", ErrInvalidInput)
 	}
 	nurseryID, err := s.actorNurseryID(ctx, actor)
 	if err != nil {
@@ -473,7 +493,31 @@ func (s *Service) ReportAd(ctx context.Context, actor ActorContext, adID int64, 
 	if ad.NurseryID == nurseryID {
 		return fmt.Errorf("%w: cannot report your own ad", ErrInvalidInput)
 	}
-	return s.repo.CreateReport(ctx, adID, actor.UserID, nurseryID, req.Reason, req.Notes)
+	if err := s.repo.CreateReport(ctx, adID, actor.UserID, nurseryID, req.Reason, req.Notes); err != nil {
+		return err
+	}
+	if what, serious := seriousReasons[req.Reason]; serious && (ad.Status == StatusPublished || ad.Status == StatusPaused) {
+		note := "Hidden after a report of " + what + ". GreenRoot is reviewing it."
+		if err := s.repo.ModerateAd(ctx, adID, StatusSuspended, &note); err != nil {
+			return err
+		}
+		s.bumpMarketSearchCache(ctx, actor.UserID)
+	}
+	return nil
+}
+
+// checkPostingAllowed refuses new or re-published ads while the nursery is
+// blocked for repeated rule breaks.
+func (s *Service) checkPostingAllowed(ctx context.Context, nurseryID int64) error {
+	until, err := s.repo.PostingBlockedUntil(ctx, nurseryID)
+	if err != nil {
+		return err
+	}
+	if until != nil {
+		return fmt.Errorf("%w: your nursery cannot post market ads until %s because ads broke the market rules",
+			ErrForbidden, until.Format("2 Jan 2006"))
+	}
+	return nil
 }
 
 // ── Enquiries ─────────────────────────────────────────────────
@@ -753,12 +797,12 @@ func enrichAd(ad Ad, actorNurseryID int64) Ad {
 		DaysRemaining: daysRemaining(ad.ExpiresAt),
 	}
 	ad.Capabilities = &AdCapabilities{
-		CanEdit:    isOwner && status != StatusArchived,
+		CanEdit:    isOwner && !contains([]string{StatusArchived, StatusSuspended, StatusRemoved}, status),
 		CanPublish: isOwner && (status == StatusDraft || status == StatusPaused),
 		CanPause:   isOwner && status == StatusPublished,
 		CanResume:  isOwner && status == StatusPaused,
 		CanRenew:   isOwner && status == StatusExpired,
-		CanArchive: isOwner && status != StatusArchived,
+		CanArchive: isOwner && !contains([]string{StatusArchived, StatusSuspended, StatusRemoved}, status),
 		CanSave:    !isOwner && status == StatusPublished,
 		CanEnquire: !isOwner && status == StatusPublished && ad.MyEnquiryID == nil,
 		CanReport:  !isOwner && status == StatusPublished,

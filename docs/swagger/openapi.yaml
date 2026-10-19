@@ -4675,7 +4675,11 @@ paths:
     get:
       tags: [Market]
       summary: Reported market ads (admin)
-      description: Reports nurseries filed with POST /market/ads/{id}/report, pending first, with the ad, its nursery and the reporter.
+      description: >-
+        Reports nurseries filed with POST /market/ads/{id}/report, pending first and serious ones
+        (EXPLICIT_CONTENT, PROHIBITED, which hid the ad as SUSPENDED on report) at the top. Each carries
+        the ad's photos and description, the reporter, and the seller nursery's strikes
+        (ads already removed) and posting block.
       operationId: listMarketReports
       security:
         - BearerAuth: []
@@ -4693,7 +4697,7 @@ paths:
   /api/v1/market/reports/{id}/review:
     post:
       tags: [Market]
-      summary: Close a report, optionally archiving the ad (admin)
+      summary: Decide a report (admin) — REMOVE the ad or DISMISS the report
       operationId: reviewMarketReport
       security:
         - BearerAuth: []
@@ -4705,13 +4709,18 @@ paths:
           application/json:
             schema:
               type: object
-              required: [status]
+              required: [decision]
               properties:
-                status: { type: string, enum: [REVIEWED, DISMISSED] }
-                archive_ad: { type: boolean, description: Also take the ad down }
+                decision:
+                  type: string
+                  enum: [REMOVE, DISMISS]
+                  description: >-
+                    REMOVE marks the ad REMOVED, closes every open report on it as REVIEWED and gives the
+                    nursery a strike (2nd = 30-day posting block, 3rd+ = 90 days). DISMISS closes this report;
+                    a SUSPENDED ad goes live again once no serious report is open.
       responses:
         "200":
-          description: The updated report
+          description: "The updated report and outcome: { report, outcome: { strikes, blocked_until } }"
         "400":
           $ref: '#/components/responses/Error'
         "403":
@@ -9841,6 +9850,10 @@ components:
           type: boolean
         lifecycle:
           $ref: '#/components/schemas/LifecycleMarketAdDisplays'
+        moderation_note:
+          type: string
+          nullable: true
+          description: Why GreenRoot suspended (under review) or removed the ad; shown to the seller
         my_enquiry_id:
           type: integer
           format: int64
@@ -10229,6 +10242,8 @@ components:
           nullable: true
         reason:
           type: string
+          enum: [SPAM, WRONG_PLANT, DUPLICATE, FRAUD, SCAM, EXPLICIT_CONTENT, PROHIBITED, OTHER]
+          description: EXPLICIT_CONTENT and PROHIBITED hide the ad (SUSPENDED) at once until an admin decides
     MarketSaveToggleResponse:
       type: object
       properties:

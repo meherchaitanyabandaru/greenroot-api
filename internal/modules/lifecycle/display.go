@@ -293,7 +293,7 @@ func marketAdActions(status string) Actions {
 		return Actions{Seller: []string{"Resume Ad", "Edit Ad", "Archive Ad"}}
 	case "EXPIRED":
 		return Actions{Seller: []string{"Renew Ad", "Archive Ad"}}
-	case "ARCHIVED":
+	case "ARCHIVED", "SUSPENDED", "REMOVED":
 		return Actions{Seller: []string{"View Ad"}}
 	default:
 		return Actions{Buyer: []string{"View Ad"}, Seller: []string{"View Ad"}}
@@ -520,6 +520,8 @@ func marketAdBuyerDisplay(status string) Display {
 		return Display{"Expired", "Ad Expired", "This ad is no longer active.", "error"}
 	case "ARCHIVED":
 		return Display{"Archived", "Ad Archived", "This ad is no longer available.", "neutral"}
+	case "SUSPENDED", "REMOVED":
+		return Display{"Unavailable", "Ad Unavailable", "This ad is no longer available.", "neutral"}
 	case "DRAFT":
 		return Display{"Draft", "Ad Draft", "This ad is not visible to buyers yet.", "neutral"}
 	default:
@@ -540,6 +542,10 @@ func marketAdSellerDisplay(status string) Display {
 		return Display{"Expired", "Ad Expired", "Renew this ad to make it live again.", "error"}
 	case "ARCHIVED":
 		return Display{"Archived", "Ad Archived", "This ad is closed.", "neutral"}
+	case "SUSPENDED":
+		return Display{"Under Review", "Hidden for Review", "A serious report hid this ad. GreenRoot will restore or remove it.", "warning"}
+	case "REMOVED":
+		return Display{"Removed", "Removed by GreenRoot", "This ad broke the market rules.", "error"}
 	default:
 		label := pretty(status)
 		return Display{label, label, "", "neutral"}

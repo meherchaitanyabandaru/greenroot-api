@@ -30,6 +30,10 @@ type Repository interface {
 	UpdateAd(ctx context.Context, id, userID int64, req UpdateAdRequest) (Ad, error)
 	SetAdStatus(ctx context.Context, id int64, status string, ts *time.Time) error
 	SetExpiry(ctx context.Context, id int64, expiresAt time.Time) error
+	// ModerateAd moves an ad to SUSPENDED, REMOVED or back to PUBLISHED and
+	// records the note the seller sees.
+	ModerateAd(ctx context.Context, id int64, status string, note *string) error
+	PostingBlockedUntil(ctx context.Context, nurseryID int64) (*time.Time, error)
 
 	// Views & saves
 	RecordView(ctx context.Context, adID, nurseryID int64) error
@@ -168,7 +172,7 @@ func (r *PostgresRepository) GetAd(ctx context.Context, id int64) (Ad, error) {
 		       ma.pickup_confirmed_by_user_id, ma.pickup_confirmed_at,
 		       ma.status, ma.view_count, ma.save_count, ma.enquiry_count,
 		       ma.expires_at, ma.published_at,
-		       ma.paused_at, ma.expired_at, ma.archived_at,
+		       ma.paused_at, ma.expired_at, ma.archived_at, ma.moderation_note,
 		       ma.created_at, ma.updated_at
 		FROM public.market_ads ma
 		JOIN public.nurseries n ON n.nursery_id = ma.nursery_id
@@ -277,7 +281,7 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, p
 		       ma.pickup_confirmed_by_user_id, ma.pickup_confirmed_at,
 		       ma.status, ma.view_count, ma.save_count, ma.enquiry_count,
 		       ma.expires_at, ma.published_at,
-		       ma.paused_at, ma.expired_at, ma.archived_at,
+		       ma.paused_at, ma.expired_at, ma.archived_at, ma.moderation_note,
 		       ma.created_at, ma.updated_at
 		FROM public.market_ads ma
 		JOIN public.nurseries n ON n.nursery_id = ma.nursery_id
@@ -401,6 +405,24 @@ func (r *PostgresRepository) SetAdStatus(ctx context.Context, id int64, status s
 	}
 	_, err := r.db.ExecContext(ctx, q, status, id)
 	return err
+}
+
+func (r *PostgresRepository) ModerateAd(ctx context.Context, id int64, status string, note *string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE public.market_ads SET status = $2, moderation_note = $3, moderated_at = NOW(), updated_at = NOW()
+		 WHERE ad_id = $1`, id, status, note)
+	return err
+}
+
+func (r *PostgresRepository) PostingBlockedUntil(ctx context.Context, nurseryID int64) (*time.Time, error) {
+	var until sql.NullTime
+	err := r.db.QueryRowContext(ctx,
+		`SELECT market_blocked_until FROM public.nurseries WHERE nursery_id = $1 AND market_blocked_until > NOW()`,
+		nurseryID).Scan(&until)
+	if errors.Is(err, sql.ErrNoRows) || !until.Valid {
+		return nil, nil
+	}
+	return &until.Time, err
 }
 
 func (r *PostgresRepository) SetExpiry(ctx context.Context, id int64, expiresAt time.Time) error {
@@ -816,7 +838,7 @@ func scanAdRow(row rowScanner) (Ad, error) {
 		&pickupAddress, &pickupLandmark, &pickupLat, &pickupLon,
 		&pickupAccuracy, &pickupSource, &pickupConfirmedBy, &pickupConfirmedAt,
 		&a.Status, &a.ViewCount, &a.SaveCount, &a.EnquiryCount,
-		&expiresAt, &publishedAt, &pausedAt, &expiredAt, &archivedAt,
+		&expiresAt, &publishedAt, &pausedAt, &expiredAt, &archivedAt, &a.ModerationNote,
 		&a.CreatedAt, &a.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

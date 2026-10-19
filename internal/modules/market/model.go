@@ -20,6 +20,10 @@ const (
 	StatusPaused    = "PAUSED"
 	StatusExpired   = "EXPIRED"
 	StatusArchived  = "ARCHIVED"
+	// Moderation: SUSPENDED hides an ad while GreenRoot reviews a serious
+	// report; REMOVED is final (the report was upheld).
+	StatusSuspended = "SUSPENDED"
+	StatusRemoved   = "REMOVED"
 )
 
 // AdExpireDays is how long a published ad stays live before auto-expiring.
@@ -62,6 +66,7 @@ type Ad struct {
 	PausedAt             *time.Time                  `json:"paused_at,omitempty"`
 	ExpiredAt            *time.Time                  `json:"expired_at,omitempty"`
 	ArchivedAt           *time.Time                  `json:"archived_at,omitempty"`
+	ModerationNote       *string                     `json:"moderation_note,omitempty"` // why GreenRoot suspended or removed it
 	CreatedAt            time.Time                   `json:"created_at"`
 	UpdatedAt            time.Time                   `json:"updated_at"`
 	Lifecycle            *lifecycle.MarketAdDisplays `json:"lifecycle,omitempty"`
