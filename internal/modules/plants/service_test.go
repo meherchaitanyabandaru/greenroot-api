@@ -133,10 +133,6 @@ func (m *mockRepo) GetCareGuide(_ context.Context, plantID int64) (*CareGuide, e
 	return g, nil
 }
 
-func (m *mockRepo) GetNamesByLanguage(_ context.Context, _ []int64, _ string) (map[int64]string, error) {
-	return nil, nil
-}
-
 func (m *mockRepo) BotanicalNameExists(_ context.Context, wfoID string) (bool, error) {
 	return wfoID == "wfo-known", nil
 }

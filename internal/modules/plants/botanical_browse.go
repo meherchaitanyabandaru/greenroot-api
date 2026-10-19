@@ -321,8 +321,7 @@ func (r *PostgresRepository) speciesByEnglishName(ctx context.Context, term stri
 		SELECT DISTINCT COALESCE(cb.accepted_wfo_id, p.wfo_id)
 		FROM public.plants p
 		LEFT JOIN public.botanical_names cb ON cb.wfo_id = p.wfo_id
-		WHERE p.wfo_id IS NOT NULL AND p.is_active AND (p.common_name ILIKE '%' || $1 || '%'
-			OR EXISTS (SELECT 1 FROM public.plant_names pn WHERE pn.plant_id = p.plant_id AND pn.is_active AND pn.plant_name ILIKE '%' || $1 || '%'))`, term)
+		WHERE p.wfo_id IS NOT NULL AND p.is_active AND p.common_name ILIKE '%' || $1 || '%'`, term)
 	if err != nil {
 		return nil, err
 	}

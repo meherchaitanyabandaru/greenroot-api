@@ -1,10 +1,11 @@
 # Database migrations
 
-**Before launch there are none.** The schema's single source of truth is
+The schema's single source of truth is
 [`greenroot-infra/db/postgresql/schema.sql`](../../../../greenroot-infra/db/postgresql/schema.sql).
-The 20 migrations written up to 2026-10-19 were folded into it.
+The 20 migrations written up to 2026-10-19 were folded into it. Later schema
+changes are recorded as migrations here.
 
-## Changing the schema now (pre-launch)
+## Changing the schema
 
 1. Change your local database (psql), or edit `schema.sql` directly.
 2. If you changed the database, regenerate the file:
@@ -12,11 +13,8 @@ The 20 migrations written up to 2026-10-19 were folded into it.
 3. Rebuild your database from the file: `greenroot-infra/scripts/reset-dbs.sh`
 4. `DATABASE_URL=... go run ./cmd/sqlcheck ./internal/...` and the API tests.
 
-## After launch
-
-Production data can't be rebuilt, so every change becomes a migration here
-again, applied by `cmd/migrate` (which already runs in CI and blocks a
-production start while one is pending):
+Every change becomes a migration here, applied by `cmd/migrate` (which runs in
+CI and blocks a production start while one is pending):
 
 - **Name:** `<YYYYMMDD>_<NN>_<description>.up.sql` plus a `.down.sql`
   (manual rollback aid; the runner only runs `up`).

@@ -37,7 +37,6 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Post("/categories", m.handler.CreateCategory)
 		r.Put("/categories/{categoryId}", m.handler.UpdateCategory)
 		r.Delete("/categories/{categoryId}", m.handler.DeleteCategory)
-		r.Get("/names", m.handler.Names)
 		r.Get("/lookup", m.handler.Lookup)
 		r.Post("/resolve", m.handler.Resolve)
 		r.Get("/{id}", m.handler.Get)

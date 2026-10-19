@@ -4586,40 +4586,6 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
-  /api/v1/plants/names:
-    get:
-      tags:
-        - Plants
-      summary: Names
-      operationId: getPlantsNames
-      security: []
-      parameters:
-        - in: query
-          name: ids
-          required: false
-          schema:
-            type: string
-        - in: query
-          name: lang
-          required: false
-          schema:
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  names:
-                    type: object
-                    additionalProperties:
-                      type: string
-          description: OK
-        "400":
-          $ref: '#/components/responses/Error'
-        "500":
-          $ref: '#/components/responses/Error'
   /api/v1/market/reports:
     get:
       tags: [Market]
