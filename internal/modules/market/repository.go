@@ -186,7 +186,9 @@ func (r *PostgresRepository) ListPublished(ctx context.Context, q AdsQuery) ([]A
 			" AND (LOWER(ma.title) LIKE $%[1]d::text"+
 				" OR LOWER(ma.plant_name) LIKE $%[1]d::text"+
 				" OR LOWER(n.nursery_name) LIKE $%[1]d::text"+
-				" OR LOWER(COALESCE(ma.description,'')) LIKE $%[1]d::text)", n)
+				" OR LOWER(COALESCE(ma.description,'')) LIKE $%[1]d::text"+
+				" OR EXISTS (SELECT 1 FROM public.plants p WHERE p.plant_id = ma.plant_id"+
+				" AND (LOWER(p.scientific_name) LIKE $%[1]d::text OR LOWER(COALESCE(p.common_name,'')) LIKE $%[1]d::text)))", n)
 	}
 	if q.Category != "" {
 		args = append(args, q.Category)

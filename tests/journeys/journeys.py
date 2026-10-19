@@ -920,7 +920,8 @@ def journey_market():
     boss = admin()
     owner, manager, buyer, driver, _ = team(boss)
     rival = approved_owner(boss, "Rival")
-    ad = {"plant_name": "Mango", "title": "Alphonso grafts", "description": "2 ft grafts", "quantity": 200, "price_per_unit": 120, "price_unit": "PER_PLANT", "photos": []}
+    tamarind = expect("look up a catalog plant", "GET", "/plants/lookup?q=Tamarindus", owner.token)["results"][0]["plant"]
+    ad = {"plant_id": tamarind["id"], "plant_name": "Imli", "title": "Sweet grafts", "description": "2 ft grafts", "quantity": 200, "price_per_unit": 120, "price_unit": "PER_PLANT", "photos": []}
     expect("a buyer cannot browse the market", "GET", "/market/ads", buyer.token, status=403)
     expect("a driver cannot browse the market", "GET", "/market/ads", driver.token, status=403)
     expect("a buyer cannot post an ad", "POST", "/market/ads", buyer.token, ad, status=403)
@@ -930,6 +931,8 @@ def journey_market():
     expect("owner publishes", "POST", f"/market/ads/{a['id']}/publish", owner.token, {})
     out = expect("a rival browses the market", "GET", "/market/ads", rival.token)
     check("…and sees the ad", a["id"] in [x["id"] for x in out.get("ads", [])], out)
+    out = expect("search by the catalog's botanical name", "GET", "/market/ads?q=tamarindus", rival.token)
+    check("…finds the ad linked to that plant", a["id"] in [x["id"] for x in out.get("ads", [])], out)
     expect("a rival cannot archive it", "POST", f"/market/ads/{a['id']}/archive", rival.token, {}, status=(403, 404))
     expect("the posting nursery cannot enquire on its own ad", "POST", f"/market/ads/{a['id']}/enquiries", owner.token, {"message": "self"}, status=400)
     e = expect("a rival enquires", "POST", f"/market/ads/{a['id']}/enquiries", rival.token, {"message": "Need 50, can you deliver?"}, status=(200, 201))

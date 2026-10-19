@@ -3,6 +3,7 @@ package users
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -124,8 +125,8 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 		contentType = "image/jpeg"
 	}
 
-	data := make([]byte, header.Size)
-	if _, err := file.Read(data); err != nil {
+	data, err := io.ReadAll(file)
+	if err != nil {
 		response.Error(w, http.StatusInternalServerError, "read_error", "could not read uploaded file")
 		return
 	}
