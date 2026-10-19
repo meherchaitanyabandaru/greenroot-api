@@ -296,6 +296,42 @@ func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, UserResponse{User: user})
 }
 
+// SendMobileCode godoc: POST /users/me/mobile/send-code
+func (h *Handler) SendMobileCode(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	var req MobileCodeRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	resp, err := h.service.SendMobileCode(r.Context(), actor, req)
+	if err != nil {
+		writeUsersError(w, err)
+		return
+	}
+	response.OK(w, resp)
+}
+
+// VerifyMobile godoc: POST /users/me/mobile/verify
+func (h *Handler) VerifyMobile(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	var req VerifyMobileRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	user, err := h.service.VerifyMobile(r.Context(), actor, req)
+	if err != nil {
+		writeUsersError(w, err)
+		return
+	}
+	response.OK(w, UserResponse{User: user})
+}
+
 func (h *Handler) actorAndPathUser(w http.ResponseWriter, r *http.Request) (ActorContext, int64, bool) {
 	actor, ok := h.actor(w, r)
 	if !ok {
@@ -363,6 +399,16 @@ func writeUsersError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusTooManyRequests, "email_code_rate_limited", "too many codes requested for this email — try again in an hour")
 	case errors.Is(err, ErrEmailUnavailable):
 		response.Error(w, http.StatusServiceUnavailable, "email_unavailable", "could not send the email right now — please try again shortly")
+	case errors.Is(err, ErrInvalidMobile):
+		response.Error(w, http.StatusBadRequest, "invalid_mobile", "enter a 10-digit Indian mobile number")
+	case errors.Is(err, ErrSameMobile):
+		response.Error(w, http.StatusBadRequest, "same_mobile", "this is already your mobile number")
+	case errors.Is(err, ErrMobileTaken):
+		response.Error(w, http.StatusConflict, "mobile_taken", "this mobile number is already used by another account")
+	case errors.Is(err, ErrInvalidMobileCode):
+		response.Error(w, http.StatusBadRequest, "invalid_code", "the verification code is wrong or has expired")
+	case errors.Is(err, ErrSMSUnavailable):
+		response.Error(w, http.StatusServiceUnavailable, "sms_unavailable", "could not send the SMS right now — please try again shortly")
 	case errors.Is(err, ErrAccountDeletionBlocked):
 		response.Error(w, http.StatusConflict, "account_deletion_blocked", "close or transfer active nursery business before deleting this account")
 	default:

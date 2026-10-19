@@ -40,6 +40,8 @@ type Service struct {
 	redis      redis.Cmdable
 	email      EmailSender
 	emailOTPs  *otp.Store
+	sms        SMSSender
+	mobileOTPs *otp.Store
 }
 
 func NewService(repository Repository, storage *platformstorage.Client, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {

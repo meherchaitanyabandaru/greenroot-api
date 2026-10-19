@@ -315,6 +315,23 @@ def journey_accounts():
     me = expect("read own profile", "GET", "/users/me", u.token)
     check("profile saved", me.get("user", {}).get("first_name") == "Asha", me.get("user"))
     expect("invalid onboarding activity refused", "POST", "/users/me/onboarding", u.token, {"initial_activity": "ROCKET"}, status=400)
+
+    # Change the sign-in number: code to the NEW number, then switch
+    other = User(first="Other", activity="CUSTOMER")
+    new_mobile_no = new_mobile()
+    expect("change number: invalid number refused", "POST", "/users/me/mobile/send-code", u.token, {"mobile": "12345"}, status=400)
+    expect("change number: own number refused", "POST", "/users/me/mobile/send-code", u.token, {"mobile": u.mobile}, status=400)
+    expect("change number: someone else's number refused", "POST", "/users/me/mobile/send-code", u.token, {"mobile": other.mobile}, status=409)
+    out = expect("change number: code sent to the new number", "POST", "/users/me/mobile/send-code", u.token, {"mobile": "+91 " + new_mobile_no})
+    check("…delivered to the normalized new number", out.get("delivered_to") == new_mobile_no, out)
+    expect("change number: wrong code refused", "POST", "/users/me/mobile/verify", u.token, {"mobile": new_mobile_no, "code": "000000"}, status=400)
+    out = expect("change number: verified", "POST", "/users/me/mobile/verify", u.token, {"mobile": new_mobile_no, "code": OTP})
+    check("…profile shows the new number", out["user"]["mobile"] == new_mobile_no, out["user"])
+    old_mobile, u.mobile = u.mobile, new_mobile_no
+    again = u.login()
+    check("sign in with the new number reaches the same account", again["user"]["id"] == u.id, again["user"])
+    fresh = User(old_mobile)
+    check("the old number is free (signs up a new account)", fresh.id != u.id and fresh.is_new, {"id": fresh.id, "is_new": fresh.is_new})
     addr = expect("add a delivery address", "POST", f"/users/{u.id}/addresses", u.token, {
         "address_type": "DELIVERY", "contact_name": "Asha", "contact_mobile": u.mobile, "address_line1": "12 MG Road",
         "city": "Hyderabad", "state": "Telangana", "country": "India", "postal_code": "500001"}, status=(200, 201))

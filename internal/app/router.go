@@ -120,7 +120,7 @@ func NewRouter(deps Dependencies) chi.Router {
 		subModule.RegisterRoutes(r)
 		tracking.NewModule(deps.DB, deps.JWT, redisClients...).RegisterRoutes(r)
 		vehicles.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
-		users.NewModule(deps.DB, deps.JWT, deps.Storage, deps.Audit, deps.Redis, emailModule.Service()).RegisterRoutes(r)
+		users.NewModule(deps.DB, deps.JWT, deps.Storage, deps.Audit, deps.Redis, emailModule.Service(), smsModule.Service()).RegisterRoutes(r)
 	})
 
 	return router

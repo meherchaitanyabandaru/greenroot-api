@@ -5,6 +5,7 @@ import "time"
 const (
 	activityUpdateProfile      = "UPDATE_PROFILE"
 	activityVerifyEmail        = "VERIFY_EMAIL"
+	activityChangeMobile       = "CHANGE_MOBILE"
 	activityCompleteOnboarding = "COMPLETE_ONBOARDING"
 	activityCreateAddress      = "CREATE_ADDRESS"
 	activityUpdateAddress      = "UPDATE_ADDRESS"

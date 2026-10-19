@@ -14,7 +14,7 @@ type Module struct {
 	handler *Handler
 }
 
-func NewModule(db *sql.DB, jwt *jwtplatform.Service, storage *platformstorage.Client, audit *auditlog.Service, rdb *redis.Client, emailSender EmailSender) Module {
+func NewModule(db *sql.DB, jwt *jwtplatform.Service, storage *platformstorage.Client, audit *auditlog.Service, rdb *redis.Client, emailSender EmailSender, smsSender SMSSender) Module {
 	repository := NewRepository(db)
 	var service *Service
 	if rdb != nil {
@@ -24,6 +24,9 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service, storage *platformstorage.Cl
 	}
 	if emailSender != nil {
 		service.WithEmail(emailSender)
+	}
+	if smsSender != nil {
+		service.WithSMS(smsSender)
 	}
 	return Module{handler: NewHandler(service, jwt)}
 }
@@ -37,6 +40,8 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Post("/me/avatar", m.handler.UploadAvatar)
 		r.Post("/me/email/send-code", m.handler.SendEmailCode)
 		r.Post("/me/email/verify", m.handler.VerifyEmail)
+		r.Post("/me/mobile/send-code", m.handler.SendMobileCode)
+		r.Post("/me/mobile/verify", m.handler.VerifyMobile)
 		r.Get("/{id}", m.handler.GetUser)
 		r.Get("/{id}/addresses", m.handler.ListAddresses)
 		r.Post("/{id}/addresses", m.handler.CreateAddress)

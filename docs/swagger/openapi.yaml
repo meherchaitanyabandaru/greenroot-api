@@ -7239,6 +7239,84 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+  /api/v1/users/me/mobile/send-code:
+    post:
+      tags:
+        - Users
+      summary: Send a code to a new mobile number
+      description: |
+        Starts changing the sign-in number: texts a 6-digit code (valid 5 minutes) to the NEW number.
+        The code is bound to this user and that number. With SMS_PROVIDER=mock the code is 123456 and
+        is returned as `mock_code`. Errors: 400 `invalid_mobile` / `same_mobile`, 409 `mobile_taken`,
+        429 cooldown / hourly limit, 503 `sms_unavailable`.
+      operationId: postUsersMeMobileSendCode
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mobile]
+              properties:
+                mobile:
+                  type: string
+                  example: "9876543210"
+      responses:
+        "200":
+          description: Code sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  expires_in_seconds:
+                    type: integer
+                  mock_code:
+                    type: string
+                  delivered_to:
+                    type: string
+        "400":
+          $ref: '#/components/responses/Error'
+        "401":
+          $ref: '#/components/responses/Error'
+        "409":
+          $ref: '#/components/responses/Error'
+  /api/v1/users/me/mobile/verify:
+    post:
+      tags:
+        - Users
+      summary: Verify the code and switch the sign-in number
+      description: |
+        Checks the code sent to the new number and makes it the user's sign-in number (mobile_verified=true).
+        Errors: 400 `invalid_code`, 409 `mobile_taken` if another account claimed the number meanwhile.
+      operationId: postUsersMeMobileVerify
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mobile, code]
+              properties:
+                mobile:
+                  type: string
+                code:
+                  type: string
+      responses:
+        "200":
+          description: Updated user
+        "400":
+          $ref: '#/components/responses/Error'
+        "401":
+          $ref: '#/components/responses/Error'
+        "409":
+          $ref: '#/components/responses/Error'
   /api/v1/users/me/email/send-code:
     post:
       tags:

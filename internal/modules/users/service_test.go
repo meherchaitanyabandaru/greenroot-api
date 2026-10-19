@@ -134,6 +134,24 @@ func (m *mockRepo) EmailTakenByOther(_ context.Context, email string, userID int
 	return false, nil
 }
 
+func (m *mockRepo) MobileTakenByOther(_ context.Context, mobile string, userID int64) (bool, error) {
+	for id, u := range m.users {
+		if id != userID && u.Mobile == mobile {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (m *mockRepo) ChangeMobile(_ context.Context, userID int64, mobile string, _ time.Time) (*User, error) {
+	u, ok := m.users[userID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	u.Mobile, u.MobileVerified = mobile, true
+	return u, nil
+}
+
 func (m *mockRepo) SetVerifiedEmail(_ context.Context, userID int64, email string, _ time.Time) (*User, error) {
 	u, ok := m.users[userID]
 	if !ok {

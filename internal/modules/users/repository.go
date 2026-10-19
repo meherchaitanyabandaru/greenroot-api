@@ -28,6 +28,8 @@ type Repository interface {
 	SoftDeleteAccount(ctx context.Context, userID int64) error
 	EmailTakenByOther(ctx context.Context, email string, userID int64) (bool, error)
 	SetVerifiedEmail(ctx context.Context, userID int64, email string, at time.Time) (*User, error)
+	MobileTakenByOther(ctx context.Context, mobile string, userID int64) (bool, error)
+	ChangeMobile(ctx context.Context, userID int64, mobile string, at time.Time) (*User, error)
 }
 
 type AccountDeletionBlockers struct {
@@ -126,6 +128,36 @@ func (r *PostgresRepository) SetVerifiedEmail(ctx context.Context, userID int64,
 	}
 	if err != nil {
 		return nil, mapEmailUnique(err)
+	}
+	user.Roles, _ = r.ListRoles(ctx, user.ID)
+	return user, nil
+}
+
+func (r *PostgresRepository) MobileTakenByOther(ctx context.Context, mobile string, userID int64) (bool, error) {
+	var taken bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM public.users WHERE mobile = $1 AND user_id <> $2)`, mobile, userID).Scan(&taken)
+	return taken, err
+}
+
+// ChangeMobile makes a verified number the user's sign-in number. The unique
+// key on mobile settles a race with someone else claiming it.
+func (r *PostgresRepository) ChangeMobile(ctx context.Context, userID int64, mobile string, at time.Time) (*User, error) {
+	user, err := scanUserRow(r.db.QueryRowContext(ctx, `
+		UPDATE public.users SET mobile = $2, is_mobile_verified = true, updated_at = $3, updated_by_user_id = $1
+		WHERE user_id = $1 AND deleted_at IS NULL
+		RETURNING user_id, user_code, first_name, last_name, gender::text, mobile, email, profile_image_url,
+			is_mobile_verified, is_email_verified, is_onboarding_completed, initial_activity, onboarding_completed_at,
+			status::text, last_login_at, created_at, updated_at`, userID, mobile, at))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && strings.Contains(pgErr.ConstraintName, "mobile") {
+			return nil, ErrMobileTaken
+		}
+		return nil, err
 	}
 	user.Roles, _ = r.ListRoles(ctx, user.ID)
 	return user, nil
