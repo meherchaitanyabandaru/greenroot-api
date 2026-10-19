@@ -43,8 +43,10 @@ func New(name string) (Provider, error) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "", ProviderMock:
 		return MockProvider{}, nil
+	case ProviderAWS:
+		return newAWSProvider()
 	}
-	return nil, fmt.Errorf("unsupported SMS_PROVIDER %q (supported: %s)", name, ProviderMock)
+	return nil, fmt.Errorf("unsupported SMS_PROVIDER %q (supported: %s, %s)", name, ProviderMock, ProviderAWS)
 }
 
 // MockProvider never contacts a network. It logs identifiers only, never the

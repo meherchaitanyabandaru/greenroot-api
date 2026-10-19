@@ -39,8 +39,10 @@ func New(name string) (Provider, error) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "", ProviderMock:
 		return MockProvider{}, nil
+	case ProviderSES:
+		return newSESProvider()
 	}
-	return nil, fmt.Errorf("unsupported EMAIL_PROVIDER %q (supported: %s)", name, ProviderMock)
+	return nil, fmt.Errorf("unsupported EMAIL_PROVIDER %q (supported: %s, %s)", name, ProviderMock, ProviderSES)
 }
 
 // MockProvider never sends; it logs identifiers only, never the body.
