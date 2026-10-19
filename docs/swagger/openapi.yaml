@@ -4671,6 +4671,25 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+  /api/v1/market/nurseries/{id}:
+    get:
+      tags: [Market]
+      summary: A nursery's public market profile
+      description: >-
+        Opened from the seller photo on an ad: nursery name, verified flag, city, owner name and selfie,
+        member since, ads posted, live ads, deals agreed, and its live ads. No strikes or private data.
+      operationId: getMarketNurseriesByid
+      security:
+        - BearerAuth: []
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: "{ seller: SellerProfile }"
+        "403":
+          $ref: '#/components/responses/Error'
+        "404":
+          $ref: '#/components/responses/Error'
   /api/v1/market/reports:
     get:
       tags: [Market]
@@ -7277,10 +7296,23 @@ paths:
         "500":
           $ref: '#/components/responses/Error'
   /api/v1/users/me/avatar:
+    delete:
+      tags:
+        - Users
+      summary: Delete the profile photo (seller selfie) and its stored file
+      description: Without a photo the user cannot post market ads or start market chats (403 selfie_required).
+      operationId: deleteUsersMeAvatar
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The user without a photo
+        "401":
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - Users
-      summary: Upload avatar
+      summary: Upload avatar (the camera selfie market sellers show; replaces and deletes the old file)
       operationId: postUsersMeAvatar
       security:
         - BearerAuth: []
@@ -9850,6 +9882,13 @@ components:
           type: boolean
         lifecycle:
           $ref: '#/components/schemas/LifecycleMarketAdDisplays'
+        posted_by_name:
+          type: string
+          nullable: true
+        posted_by_photo:
+          type: string
+          nullable: true
+          description: The poster's profile selfie. Posting, publishing and starting a chat return 403 selfie_required without one.
         moderation_note:
           type: string
           nullable: true

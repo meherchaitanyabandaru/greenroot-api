@@ -331,6 +331,25 @@ func (h *Handler) enquiryTransition(
 	response.OK(w, EnquiryResponse{Enquiry: e})
 }
 
+// SellerProfile is a nursery's public market page: who runs it, its
+// activity and its live ads.
+func (h *Handler) SellerProfile(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	p, err := h.svc.SellerProfile(r.Context(), actor, id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, map[string]any{"seller": p})
+}
+
 func (h *Handler) MakeOffer(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {
@@ -451,6 +470,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusForbidden, "forbidden", err.Error())
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_input", err.Error())
+	case errors.Is(err, ErrSelfieRequired):
+		response.Error(w, http.StatusForbidden, "selfie_required", err.Error())
 	case errors.Is(err, ErrConflict):
 		response.Error(w, http.StatusConflict, "conflict", err.Error())
 	default:

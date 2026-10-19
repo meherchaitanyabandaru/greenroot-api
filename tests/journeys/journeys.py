@@ -94,6 +94,28 @@ def expect(label, method, path, token=None, body=None, status=200, headers=None)
     return out
 
 
+# A 1x1 PNG: stands in for the camera selfie market sellers must have.
+SELFIE_PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+
+
+def upload_selfie(label, user):
+    """POST /users/me/avatar as multipart; returns the stored photo URL."""
+    boundary = "journey" + str(random.randint(10**8, 10**9))
+    body = (f'--{boundary}\r\nContent-Disposition: form-data; name="avatar"; filename="selfie.png"\r\n'
+            "Content-Type: image/png\r\n\r\n").encode() + SELFIE_PNG + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(API + "/users/me/avatar", data=body, method="POST")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    req.add_header("Authorization", "Bearer " + user.token)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            code, out = r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        code, out = e.code, {"raw": e.read()[:200].decode(errors="replace")}
+    url = (out.get("user") or {}).get("profile_image_url")
+    check(f"{label}  [POST /users/me/avatar → {code}]", code == 200 and bool(url), out)
+    return url
+
+
 def err_code(body):
     return (body or {}).get("error", {}).get("code")
 
@@ -377,8 +399,8 @@ def journey_accounts():
 
 # ── shared set-ups for the trade journeys ──────────────────────────────────
 
-def approved_owner(boss, name="Journey Nursery"):
-    """A nursery owner whose nursery the admin has approved (trial subscription)."""
+def approved_owner(boss, name="Journey Nursery", selfie=True):
+    """A nursery owner whose nursery the admin has approved (trial subscription), with a profile selfie."""
     owner = User(first="Owner", activity="OWNER")
     n = expect("register nursery", "POST", "/nurseries", owner.token, {
         "name": f"{name} {owner.mobile[-4:]}", "mobile": owner.mobile, "address_line1": "Plot 1",
@@ -387,6 +409,8 @@ def approved_owner(boss, name="Journey Nursery"):
     expect("admin approves nursery", "PUT", f"/nurseries/{nid}/status", boss.token, {"status": "APPROVED"})
     owner.refresh()
     owner.nursery_id = nid
+    if selfie:
+        upload_selfie("owner takes a profile selfie", owner)
     return owner
 
 
@@ -413,6 +437,7 @@ def team(boss):
     manager = User(first="Manager", activity="MANAGER")
     expect("manager accepts invite", "POST", f"/invites/{invite(owner, 'MANAGER_INVITE', manager)}/accept", manager.token, {})
     manager.refresh()
+    upload_selfie("manager takes a profile selfie", manager)
     buyer = User(first="Buyer", activity="CUSTOMER")
     driver = approved_driver(boss, owner)
     _, sizes = call("GET", "/plants/sizes")
@@ -920,6 +945,23 @@ def journey_market():
     boss = admin()
     owner, manager, buyer, driver, _ = team(boss)
     rival = approved_owner(boss, "Rival")
+
+    # Selling and contacting sellers need a camera selfie; browsing does not.
+    shy = approved_owner(boss, "No Selfie", selfie=False)
+    expect("browsing works without a selfie", "GET", "/market/ads", shy.token)
+    code, out = call("POST", "/market/ads", shy.token, {"plant_name": "Rose", "title": "No face"})
+    check("posting without a selfie is refused (403 selfie_required)", code == 403 and err_code(out) == "selfie_required", out)
+    photo = upload_selfie("the owner takes a selfie", shy)
+    expect("a profile save keeps the selfie", "PUT", "/users/me", shy.token, {"first_name": "Shy", "last_name": "Owner"})
+    me = expect("…check", "GET", "/users/me", shy.token)
+    check("…photo still there", me.get("user", me).get("profile_image_url") == photo, me)
+    expect("a profile save cannot point the photo elsewhere", "PUT", "/users/me", shy.token, {"first_name": "Shy", "profile_image_url": "https://evil.example/x.jpg"})
+    me = expect("…check", "GET", "/users/me", shy.token)
+    check("…photo unchanged", me.get("user", me).get("profile_image_url") == photo, me)
+    expect("the owner deletes the selfie", "DELETE", "/users/me/avatar", shy.token)
+    code, out = call("POST", "/market/ads", shy.token, {"plant_name": "Rose", "title": "No face"})
+    check("…and cannot post again until a new one", code == 403 and err_code(out) == "selfie_required", out)
+
     tamarind = expect("look up a catalog plant", "GET", "/plants/lookup?q=Tamarindus", owner.token)["results"][0]["plant"]
     ad = {"plant_id": tamarind["id"], "plant_name": "Imli", "title": "Sweet grafts", "description": "2 ft grafts", "quantity": 200, "price_per_unit": 120, "price_unit": "PER_PLANT", "photos": []}
     expect("a buyer cannot browse the market", "GET", "/market/ads", buyer.token, status=403)
@@ -927,6 +969,7 @@ def journey_market():
     expect("a buyer cannot post an ad", "POST", "/market/ads", buyer.token, ad, status=403)
     a = expect("manager posts an ad", "POST", "/market/ads", manager.token, ad, status=201)["ad"]
     check("…DRAFT", a["status"] == "DRAFT", a["status"])
+    check("…shows who posted it, with their selfie", a.get("posted_by_name") and a.get("posted_by_photo"), a)
     expect("a rival cannot publish it", "POST", f"/market/ads/{a['id']}/publish", rival.token, {}, status=(403, 404))
     expect("owner publishes", "POST", f"/market/ads/{a['id']}/publish", owner.token, {})
     out = expect("a rival browses the market", "GET", "/market/ads", rival.token)
@@ -939,6 +982,10 @@ def journey_market():
     expect("a second enquiry from the same nursery is refused", "POST", f"/market/ads/{a['id']}/enquiries", rival.token, {"message": "again"}, status=400)
     eid = e.get("enquiry", e).get("id")
     expect("manager replies", "POST", f"/market/enquiries/{eid}/reply", manager.token, {"body": "Yes, Rs 120 each"}, status=(200, 201))
+    seller = expect("the rival opens the seller's profile", "GET", f"/market/nurseries/{owner.nursery_id}", rival.token)["seller"]
+    check("…name, owner selfie, activity and the live ad", seller["nursery_name"] and seller["owner_photo"] and seller["live_ads"] >= 1
+          and a["id"] in [x["id"] for x in seller["ads"]], seller)
+    expect("a buyer cannot open seller profiles", "GET", f"/market/nurseries/{owner.nursery_id}", buyer.token, status=403)
     seen = expect("the rival reopens the ad", "GET", f"/market/ads/{a['id']}", rival.token)["ad"]
     check("…and is pointed at its existing chat", seen.get("my_enquiry_id") == eid and not seen["capabilities"]["can_enquire"], seen)
 

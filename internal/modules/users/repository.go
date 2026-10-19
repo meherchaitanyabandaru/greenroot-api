@@ -79,7 +79,8 @@ func (r *PostgresRepository) UpdateProfile(ctx context.Context, userID int64, in
 			email = CASE WHEN $5::text IS NULL THEN email ELSE NULLIF($5::text, '') END,
 			is_email_verified = CASE WHEN $5::text IS NULL OR lower(email) IS NOT DISTINCT FROM lower(NULLIF($5::text, ''))
 				THEN is_email_verified ELSE false END,
-			profile_image_url = NULLIF($6, ''),
+			-- NULL $6 = keep the photo, '' = clear it.
+			profile_image_url = CASE WHEN $6::text IS NULL THEN profile_image_url ELSE NULLIF($6::text, '') END,
 			updated_at = $7,
 			updated_by_user_id = $1
 		WHERE user_id = $1 AND deleted_at IS NULL
@@ -95,7 +96,7 @@ func (r *PostgresRepository) UpdateProfile(ctx context.Context, userID int64, in
 		stringOrEmpty(input.LastName),
 		nullableStringValue(input.Gender),
 		input.Email,
-		stringOrEmpty(input.ProfileImageURL),
+		input.ProfileImageURL,
 		at,
 	))
 	if errors.Is(err, sql.ErrNoRows) {

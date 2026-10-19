@@ -136,6 +136,19 @@ jobs:
       - name: SQL statements match the schema (sqlcheck)
         run: go run ./cmd/sqlcheck ./internal/...
 
+      # Object storage for uploads (profile selfies gate market posting and
+      # chats). Default STORAGE_* settings match; the API creates the buckets.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=greenroot -e MINIO_ROOT_PASSWORD=greenroot123 \
+            minio/minio:RELEASE.2024-12-18T13-15-44Z server /data
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && exit 0
+            sleep 1
+          done
+          echo "MinIO did not start"; docker logs minio; exit 1
+
       - name: Start API
         run: |
           go build -o /tmp/greenroot-api ./cmd/api

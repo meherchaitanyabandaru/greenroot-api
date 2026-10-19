@@ -38,6 +38,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Post("/me/onboarding", m.handler.CompleteOnboarding)
 		r.Delete("/me", m.handler.DeleteAccount)
 		r.Post("/me/avatar", m.handler.UploadAvatar)
+		r.Delete("/me/avatar", m.handler.DeleteAvatar)
 		r.Post("/me/email/send-code", m.handler.SendEmailCode)
 		r.Post("/me/email/verify", m.handler.VerifyEmail)
 		r.Post("/me/mobile/send-code", m.handler.SendMobileCode)

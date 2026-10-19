@@ -103,6 +103,14 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		return nil, err
 	}
 
+	if !cfg.IsProduction() {
+		bucketCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := storageClient.EnsureBuckets(bucketCtx); err != nil {
+			logManager.Logger().Warn("storage buckets not ready; uploads will fail until MinIO is running", "err", err)
+		}
+		cancel()
+	}
+
 	smsProvider, err := platformsms.New(cfg.SMS.Provider)
 	if err != nil {
 		_ = logManager.Close()

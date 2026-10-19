@@ -45,6 +45,9 @@ func (m Module) RegisterRoutes(r chi.Router) {
 		r.Post("/enquiries/{id}/reply", m.handler.ReplyToEnquiry)
 		r.Post("/enquiries/{id}/close", m.handler.CloseEnquiry)
 		r.Post("/enquiries/{id}/cancel", m.handler.CancelEnquiry)
+		// A nursery's public market profile (from the photo on its ads)
+		r.Get("/nurseries/{id}", m.handler.SellerProfile)
+
 		// Bargaining: either side offers a price; the other accepts or declines.
 		r.Post("/enquiries/{id}/offers", m.handler.MakeOffer)
 		r.Post("/enquiries/{id}/offers/{messageId}/accept", m.handler.AcceptOffer)

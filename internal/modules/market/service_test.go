@@ -20,6 +20,7 @@ type mockRepo struct {
 	enquiryExists map[string]bool // "adID:nurseryID"
 	lastOfferBody string
 	blockedUntil  map[int64]*time.Time
+	noSelfie      map[int64]bool // userID → has no profile photo
 	nextAdID      int64
 	nextEnqID     int64
 }
@@ -34,6 +35,7 @@ func newMock() *mockRepo {
 		saves:         make(map[string]bool),
 		enquiryExists: make(map[string]bool),
 		blockedUntil:  make(map[int64]*time.Time),
+		noSelfie:      make(map[int64]bool),
 		nextAdID:      100,
 		nextEnqID:     200,
 	}
@@ -161,6 +163,14 @@ func (m *mockRepo) ModerateAd(_ context.Context, id int64, status string, note *
 	ad.Status, ad.ModerationNote = status, note
 	m.ads[id] = ad
 	return nil
+}
+
+func (m *mockRepo) HasProfilePhoto(_ context.Context, userID int64) (bool, error) {
+	return !m.noSelfie[userID], nil
+}
+
+func (m *mockRepo) SellerProfile(_ context.Context, nurseryID int64) (SellerProfile, error) {
+	return SellerProfile{NurseryID: nurseryID}, nil
 }
 
 func (m *mockRepo) PostingBlockedUntil(_ context.Context, nurseryID int64) (*time.Time, error) {
@@ -979,5 +989,37 @@ func TestBlockDays(t *testing.T) {
 		if got := blockDays(strikes); got != want {
 			t.Errorf("blockDays(%d) = %d, want %d", strikes, got, want)
 		}
+	}
+}
+
+func TestSellingAndContactingNeedASelfie(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, true, 10)
+	repo.seedNursery(2, true, 20)
+	repo.seedAd(1, 1, StatusDraft)
+	repo.seedAd(2, 2, StatusPublished)
+	repo.seedEnquiry(1, 2, 2, 1, EnquiryInProgress)
+	repo.noSelfie[10] = true
+	s := svc(repo)
+	ctx := context.Background()
+
+	if _, err := s.CreateAd(ctx, ownerActor(10), CreateAdRequest{Title: "x", PlantName: "Rose"}); !errors.Is(err, ErrSelfieRequired) {
+		t.Errorf("post without selfie: want ErrSelfieRequired, got %v", err)
+	}
+	if _, err := s.PublishAd(ctx, ownerActor(10), 1); !errors.Is(err, ErrSelfieRequired) {
+		t.Errorf("publish without selfie: want ErrSelfieRequired, got %v", err)
+	}
+	if _, err := s.SendEnquiry(ctx, ownerActor(10), 2, CreateEnquiryRequest{Message: "hi"}); !errors.Is(err, ErrSelfieRequired) {
+		t.Errorf("contact without selfie: want ErrSelfieRequired, got %v", err)
+	}
+	if _, _, err := s.BrowseAds(ctx, ownerActor(10), AdsQuery{}); err != nil {
+		t.Errorf("browsing stays open: %v", err)
+	}
+	if _, err := s.ReplyToEnquiry(ctx, ownerActor(10), 1, ReplyEnquiryRequest{Body: "still here"}); err != nil {
+		t.Errorf("an existing chat keeps working: %v", err)
+	}
+	repo.noSelfie[10] = false
+	if _, err := s.PublishAd(ctx, ownerActor(10), 1); err != nil {
+		t.Errorf("with a selfie: %v", err)
 	}
 }

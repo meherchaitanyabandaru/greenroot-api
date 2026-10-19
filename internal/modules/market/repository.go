@@ -34,6 +34,9 @@ type Repository interface {
 	// records the note the seller sees.
 	ModerateAd(ctx context.Context, id int64, status string, note *string) error
 	PostingBlockedUntil(ctx context.Context, nurseryID int64) (*time.Time, error)
+	// HasProfilePhoto: the camera selfie required to post ads or start chats.
+	HasProfilePhoto(ctx context.Context, userID int64) (bool, error)
+	SellerProfile(ctx context.Context, nurseryID int64) (SellerProfile, error)
 
 	// Views & saves
 	RecordView(ctx context.Context, adID, nurseryID int64) error
@@ -173,9 +176,11 @@ func (r *PostgresRepository) GetAd(ctx context.Context, id int64) (Ad, error) {
 		       ma.status, ma.view_count, ma.save_count, ma.enquiry_count,
 		       ma.expires_at, ma.published_at,
 		       ma.paused_at, ma.expired_at, ma.archived_at, ma.moderation_note,
+		       NULLIF(TRIM(CONCAT_WS(' ', pu.first_name, pu.last_name)), ''), pu.profile_image_url,
 		       ma.created_at, ma.updated_at
 		FROM public.market_ads ma
 		JOIN public.nurseries n ON n.nursery_id = ma.nursery_id
+		LEFT JOIN public.users pu ON pu.user_id = ma.created_by_user_id
 		WHERE ma.ad_id = $1`
 	row := r.db.QueryRowContext(ctx, q, id)
 	return scanAd(row)
@@ -282,9 +287,11 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, p
 		       ma.status, ma.view_count, ma.save_count, ma.enquiry_count,
 		       ma.expires_at, ma.published_at,
 		       ma.paused_at, ma.expired_at, ma.archived_at, ma.moderation_note,
+		       NULLIF(TRIM(CONCAT_WS(' ', pu.first_name, pu.last_name)), ''), pu.profile_image_url,
 		       ma.created_at, ma.updated_at
 		FROM public.market_ads ma
 		JOIN public.nurseries n ON n.nursery_id = ma.nursery_id
+		LEFT JOIN public.users pu ON pu.user_id = ma.created_by_user_id
 		WHERE %s
 		ORDER BY %s
 		LIMIT $%d OFFSET $%d`, filter, orderBy, limitIdx, offsetIdx)
@@ -423,6 +430,40 @@ func (r *PostgresRepository) PostingBlockedUntil(ctx context.Context, nurseryID 
 		return nil, nil
 	}
 	return &until.Time, err
+}
+
+func (r *PostgresRepository) HasProfilePhoto(ctx context.Context, userID int64) (bool, error) {
+	var ok bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM public.users WHERE user_id = $1 AND COALESCE(profile_image_url, '') <> '')`,
+		userID).Scan(&ok)
+	return ok, err
+}
+
+// SellerProfile is the public market face of a nursery: no strikes, no
+// private contact beyond what its ads already show.
+func (r *PostgresRepository) SellerProfile(ctx context.Context, nurseryID int64) (SellerProfile, error) {
+	var p SellerProfile
+	err := r.db.QueryRowContext(ctx, `
+		SELECT n.nursery_id, n.nursery_name, (n.status IN ('ACTIVE', 'APPROVED')), n.description, n.logo_url,
+		       (SELECT a.city FROM public.nursery_addresses a WHERE a.nursery_id = n.nursery_id ORDER BY a.is_primary DESC, a.nursery_address_id LIMIT 1),
+		       NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''), u.profile_image_url, n.created_at,
+		       (SELECT count(*) FROM public.market_ads x WHERE x.nursery_id = n.nursery_id AND x.published_at IS NOT NULL),
+		       (SELECT count(*) FROM public.market_ads x WHERE x.nursery_id = n.nursery_id AND x.status = 'PUBLISHED'),
+		       (SELECT count(*) FROM public.market_enquiries e WHERE e.ad_nursery_id = n.nursery_id AND e.agreed_at IS NOT NULL)
+		FROM public.nurseries n
+		LEFT JOIN public.users u ON u.user_id = n.owner_user_id
+		WHERE n.nursery_id = $1 AND n.deleted_at IS NULL`, nurseryID).Scan(
+		&p.NurseryID, &p.NurseryName, &p.Verified, &p.Description, &p.LogoURL, &p.City,
+		&p.OwnerName, &p.OwnerPhoto, &p.MemberSince, &p.AdsPosted, &p.LiveAds, &p.DealsAgreed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SellerProfile{}, ErrNotFound
+	}
+	if err != nil {
+		return SellerProfile{}, err
+	}
+	p.Ads, _, err = r.listAds(ctx, "ma.status = 'PUBLISHED' AND ma.nursery_id = $1", "newest", 1, 50, []any{nurseryID})
+	return p, err
 }
 
 func (r *PostgresRepository) SetExpiry(ctx context.Context, id int64, expiresAt time.Time) error {
@@ -839,6 +880,7 @@ func scanAdRow(row rowScanner) (Ad, error) {
 		&pickupAccuracy, &pickupSource, &pickupConfirmedBy, &pickupConfirmedAt,
 		&a.Status, &a.ViewCount, &a.SaveCount, &a.EnquiryCount,
 		&expiresAt, &publishedAt, &pausedAt, &expiredAt, &archivedAt, &a.ModerationNote,
+		&a.PostedByName, &a.PostedByPhoto,
 		&a.CreatedAt, &a.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

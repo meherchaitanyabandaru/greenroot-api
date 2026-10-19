@@ -67,6 +67,8 @@ type Ad struct {
 	ExpiredAt            *time.Time                  `json:"expired_at,omitempty"`
 	ArchivedAt           *time.Time                  `json:"archived_at,omitempty"`
 	ModerationNote       *string                     `json:"moderation_note,omitempty"` // why GreenRoot suspended or removed it
+	PostedByName         *string                     `json:"posted_by_name,omitempty"`
+	PostedByPhoto        *string                     `json:"posted_by_photo,omitempty"` // the poster's camera selfie
 	CreatedAt            time.Time                   `json:"created_at"`
 	UpdatedAt            time.Time                   `json:"updated_at"`
 	Lifecycle            *lifecycle.MarketAdDisplays `json:"lifecycle,omitempty"`
@@ -91,6 +93,23 @@ type AdSummary struct {
 	IsLive        bool `json:"is_live"`
 	IsExpired     bool `json:"is_expired"`
 	DaysRemaining *int `json:"days_remaining,omitempty"`
+}
+
+// SellerProfile is what a nursery shows other nurseries on the market.
+type SellerProfile struct {
+	NurseryID   int64     `json:"nursery_id"`
+	NurseryName string    `json:"nursery_name"`
+	Verified    bool      `json:"verified"`
+	Description *string   `json:"description,omitempty"`
+	LogoURL     *string   `json:"logo_url,omitempty"`
+	City        *string   `json:"city,omitempty"`
+	OwnerName   *string   `json:"owner_name,omitempty"`
+	OwnerPhoto  *string   `json:"owner_photo,omitempty"`
+	MemberSince time.Time `json:"member_since"`
+	AdsPosted   int       `json:"ads_posted"`
+	LiveAds     int       `json:"live_ads"`
+	DealsAgreed int       `json:"deals_agreed"`
+	Ads         []Ad      `json:"ads"` // live ads, newest first
 }
 
 // ── Enquiry ──────────────────────────────────────────────────

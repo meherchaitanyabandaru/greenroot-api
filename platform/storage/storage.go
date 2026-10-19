@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -105,6 +106,51 @@ func (c *Client) PutObject(ctx context.Context, bucket, key, contentType string,
 		return "", fmt.Errorf("storage: put %s/%s: %w", bucket, key, err)
 	}
 	return fmt.Sprintf("%s/%s/%s", c.publicURL, bucket, key), nil
+}
+
+// RemoveByURL deletes an object this client stored, given the public URL
+// PutObject returned. URLs from elsewhere are ignored (nil error).
+func (c *Client) RemoveByURL(ctx context.Context, fileURL string) error {
+	rest, ok := strings.CutPrefix(fileURL, c.publicURL+"/")
+	if !ok {
+		return nil
+	}
+	bucket, key, ok := strings.Cut(rest, "/")
+	if !ok || !validBuckets[bucket] || key == "" {
+		return nil
+	}
+	if err := c.minio.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{}); err != nil {
+		return fmt.Errorf("storage: remove %s/%s: %w", bucket, key, err)
+	}
+	return nil
+}
+
+// publicBuckets hold images every app shows by plain URL (profile selfies,
+// plant and ad photos, logos); the rest stay private behind presigned URLs.
+var publicBuckets = []string{BucketProfileImages, BucketPlantImages, BucketMarketAds, BucketNurseryLogos}
+
+// EnsureBuckets creates any missing platform bucket and makes the image
+// buckets publicly readable. For local MinIO and CI; production buckets are
+// provisioned by infra.
+func (c *Client) EnsureBuckets(ctx context.Context) error {
+	for bucket := range validBuckets {
+		exists, err := c.minio.BucketExists(ctx, bucket)
+		if err != nil {
+			return fmt.Errorf("storage: check bucket %s: %w", bucket, err)
+		}
+		if !exists {
+			if err := c.minio.MakeBucket(ctx, bucket, minio.MakeBucketOptions{}); err != nil {
+				return fmt.Errorf("storage: create bucket %s: %w", bucket, err)
+			}
+		}
+	}
+	for _, bucket := range publicBuckets {
+		policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/*"]}]}`, bucket)
+		if err := c.minio.SetBucketPolicy(ctx, bucket, policy); err != nil {
+			return fmt.Errorf("storage: make %s public: %w", bucket, err)
+		}
+	}
+	return nil
 }
 
 // IsValidBucket returns true if the bucket name is one of the known platform buckets.

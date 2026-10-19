@@ -61,6 +61,10 @@ func (s *Service) UpdateMe(ctx context.Context, actor ActorContext, input Update
 	if input.FirstName == "" {
 		return User{}, ErrInvalidInput
 	}
+	// The photo changes only through POST/DELETE /users/me/avatar, so a
+	// profile save keeps it and nobody can point it at an outside URL (it
+	// shows on market ads as the seller's selfie).
+	input.ProfileImageURL = nil
 	// Email: nil leaves it unchanged, "" clears it. Addresses are stored
 	// lower-cased so the unique index and verification agree; a changed
 	// address loses its verified flag (see UpdateProfile SQL).
@@ -143,18 +147,56 @@ func (s *Service) UploadAvatar(ctx context.Context, actor ActorContext, data []b
 		return User{}, fmt.Errorf("upload avatar: %w", err)
 	}
 
-	now := time.Now()
-	updated, err := s.repository.UpdateProfile(ctx, actor.UserID, UpdateProfileRequest{
+	updated, err := s.setProfileImage(ctx, actor.UserID, fileURL)
+	if err != nil {
+		return User{}, err
+	}
+	s.removeOldPhoto(ctx, current.ProfileImageURL)
+	return updated, nil
+}
+
+// DeleteAvatar removes the profile photo (the seller selfie) and its file.
+// Without it the user cannot post market ads or start market chats.
+func (s *Service) DeleteAvatar(ctx context.Context, actor ActorContext) (User, error) {
+	current, err := s.repository.FindUserByID(ctx, actor.UserID)
+	if err != nil {
+		return User{}, err
+	}
+	updated, err := s.setProfileImage(ctx, actor.UserID, "")
+	if err != nil {
+		return User{}, err
+	}
+	s.removeOldPhoto(ctx, current.ProfileImageURL)
+	return updated, nil
+}
+
+// setProfileImage changes only the photo; "" clears it.
+func (s *Service) setProfileImage(ctx context.Context, userID int64, url string) (User, error) {
+	current, err := s.repository.FindUserByID(ctx, userID)
+	if err != nil {
+		return User{}, err
+	}
+	updated, err := s.repository.UpdateProfile(ctx, userID, UpdateProfileRequest{
 		FirstName:       current.FirstName,
 		LastName:        current.LastName,
-		Email:           current.Email,
 		Gender:          current.Gender,
-		ProfileImageURL: &fileURL,
-	}, now)
+		ProfileImageURL: &url,
+	}, time.Now())
 	if err != nil {
 		return User{}, err
 	}
 	return *updated, nil
+}
+
+// removeOldPhoto deletes a replaced or removed selfie from storage. Best
+// effort: a leftover file is not worth failing the user's request.
+func (s *Service) removeOldPhoto(ctx context.Context, url *string) {
+	if s.storage == nil || url == nil || *url == "" {
+		return
+	}
+	if err := s.storage.RemoveByURL(ctx, *url); err != nil {
+		slog.WarnContext(ctx, "remove old profile photo", "err", err)
+	}
 }
 
 func (s *Service) GetUser(ctx context.Context, actor ActorContext, userID int64) (User, error) {

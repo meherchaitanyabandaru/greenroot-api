@@ -56,13 +56,13 @@ func seedAPITestFixtures() error {
 
 	const fixtureSQL = `
 INSERT INTO public.users
-  (user_id, user_code, first_name, last_name, mobile, email, is_mobile_verified, is_email_verified, gender, status, created_at, updated_at)
+  (user_id, user_code, first_name, last_name, mobile, email, is_mobile_verified, is_email_verified, gender, status, profile_image_url, created_at, updated_at)
 VALUES
-  (2, 'USR-000002', 'Test', 'Owner', '9100000000', 'owner@greenroot.test', true, true, 'MALE', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  (3, 'USR-000003', 'Test', 'Buyer', '9300000000', 'buyer@greenroot.test', true, true, 'FEMALE', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  (4, 'USR-000004', 'Test', 'Manager', '9200000000', 'manager@greenroot.test', true, true, 'MALE', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  (5, 'USR-000005', 'Test', 'Driver', '9400000000', 'driver@greenroot.test', true, true, 'MALE', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-  ,(6, 'USR-000006', 'Second', 'Owner', '9500000000', 'second.owner@greenroot.test', true, true, 'PREFER_NOT_TO_SAY', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  (2, 'USR-000002', 'Test', 'Owner', '9100000000', 'owner@greenroot.test', true, true, 'MALE', 'ACTIVE', 'https://greenroot.test/selfie-2.jpg', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  (3, 'USR-000003', 'Test', 'Buyer', '9300000000', 'buyer@greenroot.test', true, true, 'FEMALE', 'ACTIVE', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  (4, 'USR-000004', 'Test', 'Manager', '9200000000', 'manager@greenroot.test', true, true, 'MALE', 'ACTIVE', 'https://greenroot.test/selfie-4.jpg', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  (5, 'USR-000005', 'Test', 'Driver', '9400000000', 'driver@greenroot.test', true, true, 'MALE', 'ACTIVE', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  ,(6, 'USR-000006', 'Second', 'Owner', '9500000000', 'second.owner@greenroot.test', true, true, 'PREFER_NOT_TO_SAY', 'ACTIVE', 'https://greenroot.test/selfie-6.jpg', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT (user_id) DO UPDATE SET
   first_name = EXCLUDED.first_name,
   last_name = EXCLUDED.last_name,
@@ -71,6 +71,8 @@ ON CONFLICT (user_id) DO UPDATE SET
   is_mobile_verified = true,
   is_email_verified = true,
   gender = EXCLUDED.gender,
+  -- Market posting and chats need a profile selfie.
+  profile_image_url = EXCLUDED.profile_image_url,
   status = 'ACTIVE',
   deleted_at = NULL,
   updated_at = CURRENT_TIMESTAMP;
