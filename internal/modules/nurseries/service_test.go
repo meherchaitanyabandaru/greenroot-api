@@ -137,12 +137,15 @@ func (m *mockRepo) Update(_ context.Context, _ int64, id int64, input UpdateNurs
 	return n, nil
 }
 
-func (m *mockRepo) UpdateStatusOnly(_ context.Context, _ int64, id int64, status string) (*Nursery, error) {
+func (m *mockRepo) UpdateStatusOnly(_ context.Context, _ int64, id int64, status, reason string) (*Nursery, error) {
 	n, ok := m.nurseries[id]
 	if !ok {
 		return nil, ErrNotFound
 	}
 	n.Status = status
+	if reason != "" {
+		n.RejectionReason = &reason
+	}
 	return n, nil
 }
 
@@ -179,6 +182,14 @@ func (m *mockRepo) UpdateAddress(_ context.Context, id int64, _ AddressRequest) 
 	return a, nil
 }
 
+func (m *mockRepo) AddressNurseryID(_ context.Context, id int64) (int64, error) {
+	a, ok := m.addresses[id]
+	if !ok {
+		return 0, ErrNotFound
+	}
+	return a.NurseryID, nil
+}
+
 func (m *mockRepo) DeleteAddress(_ context.Context, id int64) error {
 	if _, ok := m.addresses[id]; !ok {
 		return ErrNotFound
@@ -201,20 +212,6 @@ func (m *mockRepo) listUsersFor(nurseryID int64) []UserLink {
 		result = append(result, *ul)
 	}
 	return result
-}
-
-func (m *mockRepo) AddUser(_ context.Context, nurseryID int64, input AddUserRequest) (*UserLink, error) {
-	m.nextUserLinkID++
-	ul := &UserLink{ID: m.nextUserLinkID, NurseryID: nurseryID, UserID: input.UserID, RoleCode: input.RoleCode, Status: "ACTIVE", IsActive: true}
-	m.users[nurseryID] = append(m.users[nurseryID], ul)
-	return ul, nil
-}
-
-func (m *mockRepo) AddManager(_ context.Context, nurseryID int64, _ int64, input AddManagerRequest) (*UserLink, error) {
-	m.nextUserLinkID++
-	ul := &UserLink{ID: m.nextUserLinkID, NurseryID: nurseryID, UserID: input.UserID, Role: input.Role, Status: "ACTIVE", IsActive: true}
-	m.users[nurseryID] = append(m.users[nurseryID], ul)
-	return ul, nil
 }
 
 func (m *mockRepo) RemoveUser(_ context.Context, nurseryID int64, userID int64) error {
@@ -521,7 +518,7 @@ func TestUpdateStatus_AdminSuccess(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, "Nursery", "PENDING", ptr(int64(10)))
 
-	n, err := svc(repo).UpdateStatus(context.Background(), adminActor(1), 1, "APPROVED")
+	n, err := svc(repo).UpdateStatus(context.Background(), adminActor(1), 1, "APPROVED", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -534,25 +531,60 @@ func TestUpdateStatus_OwnerForbidden(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, "Nursery", "PENDING", ptr(int64(10)))
 
-	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(10), 1, "APPROVED")
+	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(10), 1, "APPROVED", "")
 	if !errors.Is(err, ErrForbidden) {
 		t.Errorf("want ErrForbidden for non-admin, got %v", err)
 	}
 }
 
 func TestUpdateStatus_RejectsUnknownStatus(t *testing.T) {
-	for _, status := range []string{"", "APPROVE", "COMPLETE", "unicorn"} {
+	for _, status := range []string{"", "APPROVE", "COMPLETE", "unicorn", "SUSPENDED", "ACTIVE"} {
 		repo := newMock()
 		repo.seedNursery(1, "Nursery", "PENDING", ptr(int64(10)))
-		if _, err := svc(repo).UpdateStatus(context.Background(), adminActor(1), 1, status); !errors.Is(err, ErrInvalidInput) {
+		if _, err := svc(repo).UpdateStatus(context.Background(), adminActor(1), 1, status, ""); !errors.Is(err, ErrInvalidInput) {
 			t.Errorf("status %q: want ErrInvalidInput, got %v", status, err)
 		}
 	}
 	// Case and spaces are normalised.
 	repo := newMock()
 	repo.seedNursery(1, "Nursery", "PENDING", ptr(int64(10)))
-	if n, err := svc(repo).UpdateStatus(context.Background(), adminActor(1), 1, " approved "); err != nil || n.Status != "APPROVED" {
+	if n, err := svc(repo).UpdateStatus(context.Background(), adminActor(1), 1, " approved ", ""); err != nil || n.Status != "APPROVED" {
 		t.Errorf("normalised status: got %v, %v", n.Status, err)
+	}
+}
+
+func TestUpdateStatus_RejectNeedsReasonAndStoresIt(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Nursery", "PENDING", ptr(int64(10)))
+	if _, err := svc(repo).UpdateStatus(context.Background(), adminActor(1), 1, "REJECTED", "  "); !errors.Is(err, ErrReasonRequired) {
+		t.Fatalf("blank reason: want ErrReasonRequired, got %v", err)
+	}
+	n, err := svc(repo).UpdateStatus(context.Background(), adminActor(1), 1, "REJECTED", "Blurry licence")
+	if err != nil || n.RejectionReason == nil || *n.RejectionReason != "Blurry licence" {
+		t.Fatalf("reject: %v %+v", err, n.RejectionReason)
+	}
+	// Only PENDING applications are reviewed.
+	if _, err := svc(repo).UpdateStatus(context.Background(), adminActor(1), 1, "APPROVED", ""); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("review of REJECTED: want ErrNotPending, got %v", err)
+	}
+}
+
+func TestOwnerCannotManageAnotherNursery(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, "Mine", "APPROVED", ptr(int64(10)))
+	repo.seedNursery(2, "Theirs", "APPROVED", ptr(int64(20)))
+	repo.addresses[5] = &Address{ID: 5, NurseryID: 2}
+	if _, err := svc(repo).Update(context.Background(), ownerActor(10), 2, UpdateNurseryRequest{Name: "x"}); !errors.Is(err, ErrForbidden) {
+		t.Errorf("update: want ErrForbidden, got %v", err)
+	}
+	if err := svc(repo).Delete(context.Background(), ownerActor(10), 2); !errors.Is(err, ErrForbidden) {
+		t.Errorf("delete: want ErrForbidden, got %v", err)
+	}
+	if err := svc(repo).DeleteAddress(context.Background(), ownerActor(10), 5); !errors.Is(err, ErrForbidden) {
+		t.Errorf("delete address: want ErrForbidden, got %v", err)
+	}
+	if _, err := svc(repo).Update(context.Background(), ownerActor(10), 1, UpdateNurseryRequest{Name: "Mine 2"}); err != nil {
+		t.Errorf("own nursery update: %v", err)
 	}
 }
 
@@ -565,7 +597,7 @@ func TestUpdateStatus_TrialCreatedOnApproval(t *testing.T) {
 	trialSvc := &mockTrialCreator{fn: func() { trialCalled = true }}
 	s := NewServiceWithTrial(repo, trialSvc, nil)
 
-	_, err := s.UpdateStatus(context.Background(), adminActor(1), 1, "APPROVED")
+	_, err := s.UpdateStatus(context.Background(), adminActor(1), 1, "APPROVED", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -605,40 +637,6 @@ func TestDelete_BuyerForbidden(t *testing.T) {
 	err := svc(repo).Delete(context.Background(), buyerActor(10), 1)
 	if !errors.Is(err, ErrForbidden) {
 		t.Errorf("want ErrForbidden, got %v", err)
-	}
-}
-
-// ─── AddManager ───────────────────────────────────────────────────────────────
-
-func TestAddManager_OwnerSuccess(t *testing.T) {
-	repo := newMock()
-	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
-	repo.owners[10] = 1
-
-	_, err := svc(repo).AddManager(context.Background(), ownerActor(10), 1, AddManagerRequest{UserID: 20, Role: "MANAGER"})
-	if err != nil {
-		t.Fatalf("owner should add managers: %v", err)
-	}
-}
-
-func TestAddManager_NonOwnerForbidden(t *testing.T) {
-	repo := newMock()
-	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
-
-	_, err := svc(repo).AddManager(context.Background(), ownerActor(20), 1, AddManagerRequest{UserID: 30, Role: "MANAGER"})
-	if !errors.Is(err, ErrNotNurseryOwner) {
-		t.Errorf("want ErrNotNurseryOwner, got %v", err)
-	}
-}
-
-func TestAddManager_InvalidUserID(t *testing.T) {
-	repo := newMock()
-	repo.seedNursery(1, "Nursery", "ACTIVE", ptr(int64(10)))
-	repo.owners[10] = 1
-
-	_, err := svc(repo).AddManager(context.Background(), ownerActor(10), 1, AddManagerRequest{UserID: 0})
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("want ErrInvalidInput, got %v", err)
 	}
 }
 

@@ -169,20 +169,9 @@ func TestQuotationCreate_Manager_CannotPreAssign(t *testing.T) {
 			{"plant_id": 1, "quantity": 1, "unit_price": 50, "total_price": 50},
 		},
 	}
-	// Should succeed (not 403), but assignment is silently stripped
+	// Pre-assigning is owner-only: a manager is told so instead of the field being dropped.
 	resp := post(t, "/api/v1/quotations", body, managerToken)
-	assertStatus(t, resp, http.StatusCreated)
-
-	var created struct {
-		Quotation struct {
-			AssignedManagerUserID *int64 `json:"assigned_manager_user_id"`
-		} `json:"quotation"`
-	}
-	decode(t, resp, &created)
-
-	if created.Quotation.AssignedManagerUserID != nil {
-		t.Error("expected assigned_manager_user_id to be nil for manager-created quotation, got non-nil")
-	}
+	assertStatus(t, resp, http.StatusForbidden)
 }
 
 // ── Manager cannot GET a quotation they didn't create or aren't assigned ──────

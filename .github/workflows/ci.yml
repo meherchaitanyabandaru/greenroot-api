@@ -153,6 +153,11 @@ jobs:
           # No over-privilege warning may appear in the API log.
           if grep -q "over-privileged" /tmp/api.log; then cat /tmp/api.log; exit 1; fi
 
+      # End-to-end user journeys: positive and negative business rules,
+      # including the Redis side effects (rate limits, caches, blocklist).
+      - name: API journeys
+        run: python3 -I tests/journeys/journeys.py
+
       - name: API log (on failure)
         if: failure()
         run: tail -200 /tmp/api.log

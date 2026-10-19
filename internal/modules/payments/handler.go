@@ -198,6 +198,8 @@ func writePaymentsError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusNotFound, "not_found", "payment resource not found")
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid payment input")
+	case errors.Is(err, ErrInvalidStatus):
+		response.Error(w, http.StatusConflict, "invalid_status_transition", "payment status change not allowed")
 	case errors.Is(err, ErrConflict) && pgerr.Constraint(err) == "uq_payments_provider_payment":
 		response.Error(w, http.StatusConflict, "duplicate_provider_payment", "this gateway payment is already recorded")
 	case errors.Is(err, ErrConflict):

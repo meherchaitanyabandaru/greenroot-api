@@ -2,6 +2,7 @@ package tracking
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 var ErrInvalidInput = apperrs.ErrInvalidInput
 var ErrForbidden = apperrs.ErrForbidden
+var ErrNotInTransit = errors.New("GPS points are accepted only while the trip is IN_TRANSIT")
 
 type Service struct {
 	repository Repository
@@ -84,17 +86,13 @@ func (s *Service) canTrackDispatch(ctx context.Context, a ActorContext, dispatch
 	if err != nil {
 		return err
 	}
+	if !a.HasRole("ADMIN") {
+		if !a.HasRole("DRIVER") || access.DriverUserID == nil || *access.DriverUserID != a.UserID {
+			return ErrForbidden
+		}
+	}
 	if !strings.EqualFold(access.Status, "IN_TRANSIT") {
-		return ErrInvalidInput
-	}
-	if a.HasRole("ADMIN") {
-		return nil
-	}
-	if !a.HasRole("DRIVER") {
-		return ErrForbidden
-	}
-	if access.DriverUserID == nil || *access.DriverUserID != a.UserID {
-		return ErrForbidden
+		return ErrNotInTransit
 	}
 	return nil
 }

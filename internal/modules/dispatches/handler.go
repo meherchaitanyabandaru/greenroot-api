@@ -149,7 +149,7 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 
 // GetByCode looks up a dispatch by its dispatch_code — used by drivers in the Join Trip flow.
 func (h *Handler) GetByCode(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.actor(w, r)
+	actor, ok := h.actor(w, r)
 	if !ok {
 		return
 	}
@@ -158,7 +158,7 @@ func (h *Handler) GetByCode(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "invalid_input", "dispatch code is required")
 		return
 	}
-	dispatch, err := h.service.GetByCode(r.Context(), code)
+	dispatch, err := h.service.GetByCode(r.Context(), actor, code)
 	if err != nil {
 		writeError(w, err)
 		return

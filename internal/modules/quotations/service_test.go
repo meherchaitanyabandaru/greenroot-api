@@ -488,14 +488,18 @@ func TestUpdate_ManagerCannotChangeCustomerFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("manager content edit should still be allowed: %v", err)
 	}
-	if got.CustomerUserID == nil || *got.CustomerUserID != 20 {
-		t.Fatalf("manager changed customer_user_id: %+v", got.CustomerUserID)
+	if got.CustomerUserID != nil || got.RecipientName != nil || got.RecipientMobile != nil {
+		t.Fatalf("customer details leaked to the manager: %+v", got)
 	}
-	if got.RecipientName == nil || *got.RecipientName != "Existing Buyer" {
-		t.Fatalf("manager changed recipient_name: %+v", got.RecipientName)
+	stored, _ := repo.FindByID(context.Background(), 1)
+	if stored.CustomerUserID == nil || *stored.CustomerUserID != 20 {
+		t.Fatalf("manager changed customer_user_id: %+v", stored.CustomerUserID)
 	}
-	if got.RecipientMobile == nil || *got.RecipientMobile != "9300000000" {
-		t.Fatalf("manager changed recipient_mobile: %+v", got.RecipientMobile)
+	if stored.RecipientName == nil || *stored.RecipientName != "Existing Buyer" {
+		t.Fatalf("manager changed recipient_name: %+v", stored.RecipientName)
+	}
+	if stored.RecipientMobile == nil || *stored.RecipientMobile != "9300000000" {
+		t.Fatalf("manager changed recipient_mobile: %+v", stored.RecipientMobile)
 	}
 }
 
@@ -910,12 +914,31 @@ func TestDelete_ManagerCannotDelete(t *testing.T) {
 func TestDelete_AdminCanDelete(t *testing.T) {
 	repo := newMockRepo()
 	repo.addNursery(10, 1)
-	repo.addQuotation(baseQuotation(1, "CUSTOMER_SENT"))
+	repo.addQuotation(baseQuotation(1, "CUSTOMER_DRAFT"))
 	svc := NewService(repo, nil, nil)
 
 	err := svc.Delete(context.Background(), adminActor(999), 1)
 	if err != nil {
 		t.Errorf("admin should be able to delete: %v", err)
+	}
+}
+
+func TestDelete_OnlyDraftRejectedOrExpired(t *testing.T) {
+	past := time.Now().Add(-time.Hour)
+	future := time.Now().Add(time.Hour)
+	for _, tc := range []struct {
+		status string
+		until  *time.Time
+		ok     bool
+	}{
+		{"CUSTOMER_DRAFT", nil, true}, {"INTERNAL_DRAFT", nil, true}, {"CUSTOMER_REJECTED", nil, true},
+		{"CUSTOMER_SENT", &past, true}, {"CUSTOMER_SENT", &future, false}, {"CUSTOMER_ACCEPTED", nil, false},
+	} {
+		q := baseQuotation(1, tc.status)
+		q.ValidUntil = tc.until
+		if got := IsDeletable(q); got != tc.ok {
+			t.Errorf("%s until=%v: deletable=%v, want %v", tc.status, tc.until, got, tc.ok)
+		}
 	}
 }
 
@@ -1241,28 +1264,6 @@ func TestCreate_InactiveNurseryForbidden(t *testing.T) {
 	})
 	if !errors.Is(err, ErrForbidden) {
 		t.Errorf("inactive nursery should return ErrForbidden, got %v", err)
-	}
-}
-
-// ── mobile normalization ──────────────────────────────────────────────────────
-
-func TestNormalizeIndianMobile(t *testing.T) {
-	cases := []struct {
-		input string
-		want  string
-	}{
-		{"9300000000", "9300000000"},
-		{"+919300000000", "9300000000"},
-		{"919300000000", "9300000000"},
-		{"93-0000-0000", "9300000000"},
-		{"abc", ""},
-		{"12345", ""},
-	}
-	for _, tc := range cases {
-		got := normalizeIndianMobile(tc.input)
-		if got != tc.want {
-			t.Errorf("normalizeIndianMobile(%q) = %q, want %q", tc.input, got, tc.want)
-		}
 	}
 }
 

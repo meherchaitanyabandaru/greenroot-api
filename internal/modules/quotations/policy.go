@@ -10,6 +10,18 @@ func IsEditable(status string) bool {
 	return status == "INTERNAL_DRAFT" || status == "CUSTOMER_DRAFT"
 }
 
+// IsDeletable: drafts, rejected, and sent-but-expired quotations. Accepted and
+// converted ones are business records and stay.
+func IsDeletable(q Quotation) bool {
+	switch q.Status {
+	case "INTERNAL_DRAFT", "CUSTOMER_DRAFT", "CUSTOMER_REJECTED":
+		return q.ConvertedOrderID == nil
+	case "CUSTOMER_SENT":
+		return isExpiredTime(q.ValidUntil)
+	}
+	return false
+}
+
 // IsTerminal returns true when the quotation has reached a final state.
 func IsTerminal(status string) bool {
 	switch status {
@@ -35,7 +47,7 @@ func BuildCapabilities(actor ActorContext, q Quotation) *QuotationCapabilities {
 	return &QuotationCapabilities{
 		CanEdit:              isSeller && editable && !assignedToOther,
 		CanUpdateCustomer:    isOwnerRole && q.QuotationType == "CUSTOMER" && q.ConvertedOrderID == nil && q.CustomerRespondedAt == nil,
-		CanDelete:            isOwnerRole && q.ConvertedOrderID == nil,
+		CanDelete:            isOwnerRole && IsDeletable(q),
 		CanSend:              isSeller && status == "CUSTOMER_DRAFT",
 		CanRecall:            isSeller && status == "CUSTOMER_SENT",
 		CanAccept:            isCustomer && isCustomerSent,

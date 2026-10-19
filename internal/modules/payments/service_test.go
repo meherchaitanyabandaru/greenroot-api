@@ -145,7 +145,7 @@ func TestCreateManual_AdminOrderPayment(t *testing.T) {
 	}
 }
 
-func TestCreateManual_BuyerCanPayOwnOrder(t *testing.T) {
+func TestCreateManual_BuyerCannotRecordOwnPayment(t *testing.T) {
 	repo := newMock()
 	repo.seedOrder(10, ptr(int64(20)), nil) // buyer 20 owns order 10
 
@@ -156,8 +156,8 @@ func TestCreateManual_BuyerCanPayOwnOrder(t *testing.T) {
 		PaymentMethod: "UPI",
 		Status:        "SUCCESS",
 	})
-	if err != nil {
-		t.Fatalf("buyer of order should pay: %v", err)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("buyer recording their own payment: want ErrForbidden, got %v", err)
 	}
 }
 
@@ -321,7 +321,7 @@ func TestUpdateStatus_NotFound(t *testing.T) {
 	}
 }
 
-func TestUpdateStatus_BuyerCanUpdateOwnOrderPayment(t *testing.T) {
+func TestUpdateStatus_BuyerCannotConfirmOwnPayment(t *testing.T) {
 	repo := newMock()
 	orderID := int64(10)
 	payerID := int64(20)
@@ -329,8 +329,22 @@ func TestUpdateStatus_BuyerCanUpdateOwnOrderPayment(t *testing.T) {
 	repo.seedOrder(10, &payerID, nil)
 
 	_, err := svc(repo).UpdateStatus(context.Background(), buyerActor(20), 1, UpdateStatusRequest{Status: "SUCCESS"})
-	if err != nil {
-		t.Fatalf("buyer should update own order payment: %v", err)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("buyer confirming own payment: want ErrForbidden, got %v", err)
+	}
+}
+
+func TestPaymentTransitions(t *testing.T) {
+	for _, tc := range []struct {
+		from, to string
+		ok       bool
+	}{
+		{"PENDING", "SUCCESS", true}, {"PENDING", "FAILED", true}, {"SUCCESS", "REFUNDED", true}, {"SUCCESS", "SUCCESS", true},
+		{"SUCCESS", "PENDING", false}, {"FAILED", "SUCCESS", false}, {"REFUNDED", "SUCCESS", false}, {"CANCELLED", "SUCCESS", false},
+	} {
+		if got := CanTransition(tc.from, tc.to); got != tc.ok {
+			t.Errorf("%s → %s: got %v, want %v", tc.from, tc.to, got, tc.ok)
+		}
 	}
 }
 

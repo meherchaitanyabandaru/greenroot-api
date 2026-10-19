@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/phone"
 	"log/slog"
 	"math"
 	"regexp"
@@ -47,7 +48,6 @@ func invalid(format string, args ...any) error {
 
 var (
 	ist            = time.FixedZone("IST", 5*60*60+30*60)
-	mobileRe       = regexp.MustCompile(`^[6-9][0-9]{9}$`)
 	templateCodeRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]{2,59}$`)
 	dltIDRe        = regexp.MustCompile(`^[0-9]{10,30}$`)
 	alphaHeaderRe  = regexp.MustCompile(`^[A-Z]{6}$`)
@@ -67,20 +67,6 @@ func NewService(repo Repository, provider platformsms.Provider, audit *auditlog.
 
 // Live reports whether SMS reach handsets (false for the mock provider).
 func (s *Service) Live() bool { return s.provider.Live() }
-
-// NormalizeMobile reduces +91 / 91 / 0 prefixed input to a 10-digit Indian mobile.
-func NormalizeMobile(raw string) (string, bool) {
-	m := strings.NewReplacer(" ", "", "-", "", "(", "", ")", "").Replace(strings.TrimSpace(raw))
-	switch {
-	case strings.HasPrefix(m, "+91") && len(m) == 13:
-		m = m[3:]
-	case strings.HasPrefix(m, "91") && len(m) == 12:
-		m = m[2:]
-	case strings.HasPrefix(m, "0") && len(m) == 11:
-		m = m[1:]
-	}
-	return m, mobileRe.MatchString(m)
-}
 
 // Name identifies SMS as a messaging channel.
 func (s *Service) Name() string { return "SMS" }
@@ -114,7 +100,7 @@ func (s *Service) Deliver(ctx context.Context, msg messaging.Message) (messaging
 // Send renders and delivers one templated SMS, recording every attempt
 // (including blocked ones) in sms_messages.
 func (s *Service) Send(ctx context.Context, req SendRequest) (SendResult, error) {
-	mobile, ok := NormalizeMobile(req.Mobile)
+	mobile, ok := phone.Normalize(req.Mobile)
 	if !ok {
 		return SendResult{}, invalid("invalid Indian mobile number")
 	}

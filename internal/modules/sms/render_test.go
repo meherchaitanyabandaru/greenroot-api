@@ -161,14 +161,3 @@ func TestSeedTemplatesFitOneSMS(t *testing.T) {
 		}
 	}
 }
-
-func TestHelpers(t *testing.T) {
-	for in, want := range map[string]string{"+91 98765 43210": "9876543210", "919876543210": "9876543210", "09876543210": "9876543210", "9876543210": "9876543210"} {
-		if got, ok := NormalizeMobile(in); !ok || got != want {
-			t.Errorf("NormalizeMobile(%q) = %q, %v", in, got, ok)
-		}
-	}
-	if _, ok := NormalizeMobile("1234567890"); ok {
-		t.Error("numbers starting 1-5 are not Indian mobiles")
-	}
-}

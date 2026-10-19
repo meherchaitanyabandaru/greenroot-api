@@ -125,11 +125,12 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Status string `json:"status"`
+		Reason string `json:"reason"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	nursery, err := h.service.UpdateStatus(r.Context(), actor, nurseryID, req.Status)
+	nursery, err := h.service.UpdateStatus(r.Context(), actor, nurseryID, req.Status, req.Reason)
 	if err != nil {
 		writeNurseriesError(w, err)
 		return
@@ -245,27 +246,6 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, UsersResponse{Users: users})
 }
 
-func (h *Handler) AddUser(w http.ResponseWriter, r *http.Request) {
-	actor, ok := h.actor(w, r)
-	if !ok {
-		return
-	}
-	nurseryID, ok := pathID(w, r, "id")
-	if !ok {
-		return
-	}
-	var req AddUserRequest
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-	user, err := h.service.AddUser(r.Context(), actor, nurseryID, req)
-	if err != nil {
-		writeNurseriesError(w, err)
-		return
-	}
-	response.JSON(w, http.StatusCreated, UserResponse{User: user})
-}
-
 // OwnedNursery returns the nursery owned by the authenticated user.
 func (h *Handler) OwnedNursery(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
@@ -314,27 +294,6 @@ func (h *Handler) ListManagers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, UsersResponse{Users: managers})
-}
-
-func (h *Handler) AddManager(w http.ResponseWriter, r *http.Request) {
-	actor, ok := h.actor(w, r)
-	if !ok {
-		return
-	}
-	nurseryID, ok := pathID(w, r, "id")
-	if !ok {
-		return
-	}
-	var req AddManagerRequest
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-	manager, err := h.service.AddManager(r.Context(), actor, nurseryID, req)
-	if err != nil {
-		writeNurseriesError(w, err)
-		return
-	}
-	response.JSON(w, http.StatusCreated, UserResponse{User: manager})
 }
 
 func (h *Handler) ListDrivers(w http.ResponseWriter, r *http.Request) {
@@ -516,6 +475,10 @@ func writeNurseriesError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusForbidden, "not_owner", "only the nursery owner can perform this action")
 	case errors.Is(err, ErrAlreadyOwner):
 		response.Error(w, http.StatusConflict, "already_owner", "user already owns a nursery; create a new account to own another nursery")
+	case errors.Is(err, ErrNotPending):
+		response.Error(w, http.StatusConflict, "not_pending", "only PENDING applications can be approved or rejected")
+	case errors.Is(err, ErrReasonRequired):
+		response.Error(w, http.StatusBadRequest, "reason_required", "a reason is required to reject an application")
 	case errors.Is(err, ErrNotRejected):
 		response.Error(w, http.StatusConflict, "not_rejected", "only REJECTED nurseries can be resubmitted")
 	case errors.Is(err, ErrManagerCannotOwnNursery):
@@ -536,8 +499,6 @@ func writeNurseriesError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusBadRequest, "invalid_brand_icon_key", "brand_icon_key is not a valid preset icon")
 	case errors.Is(err, ErrInvalidLogoURL):
 		response.Error(w, http.StatusBadRequest, "invalid_logo_url", "logo_url must be a valid URL pointing to the nursery-logos bucket")
-	case errors.Is(err, ErrNotFound):
-		response.Error(w, http.StatusNotFound, "not_found", "nursery member not found")
 	case errors.Is(err, ErrNotMember):
 		response.Error(w, http.StatusNotFound, "not_member", "user is not an active member of any nursery")
 	case errors.Is(err, ErrOwnerCannotLeave):

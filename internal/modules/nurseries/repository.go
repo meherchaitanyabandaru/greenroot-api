@@ -24,17 +24,16 @@ type Repository interface {
 	IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	Create(ctx context.Context, actorID int64, input CreateNurseryRequest) (*Nursery, error)
 	Update(ctx context.Context, actorID int64, nurseryID int64, input UpdateNurseryRequest) (*Nursery, error)
-	UpdateStatusOnly(ctx context.Context, actorID int64, nurseryID int64, status string) (*Nursery, error)
+	UpdateStatusOnly(ctx context.Context, actorID int64, nurseryID int64, status, reason string) (*Nursery, error)
 	ResubmitByOwner(ctx context.Context, actorID int64, ownerUserID int64, input CreateNurseryRequest) (*Nursery, error)
 	Delete(ctx context.Context, actorID int64, nurseryID int64) error
 	ListAddresses(ctx context.Context, nurseryID int64) ([]Address, error)
 	CreateAddress(ctx context.Context, nurseryID int64, input AddressRequest) (*Address, error)
 	UpdateAddress(ctx context.Context, addressID int64, input AddressRequest) (*Address, error)
 	DeleteAddress(ctx context.Context, addressID int64) error
+	AddressNurseryID(ctx context.Context, addressID int64) (int64, error)
 	ListManagers(ctx context.Context, nurseryID int64) ([]UserLink, error)
 	ListUsers(ctx context.Context, nurseryID int64) ([]UserLink, error)
-	AddUser(ctx context.Context, nurseryID int64, input AddUserRequest) (*UserLink, error)
-	AddManager(ctx context.Context, nurseryID int64, invitedByUserID int64, input AddManagerRequest) (*UserLink, error)
 	RemoveUser(ctx context.Context, nurseryID int64, userID int64) error
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	ListByUserID(ctx context.Context, userID int64) ([]Nursery, error)
@@ -141,7 +140,7 @@ func (r *PostgresRepository) UserIsManager(ctx context.Context, userID int64) (b
 	err := r.db.QueryRowContext(ctx,
 		`SELECT EXISTS (
 			SELECT 1 FROM public.nursery_users
-			WHERE user_id = $1 AND nursery_role_id = 3
+			WHERE user_id = $1 AND role = 'MANAGER' AND status = 'ACTIVE'
 			  AND COALESCE(is_active, true) = true
 		)`,
 		userID,
@@ -225,12 +224,11 @@ func (r *PostgresRepository) Update(ctx context.Context, actorID int64, nurseryI
 			email = COALESCE(NULLIF($5, ''), email),
 			website = COALESCE(NULLIF($6, ''), website),
 			description = COALESCE(NULLIF($7, ''), description),
-			status = COALESCE($8, status),
-			logo_url = COALESCE($10, logo_url),
-			brand_icon_key = COALESCE($11, brand_icon_key),
-			brand_color = COALESCE($12, brand_color),
+			logo_url = COALESCE($9, logo_url),
+			brand_icon_key = COALESCE($10, brand_icon_key),
+			brand_color = COALESCE($11, brand_color),
 			updated_at = CURRENT_TIMESTAMP,
-			updated_by_user_id = $9
+			updated_by_user_id = $8
 		WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'
 	`
 	result, err := r.db.ExecContext(
@@ -243,7 +241,6 @@ func (r *PostgresRepository) Update(ctx context.Context, actorID int64, nurseryI
 		stringOrEmpty(input.Email),
 		stringOrEmpty(input.Website),
 		stringOrEmpty(input.Description),
-		nullableStatus(input.Status),
 		actorID,
 		nullOrString(input.LogoURL),
 		nullOrString(input.BrandIconKey),
@@ -262,29 +259,22 @@ func (r *PostgresRepository) Update(ctx context.Context, actorID int64, nurseryI
 	return r.FindByID(ctx, nurseryID)
 }
 
-func (r *PostgresRepository) UpdateStatusOnly(ctx context.Context, actorID int64, nurseryID int64, status string) (*Nursery, error) {
+func (r *PostgresRepository) UpdateStatusOnly(ctx context.Context, actorID int64, nurseryID int64, status, reason string) (*Nursery, error) {
 	var result sql.Result
 	var err error
-	switch status {
-	case "APPROVED":
+	if status == "APPROVED" {
 		result, err = r.db.ExecContext(ctx,
-			`UPDATE public.nurseries SET status = $2, approved_by_user_id = $3, approved_at = CURRENT_TIMESTAMP,
-			 updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $3
-			 WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'`,
-			nurseryID, status, actorID,
+			`UPDATE public.nurseries SET status = 'APPROVED', approved_by_user_id = $2, approved_at = CURRENT_TIMESTAMP,
+			 rejection_reason = NULL, updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $2
+			 WHERE nursery_id = $1 AND status = 'PENDING'`,
+			nurseryID, actorID,
 		)
-	case "REJECTED":
+	} else {
 		result, err = r.db.ExecContext(ctx,
-			`UPDATE public.nurseries SET status = $2, rejected_by_user_id = $3, rejected_at = CURRENT_TIMESTAMP,
-			 updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $3
-			 WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'`,
-			nurseryID, status, actorID,
-		)
-	default:
-		result, err = r.db.ExecContext(ctx,
-			`UPDATE public.nurseries SET status = $2, updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $3
-			 WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'`,
-			nurseryID, status, actorID,
+			`UPDATE public.nurseries SET status = 'REJECTED', rejected_by_user_id = $2, rejected_at = CURRENT_TIMESTAMP,
+			 rejection_reason = $3, updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $2
+			 WHERE nursery_id = $1 AND status = 'PENDING'`,
+			nurseryID, actorID, reason,
 		)
 	}
 	if err != nil {
@@ -519,6 +509,15 @@ func (r *PostgresRepository) UpdateAddress(ctx context.Context, addressID int64,
 	return address, nil
 }
 
+func (r *PostgresRepository) AddressNurseryID(ctx context.Context, addressID int64) (int64, error) {
+	var nurseryID int64
+	err := r.db.QueryRowContext(ctx, `SELECT nursery_id FROM public.nursery_addresses WHERE nursery_address_id = $1`, addressID).Scan(&nurseryID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return nurseryID, err
+}
+
 func (r *PostgresRepository) DeleteAddress(ctx context.Context, addressID int64) error {
 	result, err := r.db.ExecContext(ctx, `DELETE FROM public.nursery_addresses WHERE nursery_address_id = $1`, addressID)
 	if err != nil {
@@ -541,7 +540,6 @@ func (r *PostgresRepository) ListManagers(ctx context.Context, nurseryID int64) 
 			u.first_name, u.last_name,
 			NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''),
 			u.mobile, u.email,
-			COALESCE(nu.nursery_role_id, 0),
 			COALESCE(nu.role, 'MANAGER'), COALESCE(nu.role, 'MANAGER'),
 			nu.role, COALESCE(nu.status, 'ACTIVE'),
 			nu.joined_at, COALESCE(nu.is_active, true)
@@ -568,81 +566,6 @@ func (r *PostgresRepository) ListManagers(ctx context.Context, nurseryID int64) 
 
 func (r *PostgresRepository) ListUsers(ctx context.Context, nurseryID int64) ([]UserLink, error) {
 	return r.ListManagers(ctx, nurseryID)
-}
-
-// AddManager adds a manager to a nursery using the V1 text role column.
-func (r *PostgresRepository) AddManager(ctx context.Context, nurseryID int64, invitedByUserID int64, input AddManagerRequest) (*UserLink, error) {
-	role := strings.ToUpper(strings.TrimSpace(input.Role))
-	if role == "" {
-		role = "MANAGER"
-	}
-	roleID, err := r.roleID(ctx, AddUserRequest{UserID: input.UserID, RoleCode: role})
-	if err != nil {
-		return nil, err
-	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	if role == "MANAGER" {
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE public.nursery_users
-			SET status = 'INACTIVE', is_active = false, updated_at = CURRENT_TIMESTAMP
-			WHERE user_id = $1 AND nursery_id <> $2 AND COALESCE(status, 'ACTIVE') = 'ACTIVE'
-		`, input.UserID, nurseryID); err != nil {
-			return nil, err
-		}
-	}
-	const query = `
-		INSERT INTO public.nursery_users (nursery_id, user_id, nursery_role_id, role, status, invited_by_user_id, joined_at, is_active)
-		VALUES ($1, $2, $3, $4, 'ACTIVE', $5, CURRENT_TIMESTAMP, true)
-		ON CONFLICT (nursery_id, user_id, nursery_role_id)
-		DO UPDATE SET role = $4, status = 'ACTIVE', is_active = true, updated_at = CURRENT_TIMESTAMP
-		RETURNING nursery_user_id
-	`
-	var nurseryUserID int64
-	if err := tx.QueryRowContext(ctx, query, nurseryID, input.UserID, roleID, role, invitedByUserID).Scan(&nurseryUserID); err != nil {
-		return nil, err
-	}
-	// Grant MANAGER in user_roles and strip BUYER — managers are never buyers.
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO public.user_roles (user_id, role_id)
-		SELECT $1, role_id FROM public.roles WHERE role_code = 'MANAGER'
-		ON CONFLICT DO NOTHING
-	`, input.UserID); err != nil {
-		return nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM public.user_roles
-		WHERE user_id = $1
-		  AND role_id = (SELECT role_id FROM public.roles WHERE role_code = 'BUYER')
-	`, input.UserID); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return r.findManagerLink(ctx, nurseryUserID)
-}
-
-func (r *PostgresRepository) AddUser(ctx context.Context, nurseryID int64, input AddUserRequest) (*UserLink, error) {
-	roleID, err := r.roleID(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-	const query = `
-		INSERT INTO public.nursery_users (nursery_id, user_id, nursery_role_id, role, status, joined_at, is_active)
-		VALUES ($1, $2, $3, 'MANAGER', 'ACTIVE', CURRENT_TIMESTAMP, true)
-		ON CONFLICT (nursery_id, user_id, nursery_role_id)
-		DO UPDATE SET is_active = true
-		RETURNING nursery_user_id
-	`
-	var nurseryUserID int64
-	if err := r.db.QueryRowContext(ctx, query, nurseryID, input.UserID, roleID).Scan(&nurseryUserID); err != nil {
-		return nil, err
-	}
-	return r.findUserLink(ctx, nurseryUserID)
 }
 
 // ConnectDriver creates a nursery-driver connection request.
@@ -749,10 +672,17 @@ func (r *PostgresRepository) findNurseryDriver(ctx context.Context, id int64) (*
 	return &nd, nil
 }
 
+// RemoveUser ends a membership. With no other active membership the user
+// loses MANAGER and is a BUYER again (the two roles are exclusive).
 func (r *PostgresRepository) RemoveUser(ctx context.Context, nurseryID int64, userID int64) error {
-	result, err := r.db.ExecContext(ctx,
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx,
 		`UPDATE public.nursery_users SET is_active = false, status = 'INACTIVE', updated_at = CURRENT_TIMESTAMP
-		 WHERE nursery_id = $1 AND user_id = $2 AND COALESCE(is_active, true) = true`,
+		 WHERE nursery_id = $1 AND user_id = $2 AND status = 'ACTIVE'`,
 		nurseryID, userID)
 	if err != nil {
 		return err
@@ -764,7 +694,25 @@ func (r *PostgresRepository) RemoveUser(ctx context.Context, nurseryID int64, us
 	if affected == 0 {
 		return ErrNotFound
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM public.user_roles
+		WHERE user_id = $1
+		  AND role_id = (SELECT role_id FROM public.roles WHERE role_code = 'MANAGER')
+		  AND NOT EXISTS (SELECT 1 FROM public.nursery_users WHERE user_id = $1 AND status = 'ACTIVE')`, userID); err != nil {
+		return err
+	}
+	// BUYER comes back unless another exclusive role (DRIVER) still holds.
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO public.user_roles (user_id, role_id)
+		SELECT $1, b.role_id FROM public.roles b
+		WHERE b.role_code = 'BUYER'
+		  AND NOT EXISTS (
+			SELECT 1 FROM public.user_roles ur JOIN public.roles x ON x.role_id = ur.role_id
+			WHERE ur.user_id = $1 AND x.role_code IN ('MANAGER', 'DRIVER'))
+		ON CONFLICT DO NOTHING`, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *PostgresRepository) InvalidateUserSessions(ctx context.Context, userID int64) error {
@@ -983,22 +931,6 @@ func (r *PostgresRepository) scanNursery(ctx context.Context, where string, args
 	return nursery, err
 }
 
-func (r *PostgresRepository) roleID(ctx context.Context, input AddUserRequest) (int16, error) {
-	if input.RoleID > 0 {
-		return input.RoleID, nil
-	}
-	roleCode := strings.ToUpper(strings.TrimSpace(input.RoleCode))
-	if roleCode == "" {
-		roleCode = "MANAGER"
-	}
-	var roleID int16
-	err := r.db.QueryRowContext(ctx, `SELECT nursery_role_id FROM public.nursery_roles WHERE role_code = $1 AND is_active = true`, roleCode).Scan(&roleID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
-	return roleID, err
-}
-
 func (r *PostgresRepository) findUserLink(ctx context.Context, nurseryUserID int64) (*UserLink, error) {
 	return r.findManagerLink(ctx, nurseryUserID)
 }
@@ -1009,7 +941,6 @@ func (r *PostgresRepository) findManagerLink(ctx context.Context, nurseryUserID 
 			u.first_name, u.last_name,
 			NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''),
 			u.mobile, u.email,
-			COALESCE(nu.nursery_role_id, 0),
 			COALESCE(nu.role, 'MANAGER'), COALESCE(nu.role, 'MANAGER'),
 			COALESCE(nu.role, 'MANAGER'), COALESCE(nu.status, 'ACTIVE'),
 			nu.joined_at, COALESCE(nu.is_active, true)
@@ -1164,7 +1095,7 @@ func scanManagerLink(row interface{ Scan(dest ...any) error }) (UserLink, error)
 	// columns: id, nursery_id, user_id, first_name, last_name, full_name, mobile, email,
 	//          role_id(legacy), role_code, role_name, role(v1), status, joined_at, is_active
 	if err := row.Scan(&user.ID, &user.NurseryID, &user.UserID, &user.FirstName, &lastName, &fullName, &user.Mobile, &email,
-		&user.RoleID, &user.RoleCode, &user.RoleName, &user.Role, &user.Status, &joinedAt, &user.IsActive); err != nil {
+		&user.RoleCode, &user.RoleName, &user.Role, &user.Status, &joinedAt, &user.IsActive); err != nil {
 		return UserLink{}, err
 	}
 	user.LastName = nullableString(lastName)
@@ -1184,17 +1115,6 @@ func statusOrActive(value *string) string {
 	status := strings.ToUpper(strings.TrimSpace(stringOrEmpty(value)))
 	if status == "" {
 		return "ACTIVE"
-	}
-	return status
-}
-
-func nullableStatus(value *string) any {
-	if value == nil {
-		return nil
-	}
-	status := strings.ToUpper(strings.TrimSpace(*value))
-	if status == "" {
-		return nil
 	}
 	return status
 }

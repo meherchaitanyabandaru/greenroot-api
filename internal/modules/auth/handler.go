@@ -3,17 +3,15 @@ package auth
 import (
 	"encoding/json"
 	"errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/phone"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/clientip"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/validator"
 )
-
-var mobilePattern = regexp.MustCompile(`^[0-9+ -]{7,20}$`)
 
 type Handler struct {
 	service *Service
@@ -213,8 +211,8 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
 func validateMobile(w http.ResponseWriter, mobile string) bool {
 	v := validator.New()
 	v.Required("mobile", mobile)
-	if v.Valid() && !mobilePattern.MatchString(mobile) {
-		response.Error(w, http.StatusBadRequest, "invalid_mobile", "mobile must be 7-20 characters and contain digits, spaces, + or - only")
+	if _, ok := phone.Normalize(mobile); v.Valid() && !ok {
+		response.Error(w, http.StatusBadRequest, "invalid_mobile", "enter a 10-digit Indian mobile number")
 		return false
 	}
 	if !v.Valid() {

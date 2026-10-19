@@ -25,6 +25,8 @@ var (
 	ErrDriverCannotOwnNursery  = errors.New("approved drivers cannot register a nursery")
 	ErrNotMember               = errors.New("user is not an active member of this nursery")
 	ErrOwnerCannotLeave        = errors.New("nursery owner cannot leave their own nursery")
+	ErrNotPending              = errors.New("only PENDING applications can be approved or rejected")
+	ErrReasonRequired          = errors.New("a reason is required to reject an application")
 	ErrNotRejected             = errors.New("nursery is not in REJECTED status; only rejected applications can be resubmitted")
 )
 
@@ -97,24 +99,6 @@ func (s *Service) ListManagers(ctx context.Context, actor ActorContext, nurseryI
 		return nil, ErrForbidden
 	}
 	return s.repository.ListManagers(ctx, nurseryID)
-}
-
-// AddManager adds a manager to a nursery. Owner only.
-func (s *Service) AddManager(ctx context.Context, actor ActorContext, nurseryID int64, input AddManagerRequest) (UserLink, error) {
-	isOwner, _ := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
-	if !isOwner && !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
-		return UserLink{}, ErrNotNurseryOwner
-	}
-	if input.UserID <= 0 {
-		return UserLink{}, ErrInvalidInput
-	}
-	manager, err := s.repository.AddManager(ctx, nurseryID, actor.UserID, input)
-	if err != nil {
-		return UserLink{}, err
-	}
-	s.audit(ctx, actor, auditlog.EntityNurseryUser, manager.ID, auditlog.ActionCreate, "Manager added", nil, input)
-	s.invalidateWorkspaceUsers(ctx, actor.UserID, input.UserID)
-	return *manager, nil
 }
 
 // ConnectDriver connects a driver to a nursery.
@@ -301,13 +285,10 @@ func (s *Service) Resubmit(ctx context.Context, actor ActorContext, input Create
 }
 
 func (s *Service) Update(ctx context.Context, actor ActorContext, nurseryID int64, input UpdateNurseryRequest) (Nursery, error) {
-	if !canManageNurseries(actor) {
-		return Nursery{}, ErrForbidden
-	}
-	input = normalizeUpdateNursery(input)
-	if err := validateUpdateNursery(input); err != nil {
+	if err := s.canManage(ctx, actor, nurseryID); err != nil {
 		return Nursery{}, err
 	}
+	input = normalizeUpdateNursery(input)
 	if err := validateBranding(input); err != nil {
 		return Nursery{}, err
 	}
@@ -322,23 +303,33 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, nurseryID int6
 	return enrichNursery(actorFromContext(actor), *nursery), nil
 }
 
-func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, nurseryID int64, status string) (Nursery, error) {
+// UpdateStatus records the admin's review of a PENDING application: APPROVED
+// or REJECTED (with a reason the owner sees). Suspend and reactivate go
+// through PUT /admin/nurseries/{id}/status, which also revokes sessions.
+func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, nurseryID int64, status, reason string) (Nursery, error) {
 	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		return Nursery{}, ErrForbidden
 	}
 	status = strings.ToUpper(strings.TrimSpace(status))
-	if !isAllowedNurseryStatus(status) {
+	reason = strings.TrimSpace(reason)
+	if status != "APPROVED" && status != "REJECTED" {
 		return Nursery{}, ErrInvalidInput
 	}
-	old, _ := s.repository.FindByID(ctx, nurseryID)
-	nursery, err := s.repository.UpdateStatusOnly(ctx, actor.UserID, nurseryID, status)
+	if status == "REJECTED" && reason == "" {
+		return Nursery{}, ErrReasonRequired
+	}
+	old, err := s.repository.FindByID(ctx, nurseryID)
 	if err != nil {
 		return Nursery{}, err
 	}
-	oldStatus := ""
-	if old != nil {
-		oldStatus = old.Status
+	if old.Status != "PENDING" {
+		return Nursery{}, ErrNotPending
 	}
+	nursery, err := s.repository.UpdateStatusOnly(ctx, actor.UserID, nurseryID, status, reason)
+	if err != nil {
+		return Nursery{}, err
+	}
+	oldStatus := old.Status
 	s.audit(ctx, actor, auditlog.EntityNursery, nursery.ID, auditlog.ActionUpdate,
 		fmt.Sprintf("Nursery status %s → %s", oldStatus, status),
 		map[string]any{"status": oldStatus},
@@ -359,8 +350,8 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, nurseryI
 }
 
 func (s *Service) Delete(ctx context.Context, actor ActorContext, nurseryID int64) error {
-	if !canManageNurseries(actor) {
-		return ErrForbidden
+	if err := s.canManage(ctx, actor, nurseryID); err != nil {
+		return err
 	}
 	old, _ := s.repository.FindByID(ctx, nurseryID)
 	if err := s.repository.Delete(ctx, actor.UserID, nurseryID); err != nil {
@@ -377,8 +368,8 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, nurseryID int6
 }
 
 func (s *Service) ListAddresses(ctx context.Context, actor ActorContext, nurseryID int64) ([]Address, error) {
-	if !canManageNurseries(actor) {
-		return nil, ErrForbidden
+	if err := s.canManage(ctx, actor, nurseryID); err != nil {
+		return nil, err
 	}
 	if _, err := s.repository.FindByID(ctx, nurseryID); err != nil {
 		return nil, err
@@ -387,8 +378,8 @@ func (s *Service) ListAddresses(ctx context.Context, actor ActorContext, nursery
 }
 
 func (s *Service) CreateAddress(ctx context.Context, actor ActorContext, nurseryID int64, input AddressRequest) (Address, error) {
-	if !canManageNurseries(actor) {
-		return Address{}, ErrForbidden
+	if err := s.canManage(ctx, actor, nurseryID); err != nil {
+		return Address{}, err
 	}
 	if _, err := s.repository.FindByID(ctx, nurseryID); err != nil {
 		return Address{}, err
@@ -407,8 +398,8 @@ func (s *Service) CreateAddress(ctx context.Context, actor ActorContext, nursery
 }
 
 func (s *Service) UpdateAddress(ctx context.Context, actor ActorContext, addressID int64, input AddressRequest) (Address, error) {
-	if !canManageNurseries(actor) {
-		return Address{}, ErrForbidden
+	if err := s.canManageAddress(ctx, actor, addressID); err != nil {
+		return Address{}, err
 	}
 	if err := validateAddress(input); err != nil {
 		return Address{}, err
@@ -424,8 +415,8 @@ func (s *Service) UpdateAddress(ctx context.Context, actor ActorContext, address
 }
 
 func (s *Service) DeleteAddress(ctx context.Context, actor ActorContext, addressID int64) error {
-	if !canManageNurseries(actor) {
-		return ErrForbidden
+	if err := s.canManageAddress(ctx, actor, addressID); err != nil {
+		return err
 	}
 	if err := s.repository.DeleteAddress(ctx, addressID); err != nil {
 		return err
@@ -436,32 +427,13 @@ func (s *Service) DeleteAddress(ctx context.Context, actor ActorContext, address
 }
 
 func (s *Service) ListUsers(ctx context.Context, actor ActorContext, nurseryID int64) ([]UserLink, error) {
-	if !canManageNurseries(actor) {
-		return nil, ErrForbidden
+	if err := s.canManage(ctx, actor, nurseryID); err != nil {
+		return nil, err
 	}
 	if _, err := s.repository.FindByID(ctx, nurseryID); err != nil {
 		return nil, err
 	}
 	return s.repository.ListUsers(ctx, nurseryID)
-}
-
-func (s *Service) AddUser(ctx context.Context, actor ActorContext, nurseryID int64, input AddUserRequest) (UserLink, error) {
-	if !canManageNurseries(actor) {
-		return UserLink{}, ErrForbidden
-	}
-	if input.UserID <= 0 {
-		return UserLink{}, ErrInvalidInput
-	}
-	if _, err := s.repository.FindByID(ctx, nurseryID); err != nil {
-		return UserLink{}, err
-	}
-	user, err := s.repository.AddUser(ctx, nurseryID, input)
-	if err != nil {
-		return UserLink{}, err
-	}
-	s.audit(ctx, actor, auditlog.EntityNurseryUser, user.ID, auditlog.ActionCreate, "Nursery user added", nil, input)
-	s.invalidateWorkspaceUsers(ctx, actor.UserID, input.UserID)
-	return *user, nil
 }
 
 // GetCustomers returns buyers who accepted a CUSTOMER_INVITE for a nursery.
@@ -635,15 +607,6 @@ func normalizeUpdateNursery(input UpdateNurseryRequest) UpdateNurseryRequest {
 	return input
 }
 
-func validateUpdateNursery(input UpdateNurseryRequest) error {
-	if input.Status != nil {
-		if !isAllowedNurseryStatus(strings.ToUpper(strings.TrimSpace(*input.Status))) {
-			return ErrInvalidInput
-		}
-	}
-	return nil
-}
-
 // validBrandColors is the curated palette. Values are uppercased 7-char hex.
 var validBrandColors = map[string]bool{
 	"#2E7D32": true, // deep forest green (default)
@@ -736,8 +699,27 @@ func isAllowedLocationSource(value string) bool {
 	}
 }
 
-func canManageNurseries(actor ActorContext) bool {
-	return actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") || actor.HasRole("NURSERY_OWNER")
+// canManage: admins manage every nursery, an owner only the one they own.
+func (s *Service) canManage(ctx context.Context, actor ActorContext, nurseryID int64) error {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
+		return nil
+	}
+	isOwner, err := s.repository.IsNurseryOwner(ctx, nurseryID, actor.UserID)
+	if err != nil {
+		return err
+	}
+	if !isOwner {
+		return ErrForbidden
+	}
+	return nil
+}
+
+func (s *Service) canManageAddress(ctx context.Context, actor ActorContext, addressID int64) error {
+	nurseryID, err := s.repository.AddressNurseryID(ctx, addressID)
+	if err != nil {
+		return err
+	}
+	return s.canManage(ctx, actor, nurseryID)
 }
 
 type NurseryActor struct {

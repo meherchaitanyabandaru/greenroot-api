@@ -42,6 +42,10 @@ func Enqueue(ctx context.Context, rdb redis.Cmdable, event Event) error {
 	}
 	return rdb.XAdd(ctx, &redis.XAddArgs{
 		Stream: redisutil.KeyNotifications,
+		// The worker deletes what it delivers; the cap only bounds a backlog
+		// while the worker is down.
+		MaxLen: 100000,
+		Approx: true,
 		Values: map[string]any{
 			"user_id": event.UserID,
 			"type":    event.Type,

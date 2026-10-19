@@ -121,10 +121,8 @@ ON CONFLICT (nursery_id) DO UPDATE SET
 
 DELETE FROM public.nursery_users WHERE user_id = 4;
 
-INSERT INTO public.nursery_users (nursery_id, user_id, role, status, nursery_role_id, invited_by_user_id, is_active, joined_at, updated_at)
-SELECT 1, 4, 'MANAGER', 'ACTIVE', nr.nursery_role_id, 2, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-FROM public.nursery_roles nr
-WHERE nr.role_code = 'MANAGER';
+INSERT INTO public.nursery_users (nursery_id, user_id, role, status, invited_by_user_id, is_active, joined_at, updated_at)
+VALUES (1, 4, 'MANAGER', 'ACTIVE', 2, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
 INSERT INTO public.subscription_plans
   (plan_code, plan_name, description, monthly_price, yearly_price, max_managers, is_active, features)

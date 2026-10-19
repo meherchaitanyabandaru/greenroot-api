@@ -60,6 +60,7 @@ type OrderAccess struct {
 	OrderID   int64
 	BuyerID   *int64
 	NurseryID *int64
+	Status    string
 }
 
 type SubscriptionAccess struct {
@@ -211,7 +212,7 @@ func (r *PostgresRepository) UpdateStatus(ctx context.Context, paymentID int64, 
 func (r *PostgresRepository) OrderAccess(ctx context.Context, orderID int64) (*OrderAccess, error) {
 	var access OrderAccess
 	var buyerID, nurseryID sql.NullInt64
-	err := r.db.QueryRowContext(ctx, `SELECT order_id, buyer_user_id, seller_nursery_id FROM public.orders WHERE order_id = $1`, orderID).Scan(&access.OrderID, &buyerID, &nurseryID)
+	err := r.db.QueryRowContext(ctx, `SELECT order_id, buyer_user_id, seller_nursery_id, status FROM public.orders WHERE order_id = $1 AND deleted_at IS NULL`, orderID).Scan(&access.OrderID, &buyerID, &nurseryID, &access.Status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

@@ -550,8 +550,6 @@ func (r *PostgresRepository) GetOwnerDashboard(ctx context.Context, userID int64
 		// and owners always saw 0 inventory.
 		{`SELECT COUNT(*), COALESCE(SUM(CASE WHEN status = 'AVAILABLE' THEN 1 ELSE 0 END), 0)
 			FROM public.nursery_inventory WHERE nursery_id = $1`, []any{&d.Inventory.TotalItems, &d.Inventory.Available}},
-		// nursery_users.role is the populated source of truth today; invites
-		// leave nursery_role_id NULL (tracked as a data-ownership fix).
 		{`SELECT COUNT(*) FROM public.nursery_users WHERE nursery_id = $1 AND role = 'MANAGER' AND status = 'ACTIVE'`, []any{&d.Connections.Managers}},
 		// Orders and dispatches carry the selling nursery in orders.seller_nursery_id;
 		// orders.nursery_id and dispatches.nursery_id are not populated.

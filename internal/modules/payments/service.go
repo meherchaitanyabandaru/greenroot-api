@@ -3,6 +3,7 @@ package payments
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
@@ -16,6 +17,8 @@ var (
 	ErrForbidden    = apperrs.ErrForbidden
 	ErrInvalidInput = apperrs.ErrInvalidInput
 	ErrConflict     = apperrs.ErrConflict
+	// ErrInvalidStatus: the payment or its order is in a state that forbids the change.
+	ErrInvalidStatus = errors.New("payment status change not allowed")
 )
 
 // EventNotifier fans payer alerts out to every messaging channel (SMS, email).
@@ -91,6 +94,9 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, paymentI
 	if err := s.canManagePayment(ctx, actor, *current); err != nil {
 		return Payment{}, err
 	}
+	if !CanTransition(current.Status, status) {
+		return Payment{}, ErrInvalidStatus
+	}
 	if v, ok := rowversion.Expected(ctx); ok && v != current.Version {
 		return Payment{}, ErrConflict
 	}
@@ -155,6 +161,9 @@ func (s *Service) normalizeCreateInput(input ManualPaymentRequest) (CreatePaymen
 	}, nil
 }
 
+// canCreate: money is recorded by the seller (nursery owner) or an admin,
+// never by the payer; subscription payments come from the subscriptions
+// module, so only admins add them by hand.
 func (s *Service) canCreate(ctx context.Context, actor ActorContext, input *CreatePaymentInput) error {
 	if input.PaymentFor == paymentForOrder {
 		access, err := s.repository.OrderAccess(ctx, *input.OrderID)
@@ -164,7 +173,13 @@ func (s *Service) canCreate(ctx context.Context, actor ActorContext, input *Crea
 		if input.PayerUserID == nil && access.BuyerID != nil {
 			input.PayerUserID = access.BuyerID
 		}
-		return s.canAccessOrder(ctx, actor, access)
+		if err := s.canRecordForOrder(ctx, actor, access); err != nil {
+			return err
+		}
+		if access.Status == "CANCELLED" {
+			return ErrInvalidStatus
+		}
+		return nil
 	}
 	access, err := s.repository.SubscriptionAccess(ctx, *input.UserSubscriptionID)
 	if err != nil {
@@ -173,7 +188,7 @@ func (s *Service) canCreate(ctx context.Context, actor ActorContext, input *Crea
 	if input.PayerUserID == nil {
 		input.PayerUserID = &access.UserID
 	}
-	if actor.HasRole("ADMIN") || access.UserID == actor.UserID {
+	if actor.HasRole("ADMIN") {
 		return nil
 	}
 	return ErrForbidden
@@ -205,10 +220,24 @@ func (s *Service) canManagePayment(ctx context.Context, actor ActorContext, paym
 		if err != nil {
 			return err
 		}
-		return s.canAccessOrder(ctx, actor, access)
+		return s.canRecordForOrder(ctx, actor, access)
 	}
-	if payment.PaymentFor == paymentForSubscription && payment.PayerUserID != nil && *payment.PayerUserID == actor.UserID {
+	return ErrForbidden
+}
+
+// canRecordForOrder: admin, or the owner of the selling nursery.
+func (s *Service) canRecordForOrder(ctx context.Context, actor ActorContext, access *OrderAccess) error {
+	if actor.HasRole("ADMIN") {
 		return nil
+	}
+	if actor.HasRole("NURSERY_OWNER") && access.NurseryID != nil {
+		member, err := s.repository.IsNurseryMember(ctx, *access.NurseryID, actor.UserID)
+		if err != nil {
+			return err
+		}
+		if member {
+			return nil
+		}
 	}
 	return ErrForbidden
 }
@@ -286,6 +315,22 @@ func isAllowedStatus(value string) bool {
 	default:
 		return false
 	}
+}
+
+// CanTransition: PENDING settles once (SUCCESS, FAILED or CANCELLED); a
+// SUCCESS can only be REFUNDED; everything else is final. Re-saving the same
+// status (to add a reference or notes) is allowed.
+func CanTransition(from, to string) bool {
+	if from == to {
+		return true
+	}
+	switch from {
+	case "PENDING":
+		return to == "SUCCESS" || to == "FAILED" || to == "CANCELLED"
+	case "SUCCESS":
+		return to == "REFUNDED"
+	}
+	return false
 }
 
 func isAllowedMethod(value string) bool {

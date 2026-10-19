@@ -154,9 +154,9 @@ func TestDeleteAccount_TokenInvalidatedAfterDeletion(t *testing.T) {
 	delResp := deleteReq(t, "/api/v1/users/me", token)
 	assertStatus(t, delResp, http.StatusOK)
 
-	// Try to access /users/me with the old token — should be blocked immediately.
+	// The old token is revoked at once: 401, so the app signs the user out.
 	meResp := get(t, "/api/v1/users/me", token)
-	assertStatus(t, meResp, http.StatusForbidden)
+	assertStatus(t, meResp, http.StatusUnauthorized)
 }
 
 func TestDeleteAccount_OwnerWithActiveNurseryBlocked(t *testing.T) {

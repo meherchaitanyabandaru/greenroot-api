@@ -128,7 +128,8 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 	if err != nil {
 		return Dispatch{}, err
 	}
-	if err := s.canAccess(ctx, actor, *current); err != nil {
+	staff, driver, err := s.operatorRole(ctx, actor, *current)
+	if err != nil {
 		return Dispatch{}, err
 	}
 	status := strings.ToUpper(strings.TrimSpace(req.Status))
@@ -137,6 +138,10 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 	}
 	if !AllowedStatus(status) {
 		return Dispatch{}, ErrInvalidInput
+	}
+	// Buyers only watch; drivers move the trip forward but cannot cancel it (no reject in V1).
+	if !staff && (!driver || status == "CANCELLED") {
+		return Dispatch{}, ErrForbidden
 	}
 	if !CanTransition(current.Status, status) {
 		return Dispatch{}, ErrInvalidStatus
@@ -238,9 +243,15 @@ func (s *Service) CreateTripEvent(ctx context.Context, actor ActorContext, dispa
 	if IsTerminal(dispatch.Status) || dispatch.Status == "PENDING" {
 		return TripEvent{}, ErrInvalidStatus
 	}
+	eventType := strings.ToUpper(strings.TrimSpace(req.EventType))
+	if eventType == "" || len(eventType) > 50 ||
+		(req.Latitude != nil && (*req.Latitude < -90 || *req.Latitude > 90)) ||
+		(req.Longitude != nil && (*req.Longitude < -180 || *req.Longitude > 180)) {
+		return TripEvent{}, ErrInvalidInput
+	}
 	event, err := s.repository.CreateTripEvent(ctx, CreateTripEventInput{
 		DispatchID:      dispatchID,
-		EventType:       strings.ToUpper(strings.TrimSpace(req.EventType)),
+		EventType:       eventType,
 		Latitude:        req.Latitude,
 		Longitude:       req.Longitude,
 		PhotoURL:        req.PhotoURL,
@@ -254,13 +265,21 @@ func (s *Service) CreateTripEvent(ctx context.Context, actor ActorContext, dispa
 	return *event, nil
 }
 
-// GetByCode returns dispatch info for a trip code (no auth required — used by drivers scanning QR).
-func (s *Service) GetByCode(ctx context.Context, code string) (Dispatch, error) {
+// GetByCode lets a driver preview a trip from its QR code. Codes are
+// sequential, so only a driver can open an unclaimed PENDING trip; anyone else
+// needs normal access to the dispatch.
+func (s *Service) GetByCode(ctx context.Context, actor ActorContext, code string) (Dispatch, error) {
 	dispatch, err := s.repository.FindByCode(ctx, code)
 	if err != nil {
 		return Dispatch{}, err
 	}
-	return withLifecycle(ActorContext{}, *dispatch), nil
+	unclaimed := dispatch.Status == "PENDING" && dispatch.DriverID == nil && dispatch.DriverUserID == nil
+	if !(actor.HasRole("DRIVER") && unclaimed) {
+		if err := s.canAccess(ctx, actor, *dispatch); err != nil {
+			return Dispatch{}, err
+		}
+	}
+	return withLifecycle(actor, *dispatch), nil
 }
 
 func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispatchID int64) (Dispatch, error) {
@@ -384,6 +403,34 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 		return nil
 	}
 	return ErrForbidden
+}
+
+// operatorRole reports whether the actor runs this dispatch as seller staff
+// (admin, owner or manager of the selling nursery) or as its assigned driver.
+func (s *Service) operatorRole(ctx context.Context, actor ActorContext, dispatch Dispatch) (staff, driver bool, err error) {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
+		return true, false, nil
+	}
+	if dispatch.SellerNurseryID != nil && (actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER")) {
+		member, err := s.repository.IsNurseryMember(ctx, *dispatch.SellerNurseryID, actor.UserID)
+		if err != nil {
+			return false, false, err
+		}
+		if member {
+			return true, false, nil
+		}
+	}
+	if actor.HasRole("DRIVER") {
+		if dispatch.DriverUserID != nil && *dispatch.DriverUserID == actor.UserID {
+			return false, true, nil
+		}
+		if dispatch.DriverID != nil {
+			if ok, err := s.repository.IsDispatchDriver(ctx, *dispatch.DriverID, actor.UserID); err == nil && ok {
+				return false, true, nil
+			}
+		}
+	}
+	return false, false, nil
 }
 
 func (s *Service) canAccess(ctx context.Context, actor ActorContext, dispatch Dispatch) error {

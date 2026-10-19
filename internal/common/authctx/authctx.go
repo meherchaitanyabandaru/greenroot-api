@@ -172,8 +172,10 @@ func EnrichActorMiddleware(jwt *jwtplatform.Service, redisClients ...redis.Cmdab
 				return
 			}
 
+			// 401, not 403: a logged-out token is an authentication failure, so
+			// clients run their refresh/sign-in flow instead of showing "forbidden".
 			if redisutil.IsBlocklisted(r.Context(), rdb, slog.Default(), claims.ID) {
-				response.Error(w, http.StatusForbidden, "token_revoked", "token has been revoked")
+				response.Error(w, http.StatusUnauthorized, "token_revoked", "token has been revoked")
 				return
 			}
 

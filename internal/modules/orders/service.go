@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/phone"
 	"math"
 	"os"
 	"strings"
@@ -437,7 +438,11 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateOr
 		return Order{}, ErrForbidden
 	}
 	if input.BuyerMobile != nil && *input.BuyerMobile != "" {
-		buyerID, err := s.repository.FindOrCreateBuyerByMobile(ctx, *input.BuyerMobile, stringOrEmpty(input.BuyerName))
+		mobile, ok := phone.Normalize(*input.BuyerMobile)
+		if !ok {
+			return Order{}, fmt.Errorf("%w: buyer_mobile must be a 10-digit Indian mobile number", ErrInvalidInput)
+		}
+		buyerID, err := s.repository.FindOrCreateBuyerByMobile(ctx, mobile, stringOrEmpty(input.BuyerName))
 		if err != nil {
 			return Order{}, err
 		}
@@ -674,6 +679,9 @@ func (s *Service) SetLoadedQuantity(ctx context.Context, actor ActorContext, ord
 	if item.OrderID != orderID {
 		return OrderItem{}, ErrForbidden
 	}
+	if qty > item.Quantity {
+		return OrderItem{}, fmt.Errorf("%w: loaded_quantity cannot exceed the ordered quantity", ErrInvalidInput)
+	}
 	updated, err := s.repository.SetLoadedQuantity(ctx, itemID, qty)
 	if err != nil {
 		return OrderItem{}, err
@@ -738,6 +746,17 @@ func (s *Service) AssignManager(ctx context.Context, actor ActorContext, orderID
 		if err != nil || !owner {
 			return Order{}, ErrForbidden
 		}
+	}
+	if IsTerminal(order.Status) {
+		return Order{}, ErrInvalidStatus
+	}
+	if managerUserID <= 0 || order.SellerNurseryID == nil {
+		return Order{}, ErrInvalidInput
+	}
+	if member, err := s.repository.IsNurseryMember(ctx, *order.SellerNurseryID, managerUserID); err != nil {
+		return Order{}, err
+	} else if !member {
+		return Order{}, fmt.Errorf("%w: manager_user_id is not a member of this nursery", ErrInvalidInput)
 	}
 	updated, err := s.repository.AssignManager(ctx, orderID, managerUserID)
 	if err != nil {
@@ -910,9 +929,6 @@ func (s *Service) canView(ctx context.Context, actor ActorContext, order Order) 
 			return nil
 		}
 	}
-	if order.AssignedManagerUserID != nil && *order.AssignedManagerUserID == actor.UserID {
-		return nil
-	}
 	nurseryID := order.SellerNurseryID
 	if nurseryID != nil {
 		owner, _ := s.repository.IsNurseryOwner(ctx, *nurseryID, actor.UserID)
@@ -945,9 +961,6 @@ func (s *Service) canCreate(ctx context.Context, actor ActorContext, input Creat
 
 func (s *Service) canManage(ctx context.Context, actor ActorContext, order Order) error {
 	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
-		return nil
-	}
-	if order.AssignedManagerUserID != nil && *order.AssignedManagerUserID == actor.UserID {
 		return nil
 	}
 	nurseryID := order.SellerNurseryID
@@ -996,9 +1009,6 @@ func normalizeList(input ListOrdersRequest) ListOrdersRequest {
 
 func normalizeCreate(actor ActorContext, input CreateOrderRequest) CreateOrderRequest {
 	input.Status = strings.ToUpper(strings.TrimSpace(input.Status))
-	if input.Status == "" {
-		input.Status = "PENDING"
-	}
 	// Only default buyer to self when a BUYER is creating their own order
 	if input.BuyerUserID == nil && actor.HasRole("BUYER") {
 		input.BuyerUserID = &actor.UserID
@@ -1010,7 +1020,8 @@ func validateOrder(input CreateOrderRequest) error {
 	if input.BuyerUserID == nil || *input.BuyerUserID <= 0 || input.SellerNurseryID == nil || *input.SellerNurseryID <= 0 {
 		return ErrInvalidInput
 	}
-	if !AllowedStatus(input.Status) {
+	// Every order starts PENDING; later states come from the lifecycle endpoints.
+	if input.Status != "" && input.Status != "PENDING" {
 		return ErrInvalidInput
 	}
 	for _, item := range input.Items {

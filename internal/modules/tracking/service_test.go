@@ -149,8 +149,8 @@ func TestCreate_DriverDispatchMustBeInTransit(t *testing.T) {
 		Latitude:   12.97,
 		Longitude:  77.59,
 	})
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("tracking before IN_TRANSIT: want ErrInvalidInput, got %v", err)
+	if !errors.Is(err, ErrNotInTransit) {
+		t.Errorf("tracking before IN_TRANSIT: want ErrNotInTransit, got %v", err)
 	}
 }
 

@@ -67,13 +67,6 @@ ON CONFLICT (nursery_id) DO UPDATE
       status = 'APPROVED',
       updated_at = CURRENT_TIMESTAMP;
 
-INSERT INTO public.nursery_users (nursery_id, user_id, nursery_role_id, joined_at, is_active)
-SELECT 1, u.user_id, COALESCE(nr.nursery_role_id, 1), CURRENT_TIMESTAMP, true
-FROM public.users u
-LEFT JOIN public.nursery_roles nr ON nr.role_code IN ('OWNER', 'ADMIN', 'MANAGER')
-WHERE u.mobile = '9100000003'
-ON CONFLICT DO NOTHING;
-
 SELECT setval('public.nurseries_nursery_id_seq', (SELECT max(nursery_id) FROM public.nurseries), true);
 SQL
 

@@ -56,6 +56,8 @@ const (
 
 const maxRecentSearches = 10
 
+const searchGenerationTTL = 24 * time.Hour
+
 // SearchCacheKey builds the cache-aside key for one module+user+generation+
 // query. queryParts should include the search string plus every resolved
 // filter that affects the result set (status, pagination, sort, nursery
@@ -99,6 +101,10 @@ func BumpSearchGeneration(ctx context.Context, client redis.Cmdable, log *slog.L
 		logger(log).Warn("redis search generation bump failed", "module", module, "error", err)
 		return
 	}
+	// One counter per user per module: without a TTL they pile up forever.
+	// Far longer than any cache entry (max 30 min), so a reset cannot revive
+	// an old generation's entries.
+	client.Expire(ctx, key, searchGenerationTTL)
 	logger(log).Info("search cache invalidate", "module", module, "user_id", userID)
 }
 

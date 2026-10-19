@@ -236,11 +236,11 @@ func (r *PostgresRepository) AddNurseryMember(ctx context.Context, nurseryID int
 		role = "MANAGER"
 	}
 	if _, err := r.db.ExecContext(ctx, `
-		INSERT INTO public.nursery_users (nursery_id, user_id, role, invited_by_user_id, status, joined_at, updated_at)
-		SELECT $1, $2, $3, $4, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-		WHERE NOT EXISTS (
-			SELECT 1 FROM public.nursery_users WHERE nursery_id = $1 AND user_id = $2 AND nursery_role_id IS NULL
-		)
+		INSERT INTO public.nursery_users (nursery_id, user_id, role, invited_by_user_id, status, is_active, joined_at, updated_at)
+		VALUES ($1, $2, $3, $4, 'ACTIVE', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT (nursery_id, user_id) DO UPDATE
+		SET role = EXCLUDED.role, invited_by_user_id = EXCLUDED.invited_by_user_id, status = 'ACTIVE',
+			is_active = true, joined_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 	`, nurseryID, userID, role, invitedByUserID); err != nil {
 		return err
 	}
@@ -261,11 +261,10 @@ func (r *PostgresRepository) AddNurseryMember(ctx context.Context, nurseryID int
 }
 
 func (r *PostgresRepository) GrantNurseryOwnerRole(ctx context.Context, userID int64) error {
-	const nurseryOwnerRoleID = 3
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO public.user_roles (user_id, role_id)
-		VALUES ($1, $2)
+		SELECT $1, role_id FROM public.roles WHERE role_code = 'NURSERY_OWNER'
 		ON CONFLICT DO NOTHING
-	`, userID, nurseryOwnerRoleID)
+	`, userID)
 	return err
 }

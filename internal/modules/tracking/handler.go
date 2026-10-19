@@ -186,6 +186,8 @@ func writeErr(w http.ResponseWriter, err error) {
 		response.Error(w, 403, "forbidden", "not allowed")
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, 400, "invalid_input", "invalid tracking input")
+	case errors.Is(err, ErrNotInTransit):
+		response.Error(w, 409, "trip_not_in_transit", ErrNotInTransit.Error())
 	default:
 		response.Error(w, 500, "tracking_error", "tracking request failed")
 	}

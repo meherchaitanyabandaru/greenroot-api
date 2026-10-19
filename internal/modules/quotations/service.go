@@ -7,9 +7,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/phone"
 	"log/slog"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -101,8 +101,6 @@ func (rl *ipRateLimiter) cleanup() {
 // publicVerifyLimiter: 30 requests per IP per 10 minutes.
 var publicVerifyLimiter = newIPRateLimiter(10*time.Minute, 30)
 
-var nonDigit = regexp.MustCompile(`\D`)
-
 // IsEditable and BuildCapabilities are defined in policy.go.
 
 type Service struct {
@@ -168,11 +166,6 @@ func (s *Service) listQuotations(ctx context.Context, actor ActorContext, input 
 	if err != nil {
 		return nil, Pagination{}, err
 	}
-	if isManagerOnly(actor) {
-		for i := range qs {
-			redactCustomerContact(&qs[i])
-		}
-	}
 	for i := range qs {
 		qs[i] = enrichQuotation(actor, qs[i])
 	}
@@ -191,9 +184,6 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, id int64) (Quotat
 	}
 	if err := s.canView(ctx, actor, *q); err != nil {
 		return Quotation{}, err
-	}
-	if isManagerOnly(actor) {
-		redactCustomerContact(q)
 	}
 	return enrichQuotation(actor, *q), nil
 }
@@ -227,8 +217,12 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQu
 	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") || actor.HasRole("DRIVER") {
 		return Quotation{}, ErrForbidden
 	}
-	if input.QuotationType != "INTERNAL" {
+	switch input.QuotationType = strings.ToUpper(strings.TrimSpace(input.QuotationType)); input.QuotationType {
+	case "":
 		input.QuotationType = "CUSTOMER"
+	case "CUSTOMER", "INTERNAL":
+	default:
+		return Quotation{}, ErrInvalidInput
 	}
 	if err := validateCreate(input); err != nil {
 		return Quotation{}, err
@@ -236,8 +230,8 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQu
 
 	// Normalize recipient_mobile before validation.
 	if input.RecipientMobile != nil {
-		normalized := normalizeIndianMobile(*input.RecipientMobile)
-		if normalized == "" && *input.RecipientMobile != "" {
+		normalized, ok := phone.Normalize(*input.RecipientMobile)
+		if !ok && *input.RecipientMobile != "" {
 			return Quotation{}, fmt.Errorf("invalid recipient_mobile: %w", ErrInvalidInput)
 		}
 		input.RecipientMobile = &normalized
@@ -280,7 +274,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQu
 	// Owner-only: validate pre-assigned manager is an active nursery member.
 	if input.AssignedManagerUserID != nil && *input.AssignedManagerUserID > 0 {
 		if !s.isNurseryOwner(ctx, actor, Quotation{NurseryID: input.NurseryID}) {
-			input.AssignedManagerUserID = nil // non-owners cannot pre-assign
+			return Quotation{}, ErrForbidden
 		} else if input.NurseryID != nil {
 			member, err := s.repository.IsNurseryMember(ctx, *input.NurseryID, *input.AssignedManagerUserID)
 			if err != nil || !member {
@@ -324,12 +318,12 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, inpu
 	if actor.HasRole("DRIVER") {
 		return Quotation{}, ErrForbidden
 	}
-	if len(input.Items) == 0 {
+	if len(input.Items) == 0 || isExpiredTime(input.ValidUntil) {
 		return Quotation{}, ErrInvalidInput
 	}
 	if input.RecipientMobile != nil {
-		normalized := normalizeIndianMobile(*input.RecipientMobile)
-		if normalized == "" && *input.RecipientMobile != "" {
+		normalized, ok := phone.Normalize(*input.RecipientMobile)
+		if !ok && *input.RecipientMobile != "" {
 			return Quotation{}, fmt.Errorf("invalid recipient_mobile: %w", ErrInvalidInput)
 		}
 		input.RecipientMobile = &normalized
@@ -384,8 +378,8 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, inpu
 
 func (s *Service) UpdateCustomer(ctx context.Context, actor ActorContext, id int64, input UpdateQuotationCustomerRequest) (Quotation, error) {
 	if input.RecipientMobile != nil {
-		normalized := normalizeIndianMobile(*input.RecipientMobile)
-		if normalized == "" && *input.RecipientMobile != "" {
+		normalized, ok := phone.Normalize(*input.RecipientMobile)
+		if !ok && *input.RecipientMobile != "" {
 			return Quotation{}, fmt.Errorf("invalid recipient_mobile: %w", ErrInvalidInput)
 		}
 		input.RecipientMobile = &normalized
@@ -426,6 +420,9 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, id int64) erro
 	if q.ConvertedOrderID != nil {
 		return ErrAlreadyConverted
 	}
+	if !IsDeletable(*q) {
+		return ErrInvalidTransition
+	}
 	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
 		if err := s.repository.SoftDelete(ctx, id); err != nil {
 			return err
@@ -462,6 +459,9 @@ func (s *Service) SendToCustomer(ctx context.Context, actor ActorContext, quotat
 	}
 	if q.Status != "CUSTOMER_DRAFT" {
 		return Quotation{}, ErrInvalidTransition
+	}
+	if isExpiredTime(q.ValidUntil) {
+		return Quotation{}, ErrQuotationExpired
 	}
 	approved, err := s.repository.Approve(ctx, quotationID, actor.UserID)
 	if err != nil {
@@ -758,6 +758,11 @@ func (s *Service) canView(ctx context.Context, actor ActorContext, q Quotation) 
 	if q.AssignedManagerUserID != nil && *q.AssignedManagerUserID == actor.UserID {
 		return nil
 	}
+	if q.NurseryID != nil {
+		if owner, err := s.repository.IsNurseryOwner(ctx, *q.NurseryID, actor.UserID); err == nil && owner {
+			return nil
+		}
+	}
 	if q.QuotationType == "CUSTOMER" && q.Status == "CUSTOMER_DRAFT" {
 		return ErrForbidden
 	}
@@ -780,10 +785,6 @@ func (s *Service) canView(ctx context.Context, actor ActorContext, q Quotation) 
 		}
 	}
 	if q.NurseryID != nil {
-		owner, err := s.repository.IsNurseryOwner(ctx, *q.NurseryID, actor.UserID)
-		if err == nil && owner {
-			return nil
-		}
 		// Manager-only actors: already checked creator and assignee above.
 		// Don't grant access to any other nursery member — they must be explicitly
 		// assigned by the owner to see a quotation they didn't create themselves.
@@ -876,7 +877,12 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 	return nil
 }
 
+// enrichQuotation shapes every quotation the API returns, so manager-only
+// actors never receive customer details from any endpoint.
 func enrichQuotation(actor ActorContext, q Quotation) Quotation {
+	if isManagerOnly(actor) {
+		redactCustomerContact(&q)
+	}
 	status := strings.ToUpper(strings.TrimSpace(q.Status))
 	q.Status = status
 	q.Lifecycle = lifecyclePtr(lifecycle.Quotation(status))
@@ -907,7 +913,7 @@ func lifecyclePtr[T any](value T) *T {
 // ── validation ────────────────────────────────────────────────────────────────
 
 func validateCreate(input CreateQuotationRequest) error {
-	if len(input.Items) == 0 {
+	if len(input.Items) == 0 || isExpiredTime(input.ValidUntil) {
 		return ErrInvalidInput
 	}
 	for _, item := range input.Items {
@@ -1327,6 +1333,7 @@ func redactCustomerContact(q *Quotation) {
 	q.RecipientName = nil
 	q.RecipientMobile = nil
 	q.CustomerUserID = nil
+	q.RejectionReason = nil
 }
 
 func (s *Service) validateCustomerSelection(ctx context.Context, q Quotation, customerUserID *int64) error {
@@ -1351,20 +1358,4 @@ func optionalStringValue(v *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*v)
-}
-
-// normalizeIndianMobile strips non-digits and country prefix, returning a clean
-// 10-digit mobile number. Returns "" if the result is not exactly 10 digits.
-func normalizeIndianMobile(s string) string {
-	s = strings.TrimSpace(s)
-	// Strip leading +91 or 91
-	s = strings.TrimPrefix(s, "+91")
-	if len(s) == 12 && strings.HasPrefix(s, "91") {
-		s = s[2:]
-	}
-	s = nonDigit.ReplaceAllString(s, "")
-	if len(s) != 10 {
-		return ""
-	}
-	return s
 }

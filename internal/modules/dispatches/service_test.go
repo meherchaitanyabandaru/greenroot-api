@@ -677,7 +677,7 @@ func TestCreateItem_StrangerForbidden(t *testing.T) {
 func TestGetByCode_Found(t *testing.T) {
 	repo := newMock()
 	repo.seedDispatch(Dispatch{ID: 10, DispatchCode: "DC-XYZ", Status: "IN_TRANSIT"})
-	d, err := svc(repo).GetByCode(context.Background(), "DC-XYZ")
+	d, err := svc(repo).GetByCode(context.Background(), adminActor(1), "DC-XYZ")
 	if err != nil {
 		t.Fatalf("GetByCode: %v", err)
 	}
@@ -686,9 +686,37 @@ func TestGetByCode_Found(t *testing.T) {
 	}
 }
 
+func TestGetByCode_OnlyDriversPreviewUnclaimedTrips(t *testing.T) {
+	repo := newMock()
+	repo.seedDispatch(Dispatch{ID: 10, DispatchCode: "DC-1", Status: "PENDING"})
+	if _, err := svc(repo).GetByCode(context.Background(), driverActor(5), "DC-1"); err != nil {
+		t.Errorf("driver preview of a pending trip: %v", err)
+	}
+	if _, err := svc(repo).GetByCode(context.Background(), buyerActor(6), "DC-1"); !errors.Is(err, ErrForbidden) {
+		t.Errorf("buyer lookup: want ErrForbidden, got %v", err)
+	}
+	mine := int64(7)
+	repo.seedDispatch(Dispatch{ID: 11, DispatchCode: "DC-2", Status: "ACCEPTED", DriverUserID: &mine})
+	if _, err := svc(repo).GetByCode(context.Background(), driverActor(5), "DC-2"); !errors.Is(err, ErrForbidden) {
+		t.Errorf("another driver's trip: want ErrForbidden, got %v", err)
+	}
+}
+
+func TestUpdateStatus_BuyerAndDriverLimits(t *testing.T) {
+	repo := newMock()
+	drv := int64(7)
+	repo.seedDispatch(Dispatch{ID: 10, Status: "ACCEPTED", DriverUserID: &drv})
+	if _, err := svc(repo).UpdateStatus(context.Background(), driverActor(7), 10, UpdateStatusRequest{Status: "CANCELLED"}); !errors.Is(err, ErrForbidden) {
+		t.Errorf("driver cancel: want ErrForbidden, got %v", err)
+	}
+	if _, err := svc(repo).UpdateStatus(context.Background(), driverActor(7), 10, UpdateStatusRequest{Status: "DISPATCHED"}); err != nil {
+		t.Errorf("driver dispatch: %v", err)
+	}
+}
+
 func TestGetByCode_NotFound(t *testing.T) {
 	repo := newMock()
-	_, err := svc(repo).GetByCode(context.Background(), "BOGUS")
+	_, err := svc(repo).GetByCode(context.Background(), driverActor(5), "BOGUS")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("GetByCode not found: want ErrNotFound, got %v", err)
 	}

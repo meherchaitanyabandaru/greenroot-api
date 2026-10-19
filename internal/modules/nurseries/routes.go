@@ -55,7 +55,6 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		// Managers (V1: owner-managed, text role)
 		r.Get("/{id}/users", m.handler.ListUsers)
 		r.Get("/{id}/managers", m.handler.ListManagers)
-		r.Post("/{id}/managers", m.handler.AddManager)
 		r.Delete("/{id}/managers/{userId}", m.handler.RemoveUser)
 
 		// Self-leave (manager or driver initiated)

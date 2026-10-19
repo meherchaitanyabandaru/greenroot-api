@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/phone"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -114,7 +115,10 @@ func (s *Service) WithSMS(sender SMSSender) *Service {
 func (s *Service) liveOTP() bool { return s.sms != nil && s.sms.Live() }
 
 func (s *Service) SendOTP(ctx context.Context, req SendOTPRequest) (SendOTPResponse, error) {
-	mobile := otpMobile(req.Mobile)
+	mobile, ok := phone.Normalize(req.Mobile)
+	if !ok {
+		return SendOTPResponse{}, ErrInvalidMobile
+	}
 	if !s.liveOTP() {
 		if err := s.otps.Save(ctx, mobile, mockOTP); err != nil {
 			slog.Warn("redis otp set failed; falling back to dev otp verification", "error", err)
@@ -130,9 +134,6 @@ func (s *Service) SendOTP(ctx context.Context, req SendOTPRequest) (SendOTPRespo
 	if !s.otps.Enabled() {
 		slog.Error("live SMS OTP requires Redis; refusing to send")
 		return SendOTPResponse{}, ErrOTPUnavailable
-	}
-	if _, ok := sms.NormalizeMobile(mobile); !ok {
-		return SendOTPResponse{}, ErrInvalidMobile
 	}
 	// Per-number throttle protects the SMS budget; the per-IP middleware
 	// limit alone is bypassed by rotating IPs.
@@ -178,31 +179,27 @@ func (s *Service) sendOTPSMS(ctx context.Context, mobile, code string) error {
 	return err
 }
 
-// otpMobile keys OTPs by the normalized 10-digit number so "+91 98..." and
-// "98..." share one OTP; anything else is used as typed.
-func otpMobile(raw string) string {
-	if m, ok := sms.NormalizeMobile(raw); ok {
-		return m
-	}
-	return strings.TrimSpace(raw)
-}
-
 func (s *Service) VerifyOTP(ctx context.Context, req VerifyOTPRequest, client ClientContext) (AuthResponse, error) {
 	// The fixed dev OTP is accepted only in mock mode.
 	devCode := mockOTP
 	if s.liveOTP() {
 		devCode = ""
 	}
-	if !s.otps.Verify(ctx, otpMobile(req.Mobile), strings.TrimSpace(req.OTP), devCode) {
+	// One account per person: "+91 98765 43210" and "9876543210" are the same number.
+	mobile, ok := phone.Normalize(req.Mobile)
+	if !ok {
+		return AuthResponse{}, ErrInvalidMobile
+	}
+	if !s.otps.Verify(ctx, mobile, strings.TrimSpace(req.OTP), devCode) {
 		return AuthResponse{}, ErrInvalidOTP
 	}
 
 	now := time.Now()
 	isNewUser := false
-	user, err := s.repository.FindUserByMobile(ctx, req.Mobile)
+	user, err := s.repository.FindUserByMobile(ctx, mobile)
 	if errors.Is(err, ErrUserNotFound) {
 		isNewUser = true
-		user, err = s.repository.CreateUser(ctx, req.Mobile)
+		user, err = s.repository.CreateUser(ctx, mobile)
 		if err != nil {
 			return AuthResponse{}, err
 		}
@@ -215,16 +212,8 @@ func (s *Service) VerifyOTP(ctx context.Context, req VerifyOTPRequest, client Cl
 		return AuthResponse{}, err
 	}
 
-	if user.Status == "SUSPENDED" {
-		return AuthResponse{}, &SuspendedError{
-			Reason: func() string {
-				if user.SuspensionReason != nil {
-					return *user.SuspensionReason
-				}
-				return ""
-			}(),
-			SuspendedAt: user.SuspendedAt,
-		}
+	if err := s.checkCanSignIn(user); err != nil {
+		return AuthResponse{}, err
 	}
 
 	if err := s.repository.UpdateLastLogin(ctx, user.ID, now); err != nil {
@@ -332,6 +321,10 @@ func (s *Service) RefreshToken(ctx context.Context, req RefreshTokenRequest) (Au
 	if err != nil {
 		return AuthResponse{}, err
 	}
+	// Same gate as sign-in: a suspended or deleted account gets no new tokens.
+	if err := s.checkCanSignIn(user); err != nil {
+		return AuthResponse{}, err
+	}
 
 	accessToken, refreshToken, err := s.issueTokenPair(ctx, user, session.ID)
 	if err != nil {
@@ -366,6 +359,21 @@ func (s *Service) Logout(ctx context.Context, refreshToken string, accessToken s
 	}
 	if accessToken != "" {
 		s.blocklistJWT(ctx, accessToken)
+	}
+	return nil
+}
+
+// checkCanSignIn refuses suspended and deleted accounts, for sign-in and refresh.
+func (s *Service) checkCanSignIn(user *User) error {
+	switch user.Status {
+	case "SUSPENDED":
+		reason := ""
+		if user.SuspensionReason != nil {
+			reason = *user.SuspensionReason
+		}
+		return &SuspendedError{Reason: reason, SuspendedAt: user.SuspendedAt}
+	case "DELETED":
+		return ErrInvalidRefreshToken
 	}
 	return nil
 }

@@ -700,13 +700,24 @@ func TestUpdateStatus_StrangerForbidden(t *testing.T) {
 
 func TestUpdateStatus_AssignedManagerCanUpdate(t *testing.T) {
 	repo := newMock()
-	repo.seedNursery(1, 100)
+	repo.seedNursery(1, 100, 200)
 	nid := int64(1)
 	mgr := int64(200)
 	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid, AssignedManagerUserID: &mgr, DeliverySnapshot: testDeliverySnapshot()})
 	_, err := svc(repo).UpdateStatus(context.Background(), managerActor(200), 10, UpdateStatusRequest{Status: "CONFIRMED"})
 	if err != nil {
 		t.Errorf("assigned manager update: %v", err)
+	}
+}
+
+func TestUpdateStatus_FormerManagerForbidden(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, 100) // manager 200 has left but is still the assignee
+	nid := int64(1)
+	mgr := int64(200)
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid, AssignedManagerUserID: &mgr, DeliverySnapshot: testDeliverySnapshot()})
+	if _, err := svc(repo).UpdateStatus(context.Background(), managerActor(200), 10, UpdateStatusRequest{Status: "CONFIRMED"}); !errors.Is(err, ErrForbidden) {
+		t.Errorf("former manager update: want ErrForbidden, got %v", err)
 	}
 }
 
@@ -1004,7 +1015,7 @@ func TestDelete_StrangerForbidden(t *testing.T) {
 
 func TestAssignManager_OwnerCanAssign(t *testing.T) {
 	repo := newMock()
-	repo.seedNursery(1, 100)
+	repo.seedNursery(1, 100, 200)
 	nid := int64(1)
 	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	o, err := svc(repo).AssignManager(context.Background(), ownerActor(100), 10, 200)
@@ -1018,12 +1029,22 @@ func TestAssignManager_OwnerCanAssign(t *testing.T) {
 
 func TestAssignManager_AdminCanAssign(t *testing.T) {
 	repo := newMock()
-	repo.seedNursery(1, 100)
+	repo.seedNursery(1, 100, 200)
 	nid := int64(1)
 	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	_, err := svc(repo).AssignManager(context.Background(), adminActor(1), 10, 200)
 	if err != nil {
 		t.Errorf("admin assign manager: %v", err)
+	}
+}
+
+func TestAssignManager_NonMemberRefused(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, 100)
+	nid := int64(1)
+	repo.seedOrder(Order{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
+	if _, err := svc(repo).AssignManager(context.Background(), ownerActor(100), 10, 999); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("non-member assignee: want ErrInvalidInput, got %v", err)
 	}
 }
 

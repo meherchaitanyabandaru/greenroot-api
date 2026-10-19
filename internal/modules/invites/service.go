@@ -3,6 +3,7 @@ package invites
 import (
 	"context"
 	"errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/phone"
 	"log/slog"
 	"strings"
 
@@ -72,6 +73,13 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateInvi
 
 	if (req.TargetMobile == nil || *req.TargetMobile == "") && (req.TargetEmail == nil || *req.TargetEmail == "") {
 		return Invite{}, ErrInvalidInput
+	}
+	if req.TargetMobile != nil && *req.TargetMobile != "" {
+		mobile, ok := phone.Normalize(*req.TargetMobile)
+		if !ok {
+			return Invite{}, ErrInvalidInput
+		}
+		req.TargetMobile = &mobile
 	}
 	invite, err := s.repository.Create(ctx, actor.UserID, req)
 	if err != nil {

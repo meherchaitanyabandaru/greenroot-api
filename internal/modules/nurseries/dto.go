@@ -44,8 +44,6 @@ type UpdateNurseryRequest struct {
 	Email        *string `json:"email"`
 	Website      *string `json:"website"`
 	Description  *string `json:"description"`
-	Status       *string `json:"status"`
-	OwnerUserID  *int64  `json:"owner_user_id"`
 	LogoURL      *string `json:"logo_url"`
 	BrandIconKey *string `json:"brand_icon_key"`
 	BrandColor   *string `json:"brand_color"`
@@ -67,17 +65,6 @@ type AddressRequest struct {
 	LocationConfirmedBy *int64     `json:"location_confirmed_by,omitempty"`
 	LocationConfirmedAt *time.Time `json:"location_confirmed_at,omitempty"`
 	IsPrimary           bool       `json:"is_primary"`
-}
-
-type AddUserRequest struct {
-	UserID   int64  `json:"user_id"`
-	RoleID   int16  `json:"role_id"`
-	RoleCode string `json:"role_code"`
-}
-
-type AddManagerRequest struct {
-	UserID int64  `json:"user_id"`
-	Role   string `json:"role"` // MANAGER | GUMASTHA
 }
 
 type ConnectDriverRequest struct {

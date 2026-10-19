@@ -103,7 +103,6 @@ type UserLink struct {
 	FullName  string     `json:"full_name"`
 	Mobile    string     `json:"mobile"`
 	Email     *string    `json:"email,omitempty"`
-	RoleID    int16      `json:"role_id,omitempty"`
 	RoleCode  string     `json:"role_code"`
 	RoleName  string     `json:"role_name"`
 	Role      string     `json:"role"` // V1 text role: MANAGER | GUMASTHA
