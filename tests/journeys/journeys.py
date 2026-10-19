@@ -939,12 +939,46 @@ def journey_market():
     expect("a second enquiry from the same nursery is refused", "POST", f"/market/ads/{a['id']}/enquiries", rival.token, {"message": "again"}, status=400)
     eid = e.get("enquiry", e).get("id")
     expect("manager replies", "POST", f"/market/enquiries/{eid}/reply", manager.token, {"body": "Yes, Rs 120 each"}, status=(200, 201))
+    seen = expect("the rival reopens the ad", "GET", f"/market/ads/{a['id']}", rival.token)["ad"]
+    check("…and is pointed at its existing chat", seen.get("my_enquiry_id") == eid and not seen["capabilities"]["can_enquire"], seen)
+
+    # Bargaining: offer, counter, accept. Offers in a chat replace each other.
+    chat = f"/market/enquiries/{eid}"
+    offer = expect("the rival offers Rs 100 for 50", "POST", f"{chat}/offers", rival.token, {"price_per_unit": 100, "quantity": 50}, status=201)["message"]
+    check("…a pending offer", offer["type"] == "OFFER" and offer["offer_status"] == "PENDING", offer)
+    expect("an offer above the ad's quantity is refused", "POST", f"{chat}/offers", rival.token, {"price_per_unit": 100, "quantity": 201}, status=400)
+    expect("a zero offer is refused", "POST", f"{chat}/offers", rival.token, {"price_per_unit": 0}, status=400)
+    expect("the rival cannot accept its own offer", "POST", f"{chat}/offers/{offer['id']}/accept", rival.token, {}, status=409)
+    counter = expect("the manager counters at Rs 110", "POST", f"{chat}/offers", manager.token, {"price_per_unit": 110, "quantity": 50}, status=201)["message"]
+    view = expect("the rival opens the chat", "GET", chat, rival.token)["enquiry"]
+    by_id = {m["id"]: m for m in view["messages"]}
+    check("…its own offer was withdrawn by the counter", by_id[offer["id"]]["offer_status"] == "WITHDRAWN", by_id[offer["id"]])
+    check("…and it can answer the counter", by_id[counter["id"]]["can_respond"] and not by_id[counter["id"]]["is_mine"], by_id[counter["id"]])
+    expect("the withdrawn offer can no longer be accepted", "POST", f"{chat}/offers/{offer['id']}/accept", owner.token, {}, status=409)
+    deal = expect("the rival accepts the counter", "POST", f"{chat}/offers/{counter['id']}/accept", rival.token, {})["enquiry"]
+    check("…deal agreed at Rs 110 × 50", deal["status"] == "DEAL_AGREED" and float(deal["agreed_price_per_unit"]) == 110 and deal["agreed_quantity"] == 50, deal)
+    check("…with a deal note in the chat", deal["messages"][-1]["type"] == "SYSTEM" and "Deal agreed" in deal["messages"][-1]["body"], deal["messages"][-1])
+    expect("accepting twice is refused", "POST", f"{chat}/offers/{counter['id']}/accept", rival.token, {}, status=409)
+    expect("no new offers after a deal", "POST", f"{chat}/offers", rival.token, {"price_per_unit": 90}, status=409)
+    expect("the chat stays open to arrange pickup", "POST", f"{chat}/reply", rival.token, {"body": "Coming Monday"}, status=201)
+
+    # Read-only while the ad is not live.
+    expect("owner pauses the ad", "POST", f"/market/ads/{a['id']}/pause", owner.token, {})
+    expect("nobody can write in a paused ad's chat", "POST", f"{chat}/reply", rival.token, {"body": "hello?"}, status=409)
+    view = expect("the rival opens the paused chat", "GET", chat, rival.token)["enquiry"]
+    check("…read-only with a reason", not view["capabilities"]["can_reply"] and view["capabilities"].get("read_only_reason"), view["capabilities"])
+    expect("owner resumes the ad", "POST", f"/market/ads/{a['id']}/resume", owner.token, {})
+    expect("the chat is writable again", "POST", f"{chat}/reply", manager.token, {"body": "Back on"}, status=201)
     expect("a buyer cannot read the enquiry", "GET", f"/market/enquiries/{eid}", buyer.token, status=403)
     expect("a rival reports the ad", "POST", f"/market/ads/{a['id']}/report", rival.token, {"reason": "SPAM"})
     expect("reporting twice is harmless (one report per nursery user)", "POST", f"/market/ads/{a['id']}/report", rival.token, {"reason": "SPAM"})
     expect("owners cannot see the moderation queue", "GET", "/market/reports", owner.token, status=403)
     expect("admin sees the moderation queue", "GET", "/market/reports?status=PENDING", boss.token)
     expect("owner archives the ad", "POST", f"/market/ads/{a['id']}/archive", owner.token, {})
+    expect("an archived ad's chat is read-only", "POST", f"{chat}/reply", rival.token, {"body": "still there?"}, status=409)
+    expect("the buyer cannot close the chat", "POST", f"{chat}/close", rival.token, {}, status=403)
+    expect("the seller closes the chat", "POST", f"{chat}/close", owner.token, {})
+    expect("a closed chat cannot be cancelled", "POST", f"{chat}/cancel", rival.token, {}, status=409)
 
 
 def journey_admin():

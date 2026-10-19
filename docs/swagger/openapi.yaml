@@ -3351,12 +3351,12 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
-  /api/v1/market/enquiries/{id}/link-quotation:
+  /api/v1/market/enquiries/{id}/offers:
     post:
       tags:
         - Local Market
-      summary: Link quotation
-      operationId: postMarketEnquiriesByidLinkQuotation
+      summary: Make a price offer in a chat (either side; replaces the pending one)
+      operationId: postMarketEnquiriesByidOffers
       security:
         - BearerAuth: []
       parameters:
@@ -3370,8 +3370,51 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/MarketLinkQuotationRequest'
+              $ref: '#/components/schemas/MarketMakeOfferRequest'
         required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    $ref: '#/components/schemas/MarketMessage'
+          description: Created
+        "400":
+          $ref: '#/components/responses/Error'
+        "401":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+        "404":
+          $ref: '#/components/responses/Error'
+        "409":
+          $ref: '#/components/responses/Error'
+        "500":
+          $ref: '#/components/responses/Error'
+  /api/v1/market/enquiries/{id}/offers/{messageId}/accept:
+    post:
+      tags:
+        - Local Market
+      summary: Accept the other nursery's pending offer (records the deal)
+      operationId: postMarketEnquiriesByidOffersBymessageIdAccept
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - in: path
+          name: messageId
+          required: true
+          schema:
+            type: integer
+            format: int64
       responses:
         "200":
           content:
@@ -3386,6 +3429,48 @@ paths:
         "403":
           $ref: '#/components/responses/Error'
         "404":
+          $ref: '#/components/responses/Error'
+        "409":
+          $ref: '#/components/responses/Error'
+        "500":
+          $ref: '#/components/responses/Error'
+  /api/v1/market/enquiries/{id}/offers/{messageId}/decline:
+    post:
+      tags:
+        - Local Market
+      summary: Decline the other nursery's pending offer
+      operationId: postMarketEnquiriesByidOffersBymessageIdDecline
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - in: path
+          name: messageId
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketEnquiryResponse'
+          description: OK
+        "400":
+          $ref: '#/components/responses/Error'
+        "401":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+        "404":
+          $ref: '#/components/responses/Error'
+        "409":
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
@@ -9756,6 +9841,11 @@ components:
           type: boolean
         lifecycle:
           $ref: '#/components/schemas/LifecycleMarketAdDisplays'
+        my_enquiry_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: The viewer's existing chat about this ad; open it instead of starting a new one
         nursery_id:
           type: integer
           format: int64
@@ -9977,8 +10067,32 @@ components:
           format: int64
         ad_nursery_name:
           type: string
+        ad_photo:
+          type: string
+          nullable: true
+        ad_price_per_unit:
+          type: number
+          nullable: true
+        ad_price_unit:
+          type: string
+          nullable: true
+        ad_quantity:
+          type: integer
+          nullable: true
+        ad_status:
+          type: string
         ad_title:
           type: string
+        agreed_at:
+          type: string
+          format: date-time
+          nullable: true
+        agreed_price_per_unit:
+          type: number
+          nullable: true
+        agreed_quantity:
+          type: integer
+          nullable: true
         capabilities:
           $ref: '#/components/schemas/MarketEnquiryCapabilities'
         code:
@@ -10008,10 +10122,6 @@ components:
         quantity_needed:
           type: integer
           nullable: true
-        quotation_id:
-          type: integer
-          format: int64
-          nullable: true
         replied_at:
           type: string
           format: date-time
@@ -10034,12 +10144,13 @@ components:
           type: boolean
         can_close:
           type: boolean
-        can_create_quotation:
+        can_offer:
           type: boolean
         can_reply:
           type: boolean
-        can_view_quotation:
-          type: boolean
+        read_only_reason:
+          type: string
+          description: Why nobody can write, e.g. the ad is no longer active
     MarketEnquiryResponse:
       type: object
       properties:
@@ -10054,12 +10165,16 @@ components:
           type: boolean
         is_seller:
           type: boolean
-    MarketLinkQuotationRequest:
+    MarketMakeOfferRequest:
       type: object
+      required:
+        - price_per_unit
       properties:
-        quotation_id:
+        price_per_unit:
+          type: number
+        quantity:
           type: integer
-          format: int64
+          nullable: true
     MarketMessage:
       type: object
       properties:
@@ -10074,7 +10189,23 @@ components:
         id:
           type: integer
           format: int64
+        can_respond:
+          type: boolean
+        is_mine:
+          type: boolean
         nursery_name:
+          type: string
+        offer_price_per_unit:
+          type: number
+          nullable: true
+        offer_quantity:
+          type: integer
+          nullable: true
+        offer_status:
+          type: string
+          nullable: true
+          enum: [PENDING, ACCEPTED, DECLINED, WITHDRAWN]
+        sender_name:
           type: string
         sent_by_nursery_id:
           type: integer
@@ -10082,6 +10213,9 @@ components:
         sent_by_user_id:
           type: integer
           format: int64
+        type:
+          type: string
+          enum: [TEXT, OFFER, SYSTEM]
     MarketReplyEnquiryRequest:
       type: object
       properties:

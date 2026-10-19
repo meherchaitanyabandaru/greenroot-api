@@ -45,7 +45,10 @@ func (m Module) RegisterRoutes(r chi.Router) {
 		r.Post("/enquiries/{id}/reply", m.handler.ReplyToEnquiry)
 		r.Post("/enquiries/{id}/close", m.handler.CloseEnquiry)
 		r.Post("/enquiries/{id}/cancel", m.handler.CancelEnquiry)
-		r.Post("/enquiries/{id}/link-quotation", m.handler.LinkQuotation)
+		// Bargaining: either side offers a price; the other accepts or declines.
+		r.Post("/enquiries/{id}/offers", m.handler.MakeOffer)
+		r.Post("/enquiries/{id}/offers/{messageId}/accept", m.handler.AcceptOffer)
+		r.Post("/enquiries/{id}/offers/{messageId}/decline", m.handler.DeclineOffer)
 
 		// Individual ad CRUD
 		r.Post("/ads", m.handler.CreateAd)

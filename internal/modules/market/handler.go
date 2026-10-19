@@ -331,7 +331,7 @@ func (h *Handler) enquiryTransition(
 	response.OK(w, EnquiryResponse{Enquiry: e})
 }
 
-func (h *Handler) LinkQuotation(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) MakeOffer(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {
 		return
@@ -340,11 +340,44 @@ func (h *Handler) LinkQuotation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req LinkQuotationRequest
+	var req MakeOfferRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	e, err := h.svc.LinkQuotation(r.Context(), actor, id, req)
+	msg, err := h.svc.MakeOffer(r.Context(), actor, id, req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusCreated, map[string]any{"message": msg})
+}
+
+func (h *Handler) AcceptOffer(w http.ResponseWriter, r *http.Request) {
+	h.offerResponse(w, r, h.svc.AcceptOffer)
+}
+
+func (h *Handler) DeclineOffer(w http.ResponseWriter, r *http.Request) {
+	h.offerResponse(w, r, h.svc.DeclineOffer)
+}
+
+func (h *Handler) offerResponse(
+	w http.ResponseWriter,
+	r *http.Request,
+	fn func(context.Context, ActorContext, int64, int64) (Enquiry, error),
+) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	messageID, ok := pathID(w, r, "messageId")
+	if !ok {
+		return
+	}
+	e, err := fn(r.Context(), actor, id, messageID)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -418,6 +451,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusForbidden, "forbidden", err.Error())
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_input", err.Error())
+	case errors.Is(err, ErrConflict):
+		response.Error(w, http.StatusConflict, "conflict", err.Error())
 	default:
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 	}

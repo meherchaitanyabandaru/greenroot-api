@@ -47,10 +47,11 @@ type Repository interface {
 	ListEnquiries(ctx context.Context, nurseryID int64, q EnquiriesQuery) ([]Enquiry, int, error)
 	MarkEnquiryViewed(ctx context.Context, id int64) error
 	AddMessage(ctx context.Context, enquiryID, userID, nurseryID int64, body string) (Message, error)
+	AddOffer(ctx context.Context, enquiryID, userID, nurseryID int64, req MakeOfferRequest, body string) (Message, error)
+	RespondToOffer(ctx context.Context, enquiryID, messageID, userID, nurseryID int64, accept bool, dealBody func(price float64, qty *int) string) error
 	SetEnquiryStatus(ctx context.Context, id int64, status string) error
-	LinkQuotation(ctx context.Context, enquiryID, quotationID int64) error
 	GetMessages(ctx context.Context, enquiryID int64) ([]Message, error)
-	HasEnquiry(ctx context.Context, adID, nurseryID int64) (bool, error)
+	EnquiryIDFor(ctx context.Context, adID, nurseryID int64) (int64, error) // 0 when the nursery has no chat on the ad
 }
 
 type PostgresRepository struct{ db *sql.DB }
@@ -539,21 +540,7 @@ func (r *PostgresRepository) CreateEnquiry(ctx context.Context, adID, adNurseryI
 }
 
 func (r *PostgresRepository) GetEnquiry(ctx context.Context, id int64) (Enquiry, error) {
-	const q = `
-		SELECT me.enquiry_id, me.enquiry_code,
-		       me.ad_id, ma.title,
-		       me.ad_nursery_id, ln.nursery_name,
-		       me.enquiring_nursery_id, en.nursery_name,
-		       me.created_by_user_id, me.message, me.quantity_needed,
-		       me.status, me.quotation_id,
-		       me.viewed_at, me.replied_at,
-		       me.created_at, me.updated_at
-		FROM public.market_enquiries me
-		JOIN public.market_ads ma  ON ma.ad_id     = me.ad_id
-		JOIN public.nurseries ln   ON ln.nursery_id = me.ad_nursery_id
-		JOIN public.nurseries en   ON en.nursery_id = me.enquiring_nursery_id
-		WHERE me.enquiry_id = $1`
-	row := r.db.QueryRowContext(ctx, q, id)
+	row := r.db.QueryRowContext(ctx, enquirySelect+` WHERE me.enquiry_id = $1`, id)
 	return scanEnquiry(row)
 }
 
@@ -579,21 +566,9 @@ func (r *PostgresRepository) ListEnquiries(ctx context.Context, nurseryID int64,
 		return nil, 0, err
 	}
 
-	rows, err := r.db.QueryContext(ctx, fmt.Sprintf(`
-		SELECT me.enquiry_id, me.enquiry_code,
-		       me.ad_id, ma.title,
-		       me.ad_nursery_id, ln.nursery_name,
-		       me.enquiring_nursery_id, en.nursery_name,
-		       me.created_by_user_id, me.message, me.quantity_needed,
-		       me.status, me.quotation_id,
-		       me.viewed_at, me.replied_at,
-		       me.created_at, me.updated_at
-		FROM public.market_enquiries me
-		JOIN public.market_ads ma  ON ma.ad_id     = me.ad_id
-		JOIN public.nurseries ln   ON ln.nursery_id = me.ad_nursery_id
-		JOIN public.nurseries en   ON en.nursery_id = me.enquiring_nursery_id
+	rows, err := r.db.QueryContext(ctx, enquirySelect+fmt.Sprintf(`
 		WHERE %s
-		ORDER BY me.created_at DESC
+		ORDER BY me.updated_at DESC
 		LIMIT $%d OFFSET $%d`, cond, len(args)-1, len(args)),
 		args...,
 	)
@@ -626,66 +601,146 @@ func (r *PostgresRepository) MarkEnquiryViewed(ctx context.Context, id int64) er
 
 func (r *PostgresRepository) AddMessage(ctx context.Context, enquiryID, userID, nurseryID int64, body string) (Message, error) {
 	var msgID int64
-	var createdAt time.Time
 	if err := r.db.QueryRowContext(ctx,
 		`INSERT INTO public.market_enquiry_messages (enquiry_id, sent_by_user_id, sent_by_nursery_id, body)
-		 VALUES ($1,$2,$3,$4) RETURNING message_id, created_at`,
+		 VALUES ($1,$2,$3,$4) RETURNING message_id`,
 		enquiryID, userID, nurseryID, body,
-	).Scan(&msgID, &createdAt); err != nil {
+	).Scan(&msgID); err != nil {
 		return Message{}, err
 	}
-	_, _ = r.db.ExecContext(ctx,
-		`UPDATE public.market_enquiries SET replied_at = NOW(), status = 'IN_PROGRESS', updated_at = NOW()
-		 WHERE enquiry_id = $1 AND replied_at IS NULL`,
-		enquiryID,
+	if err := r.touchEnquiry(ctx, r.db, enquiryID, nurseryID); err != nil {
+		return Message{}, err
+	}
+	return r.getMessage(ctx, msgID)
+}
+
+// touchEnquiry moves a NEW chat to IN_PROGRESS once the seller first writes,
+// and bumps updated_at so the inbox sorts by latest activity.
+func (r *PostgresRepository) touchEnquiry(ctx context.Context, db execer, enquiryID, senderNurseryID int64) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE public.market_enquiries
+		 SET updated_at = NOW(),
+		     replied_at = CASE WHEN ad_nursery_id = $2 THEN COALESCE(replied_at, NOW()) ELSE replied_at END,
+		     status     = CASE WHEN ad_nursery_id = $2 AND status = 'NEW' THEN 'IN_PROGRESS' ELSE status END
+		 WHERE enquiry_id = $1`,
+		enquiryID, senderNurseryID,
 	)
-	nurseryName, _ := r.NurseryName(ctx, nurseryID)
-	return Message{
-		ID:              msgID,
-		EnquiryID:       enquiryID,
-		SentByUserID:    userID,
-		SentByNurseryID: nurseryID,
-		NurseryName:     nurseryName,
-		Body:            body,
-		CreatedAt:       createdAt,
-	}, nil
+	return err
+}
+
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// AddOffer withdraws the chat's pending offer, if any, and posts the new one.
+func (r *PostgresRepository) AddOffer(ctx context.Context, enquiryID, userID, nurseryID int64, req MakeOfferRequest, body string) (Message, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Message{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE public.market_enquiry_messages SET offer_status = 'WITHDRAWN'
+		 WHERE enquiry_id = $1 AND offer_status = 'PENDING'`, enquiryID); err != nil {
+		return Message{}, err
+	}
+	var msgID int64
+	if err := tx.QueryRowContext(ctx,
+		`INSERT INTO public.market_enquiry_messages
+		   (enquiry_id, sent_by_user_id, sent_by_nursery_id, body, message_type, offer_price_per_unit, offer_quantity, offer_status)
+		 VALUES ($1,$2,$3,$4,'OFFER',$5,$6,'PENDING') RETURNING message_id`,
+		enquiryID, userID, nurseryID, body, req.PricePerUnit, req.Quantity,
+	).Scan(&msgID); err != nil {
+		return Message{}, err
+	}
+	if err := r.touchEnquiry(ctx, tx, enquiryID, nurseryID); err != nil {
+		return Message{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Message{}, err
+	}
+	return r.getMessage(ctx, msgID)
+}
+
+// RespondToOffer accepts or declines a pending offer the other nursery made.
+// Accepting records the deal on the chat. The PENDING guard makes a double tap
+// or a race with a newer offer fail with ErrConflict instead of two deals.
+func (r *PostgresRepository) RespondToOffer(ctx context.Context, enquiryID, messageID, userID, nurseryID int64, accept bool, dealBody func(price float64, qty *int) string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	next := OfferDeclined
+	if accept {
+		next = OfferAccepted
+	}
+	var price float64
+	var qty sql.NullInt64
+	err = tx.QueryRowContext(ctx,
+		`UPDATE public.market_enquiry_messages SET offer_status = $4
+		 WHERE message_id = $1 AND enquiry_id = $2 AND offer_status = 'PENDING' AND sent_by_nursery_id <> $3
+		 RETURNING offer_price_per_unit, offer_quantity`,
+		messageID, enquiryID, nurseryID, next,
+	).Scan(&price, &qty)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: this offer is no longer open", ErrConflict)
+	}
+	if err != nil {
+		return err
+	}
+	if accept {
+		var q *int
+		if qty.Valid {
+			v := int(qty.Int64)
+			q = &v
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE public.market_enquiries
+			 SET status = 'DEAL_AGREED', agreed_price_per_unit = $2, agreed_quantity = $3, agreed_at = NOW(), updated_at = NOW()
+			 WHERE enquiry_id = $1`, enquiryID, price, q); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO public.market_enquiry_messages (enquiry_id, sent_by_user_id, sent_by_nursery_id, body, message_type)
+			 VALUES ($1,$2,$3,$4,'SYSTEM')`, enquiryID, userID, nurseryID, dealBody(price, q)); err != nil {
+			return err
+		}
+	} else if err := r.touchEnquiry(ctx, tx, enquiryID, nurseryID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *PostgresRepository) SetEnquiryStatus(ctx context.Context, id int64, status string) error {
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE public.market_enquiries SET status = $1, updated_at = NOW() WHERE enquiry_id = $2`,
+		`UPDATE public.market_enquiries
+		 SET status = $1::text, updated_at = NOW(),
+		     closed_at    = CASE WHEN $1::text = 'CLOSED'    THEN NOW() ELSE closed_at END,
+		     cancelled_at = CASE WHEN $1::text = 'CANCELLED' THEN NOW() ELSE cancelled_at END
+		 WHERE enquiry_id = $2`,
 		status, id,
 	)
-	return err
-}
-
-func (r *PostgresRepository) LinkQuotation(ctx context.Context, enquiryID, quotationID int64) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE public.market_enquiries SET quotation_id = $1, status = 'QUOTATION_CREATED', updated_at = NOW()
-		 WHERE enquiry_id = $2`,
-		quotationID, enquiryID,
-	)
+	if err != nil {
+		return err
+	}
+	// Nobody can answer an offer in a finished chat.
+	_, err = r.db.ExecContext(ctx,
+		`UPDATE public.market_enquiry_messages SET offer_status = 'WITHDRAWN'
+		 WHERE enquiry_id = $1 AND offer_status = 'PENDING'`, id)
 	return err
 }
 
 func (r *PostgresRepository) GetMessages(ctx context.Context, enquiryID int64) ([]Message, error) {
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT m.message_id, m.enquiry_id, m.sent_by_user_id, m.sent_by_nursery_id,
-		        n.nursery_name, m.body, m.created_at
-		 FROM public.market_enquiry_messages m
-		 JOIN public.nurseries n ON n.nursery_id = m.sent_by_nursery_id
-		 WHERE m.enquiry_id = $1
-		 ORDER BY m.created_at ASC`,
-		enquiryID,
-	)
+	rows, err := r.db.QueryContext(ctx, messageSelect+` WHERE m.enquiry_id = $1 ORDER BY m.created_at ASC, m.message_id ASC`, enquiryID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var msgs []Message
 	for rows.Next() {
-		var m Message
-		if err := rows.Scan(&m.ID, &m.EnquiryID, &m.SentByUserID, &m.SentByNurseryID, &m.NurseryName, &m.Body, &m.CreatedAt); err != nil {
+		m, err := scanMessage(rows)
+		if err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, m)
@@ -696,13 +751,40 @@ func (r *PostgresRepository) GetMessages(ctx context.Context, enquiryID int64) (
 	return msgs, rows.Err()
 }
 
-func (r *PostgresRepository) HasEnquiry(ctx context.Context, adID, nurseryID int64) (bool, error) {
-	var ok bool
+func (r *PostgresRepository) getMessage(ctx context.Context, id int64) (Message, error) {
+	m, err := scanMessage(r.db.QueryRowContext(ctx, messageSelect+` WHERE m.message_id = $1`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Message{}, ErrNotFound
+	}
+	return m, err
+}
+
+func (r *PostgresRepository) EnquiryIDFor(ctx context.Context, adID, nurseryID int64) (int64, error) {
+	var id int64
 	err := r.db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM public.market_enquiries WHERE ad_id = $1 AND enquiring_nursery_id = $2)`,
+		`SELECT enquiry_id FROM public.market_enquiries WHERE ad_id = $1 AND enquiring_nursery_id = $2`,
 		adID, nurseryID,
-	).Scan(&ok)
-	return ok, err
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
+}
+
+const messageSelect = `
+	SELECT m.message_id, m.enquiry_id, m.sent_by_user_id, m.sent_by_nursery_id,
+	       n.nursery_name, TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')),
+	       m.message_type, m.body, m.offer_price_per_unit, m.offer_quantity, m.offer_status, m.created_at
+	FROM public.market_enquiry_messages m
+	JOIN public.nurseries n ON n.nursery_id = m.sent_by_nursery_id
+	JOIN public.users u     ON u.user_id    = m.sent_by_user_id`
+
+func scanMessage(row rowScanner) (Message, error) {
+	var m Message
+	err := row.Scan(&m.ID, &m.EnquiryID, &m.SentByUserID, &m.SentByNurseryID,
+		&m.NurseryName, &m.SenderName, &m.Type, &m.Body,
+		&m.OfferPrice, &m.OfferQuantity, &m.OfferStatus, &m.CreatedAt)
+	return m, err
 }
 
 // ── Scan helpers ──────────────────────────────────────────────
@@ -819,19 +901,32 @@ func scanEnquiry(row rowScanner) (Enquiry, error) {
 	return scanEnquiryRow(row)
 }
 
+const enquirySelect = `
+	SELECT me.enquiry_id, me.enquiry_code,
+	       me.ad_id, ma.title, ma.status, ma.price_per_unit, ma.price_unit, ma.quantity, ma.photos->>0,
+	       me.ad_nursery_id, ln.nursery_name,
+	       me.enquiring_nursery_id, en.nursery_name,
+	       me.created_by_user_id, me.message, me.quantity_needed,
+	       me.status, me.agreed_price_per_unit, me.agreed_quantity, me.agreed_at,
+	       me.viewed_at, me.replied_at,
+	       me.created_at, me.updated_at
+	FROM public.market_enquiries me
+	JOIN public.market_ads ma  ON ma.ad_id     = me.ad_id
+	JOIN public.nurseries ln   ON ln.nursery_id = me.ad_nursery_id
+	JOIN public.nurseries en   ON en.nursery_id = me.enquiring_nursery_id`
+
 func scanEnquiryRow(row rowScanner) (Enquiry, error) {
 	var e Enquiry
 	var quantityNeeded sql.NullInt64
-	var quotationID sql.NullInt64
 	var viewedAt, repliedAt sql.NullTime
 
 	if err := row.Scan(
 		&e.ID, &e.Code,
-		&e.AdID, &e.AdTitle,
+		&e.AdID, &e.AdTitle, &e.AdStatus, &e.AdPricePerUnit, &e.AdPriceUnit, &e.AdQuantity, &e.AdPhoto,
 		&e.AdNurseryID, &e.AdNurseryName,
 		&e.EnquiringNurseryID, &e.EnquiryNurseryName,
 		&e.CreatedByUserID, &e.Message, &quantityNeeded,
-		&e.Status, &quotationID,
+		&e.Status, &e.AgreedPricePerUnit, &e.AgreedQuantity, &e.AgreedAt,
 		&viewedAt, &repliedAt,
 		&e.CreatedAt, &e.UpdatedAt,
 	); err != nil {
@@ -843,9 +938,6 @@ func scanEnquiryRow(row rowScanner) (Enquiry, error) {
 	if quantityNeeded.Valid {
 		v := int(quantityNeeded.Int64)
 		e.QuantityNeeded = &v
-	}
-	if quotationID.Valid {
-		e.QuotationID = &quotationID.Int64
 	}
 	if viewedAt.Valid {
 		e.ViewedAt = &viewedAt.Time

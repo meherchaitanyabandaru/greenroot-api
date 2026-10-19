@@ -17,6 +17,7 @@ import (
 var (
 	ErrForbidden    = apperrs.ErrForbidden
 	ErrInvalidInput = apperrs.ErrInvalidInput
+	ErrConflict     = apperrs.ErrConflict
 )
 
 type Service struct {
@@ -104,6 +105,9 @@ func (s *Service) GetAd(ctx context.Context, actor ActorContext, id int64) (Ad, 
 			})
 		}
 		ad.IsSavedByMe, _ = s.repo.IsSaved(ctx, id, nurseryID)
+		if enquiryID, err := s.repo.EnquiryIDFor(ctx, id, nurseryID); err == nil && enquiryID > 0 {
+			ad.MyEnquiryID = &enquiryID
+		}
 	}
 	s.applyAdCounterDeltas(ctx, []Ad{ad}, func(updated Ad) { ad = updated })
 	return enrichAd(ad, nurseryID), nil
@@ -495,11 +499,11 @@ func (s *Service) SendEnquiry(ctx context.Context, actor ActorContext, adID int6
 	if ad.NurseryID == nurseryID {
 		return Enquiry{}, fmt.Errorf("%w: cannot enquire about your own ad", ErrInvalidInput)
 	}
-	already, err := s.repo.HasEnquiry(ctx, adID, nurseryID)
+	existing, err := s.repo.EnquiryIDFor(ctx, adID, nurseryID)
 	if err != nil {
 		return Enquiry{}, err
 	}
-	if already {
+	if existing > 0 {
 		return Enquiry{}, fmt.Errorf("%w: you have already sent an enquiry for this ad", ErrInvalidInput)
 	}
 	enquiry, err := s.repo.CreateEnquiry(ctx, adID, ad.NurseryID, nurseryID, actor.UserID, req)
@@ -571,29 +575,123 @@ func (s *Service) ReplyToEnquiry(ctx context.Context, actor ActorContext, id int
 	if !s.canAccessEnquiry(actor, e, nurseryID) {
 		return Message{}, ErrForbidden
 	}
-	if e.Status == EnquiryClosed || e.Status == EnquiryCancelled {
-		return Message{}, fmt.Errorf("%w: enquiry is %s", ErrInvalidInput, e.Status)
+	if reason := readOnlyReason(e); reason != "" {
+		return Message{}, fmt.Errorf("%w: %s", ErrConflict, reason)
 	}
-	return s.repo.AddMessage(ctx, id, actor.UserID, nurseryID, req.Body)
+	msg, err := s.repo.AddMessage(ctx, id, actor.UserID, nurseryID, req.Body)
+	msg.IsMine = true
+	return msg, err
 }
 
+// MakeOffer posts a price (and optional quantity) for the other nursery to
+// accept or decline. Either side can offer, so the seller counters by making
+// an offer back; a new offer withdraws the chat's previous pending one.
+func (s *Service) MakeOffer(ctx context.Context, actor ActorContext, id int64, req MakeOfferRequest) (Message, error) {
+	if req.PricePerUnit <= 0 || req.PricePerUnit > 10_000_000 {
+		return Message{}, fmt.Errorf("%w: offer price must be more than zero", ErrInvalidInput)
+	}
+	if req.Quantity != nil && *req.Quantity <= 0 {
+		return Message{}, fmt.Errorf("%w: quantity must be more than zero", ErrInvalidInput)
+	}
+	e, nurseryID, err := s.writableEnquiry(ctx, actor, id)
+	if err != nil {
+		return Message{}, err
+	}
+	if e.Status == EnquiryDealAgreed {
+		return Message{}, fmt.Errorf("%w: a deal is already agreed in this chat", ErrConflict)
+	}
+	if req.Quantity != nil && e.AdQuantity != nil && *req.Quantity > *e.AdQuantity {
+		return Message{}, fmt.Errorf("%w: the ad has only %d available", ErrInvalidInput, *e.AdQuantity)
+	}
+	msg, err := s.repo.AddOffer(ctx, id, actor.UserID, nurseryID, req, "Offered "+dealText(req.PricePerUnit, req.Quantity, e.AdPriceUnit))
+	msg.IsMine = true
+	return msg, err
+}
+
+func (s *Service) AcceptOffer(ctx context.Context, actor ActorContext, id, messageID int64) (Enquiry, error) {
+	return s.respondToOffer(ctx, actor, id, messageID, true)
+}
+
+func (s *Service) DeclineOffer(ctx context.Context, actor ActorContext, id, messageID int64) (Enquiry, error) {
+	return s.respondToOffer(ctx, actor, id, messageID, false)
+}
+
+func (s *Service) respondToOffer(ctx context.Context, actor ActorContext, id, messageID int64, accept bool) (Enquiry, error) {
+	e, nurseryID, err := s.writableEnquiry(ctx, actor, id)
+	if err != nil {
+		return Enquiry{}, err
+	}
+	dealBody := func(price float64, qty *int) string {
+		return "Deal agreed: " + dealText(price, qty, e.AdPriceUnit)
+	}
+	if err := s.repo.RespondToOffer(ctx, id, messageID, actor.UserID, nurseryID, accept, dealBody); err != nil {
+		return Enquiry{}, err
+	}
+	return s.GetEnquiry(ctx, actor, id)
+}
+
+// writableEnquiry loads a chat the actor's nursery is part of and refuses it
+// when nobody can write to it any more.
+func (s *Service) writableEnquiry(ctx context.Context, actor ActorContext, id int64) (Enquiry, int64, error) {
+	if !canAccessMarket(actor) {
+		return Enquiry{}, 0, ErrForbidden
+	}
+	nurseryID, err := s.actorNurseryID(ctx, actor)
+	if err != nil {
+		return Enquiry{}, 0, ErrForbidden
+	}
+	e, err := s.repo.GetEnquiry(ctx, id)
+	if err != nil {
+		return Enquiry{}, 0, err
+	}
+	if nurseryID != e.AdNurseryID && nurseryID != e.EnquiringNurseryID {
+		return Enquiry{}, 0, ErrForbidden
+	}
+	if reason := readOnlyReason(e); reason != "" {
+		return Enquiry{}, 0, fmt.Errorf("%w: %s", ErrConflict, reason)
+	}
+	return e, nurseryID, nil
+}
+
+// readOnlyReason is empty while both nurseries can still write: the chat is
+// open and its ad is live. Pausing, expiring or archiving the ad freezes it.
+func readOnlyReason(e Enquiry) string {
+	switch e.Status {
+	case EnquiryClosed:
+		return "the seller closed this chat"
+	case EnquiryCancelled:
+		return "the buyer cancelled this enquiry"
+	}
+	if e.AdStatus != StatusPublished {
+		return "this ad is no longer active"
+	}
+	return ""
+}
+
+// dealText renders "₹120 per plant × 50"; the unit falls back to "each".
+func dealText(price float64, qty *int, unit *string) string {
+	per := "each"
+	if unit != nil && strings.TrimSpace(*unit) != "" {
+		per = strings.ToLower(strings.ReplaceAll(*unit, "_", " "))
+	}
+	text := "₹" + strconv.FormatFloat(price, 'f', -1, 64) + " " + per
+	if qty != nil {
+		text += fmt.Sprintf(" × %d", *qty)
+	}
+	return text
+}
+
+// CloseEnquiry lets the seller end a chat, e.g. after the pickup.
 func (s *Service) CloseEnquiry(ctx context.Context, actor ActorContext, id int64) (Enquiry, error) {
-	return s.updateEnquiryStatus(ctx, actor, id, EnquiryClosed)
+	return s.endEnquiry(ctx, actor, id, EnquiryClosed)
 }
 
+// CancelEnquiry lets the enquiring nursery withdraw.
 func (s *Service) CancelEnquiry(ctx context.Context, actor ActorContext, id int64) (Enquiry, error) {
-	e, err := s.repo.GetEnquiry(ctx, id)
-	if err != nil {
-		return Enquiry{}, err
-	}
-	nurseryID, _ := s.actorNurseryID(ctx, actor)
-	if nurseryID != e.EnquiringNurseryID {
-		return Enquiry{}, ErrForbidden
-	}
-	return s.updateEnquiryStatus(ctx, actor, id, EnquiryCancelled)
+	return s.endEnquiry(ctx, actor, id, EnquiryCancelled)
 }
 
-func (s *Service) LinkQuotation(ctx context.Context, actor ActorContext, id int64, req LinkQuotationRequest) (Enquiry, error) {
+func (s *Service) endEnquiry(ctx context.Context, actor ActorContext, id int64, newStatus string) (Enquiry, error) {
 	if !canAccessMarket(actor) {
 		return Enquiry{}, ErrForbidden
 	}
@@ -602,39 +700,20 @@ func (s *Service) LinkQuotation(ctx context.Context, actor ActorContext, id int6
 		return Enquiry{}, err
 	}
 	nurseryID, _ := s.actorNurseryID(ctx, actor)
-	if nurseryID != e.AdNurseryID {
+	side := e.AdNurseryID // only the seller closes
+	if newStatus == EnquiryCancelled {
+		side = e.EnquiringNurseryID // only the buyer cancels
+	}
+	if nurseryID == 0 || nurseryID != side {
 		return Enquiry{}, ErrForbidden
 	}
-	if err := s.repo.LinkQuotation(ctx, id, req.QuotationID); err != nil {
-		return Enquiry{}, err
-	}
-	updated, err := s.repo.GetEnquiry(ctx, id)
-	if err != nil {
-		return Enquiry{}, err
-	}
-	return enrichEnquiry(updated, nurseryID), nil
-}
-
-func (s *Service) updateEnquiryStatus(ctx context.Context, actor ActorContext, id int64, newStatus string) (Enquiry, error) {
-	if !canAccessMarket(actor) {
-		return Enquiry{}, ErrForbidden
-	}
-	e, err := s.repo.GetEnquiry(ctx, id)
-	if err != nil {
-		return Enquiry{}, err
-	}
-	nurseryID, _ := s.actorNurseryID(ctx, actor)
-	if !s.canAccessEnquiry(actor, e, nurseryID) {
-		return Enquiry{}, ErrForbidden
+	if e.Status == EnquiryClosed || e.Status == EnquiryCancelled {
+		return Enquiry{}, fmt.Errorf("%w: this chat has already ended", ErrConflict)
 	}
 	if err := s.repo.SetEnquiryStatus(ctx, id, newStatus); err != nil {
 		return Enquiry{}, err
 	}
-	updated, err := s.repo.GetEnquiry(ctx, id)
-	if err != nil {
-		return Enquiry{}, err
-	}
-	return enrichEnquiry(updated, nurseryID), nil
+	return s.GetEnquiry(ctx, actor, id)
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -681,7 +760,7 @@ func enrichAd(ad Ad, actorNurseryID int64) Ad {
 		CanRenew:   isOwner && status == StatusExpired,
 		CanArchive: isOwner && status != StatusArchived,
 		CanSave:    !isOwner && status == StatusPublished,
-		CanEnquire: !isOwner && status == StatusPublished,
+		CanEnquire: !isOwner && status == StatusPublished && ad.MyEnquiryID == nil,
 		CanReport:  !isOwner && status == StatusPublished,
 	}
 	return ad
@@ -692,6 +771,8 @@ func enrichEnquiry(enquiry Enquiry, actorNurseryID int64) Enquiry {
 	isBuyer := actorNurseryID > 0 && enquiry.EnquiringNurseryID == actorNurseryID
 	isSeller := actorNurseryID > 0 && enquiry.AdNurseryID == actorNurseryID
 	isOpen := status != EnquiryClosed && status != EnquiryCancelled
+	readOnly := readOnlyReason(enquiry)
+	canWrite := readOnly == "" && (isBuyer || isSeller)
 
 	enquiry.Lifecycle = marketPtr(lifecycle.MarketEnquiry(status))
 	enquiry.Summary = &EnquirySummary{
@@ -700,11 +781,17 @@ func enrichEnquiry(enquiry Enquiry, actorNurseryID int64) Enquiry {
 		IsOpen:   isOpen,
 	}
 	enquiry.Capabilities = &EnquiryCapabilities{
-		CanReply:           isOpen && (isBuyer || isSeller),
-		CanClose:           isOpen && isSeller,
-		CanCancel:          isOpen && isBuyer,
-		CanCreateQuotation: isOpen && isSeller && enquiry.QuotationID == nil,
-		CanViewQuotation:   enquiry.QuotationID != nil,
+		CanReply:       canWrite,
+		CanOffer:       canWrite && status != EnquiryDealAgreed,
+		CanClose:       isOpen && isSeller,
+		CanCancel:      isOpen && isBuyer,
+		ReadOnlyReason: readOnly,
+	}
+	for i := range enquiry.Messages {
+		m := &enquiry.Messages[i]
+		m.IsMine = actorNurseryID > 0 && m.SentByNurseryID == actorNurseryID
+		m.CanRespond = canWrite && !m.IsMine && status != EnquiryDealAgreed &&
+			m.OfferStatus != nil && *m.OfferStatus == OfferPending
 	}
 	return enquiry
 }

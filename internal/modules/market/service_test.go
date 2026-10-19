@@ -18,6 +18,7 @@ type mockRepo struct {
 	enquiries     map[int64]Enquiry
 	saves         map[string]bool // "adID:nurseryID" → saved
 	enquiryExists map[string]bool // "adID:nurseryID"
+	lastOfferBody string
 	nextAdID      int64
 	nextEnqID     int64
 }
@@ -52,7 +53,11 @@ func (m *mockRepo) seedAd(id, nurseryID int64, status string) Ad {
 	return ad
 }
 
+// seedEnquiry also seeds its ad as PUBLISHED unless the test already seeded it.
 func (m *mockRepo) seedEnquiry(id, adID, adNurseryID, enquiringNurseryID int64, status string) Enquiry {
+	if _, ok := m.ads[adID]; !ok {
+		m.seedAd(adID, adNurseryID, StatusPublished)
+	}
 	e := Enquiry{
 		ID:                 id,
 		AdID:               adID,
@@ -218,6 +223,8 @@ func (m *mockRepo) GetEnquiry(_ context.Context, id int64) (Enquiry, error) {
 	if !ok {
 		return Enquiry{}, ErrNotFound
 	}
+	ad := m.ads[e.AdID]
+	e.AdStatus, e.AdQuantity, e.AdPriceUnit = ad.Status, ad.Quantity, ad.PriceUnit
 	return e, nil
 }
 
@@ -247,20 +254,34 @@ func (m *mockRepo) SetEnquiryStatus(_ context.Context, id int64, status string) 
 	return nil
 }
 
-func (m *mockRepo) LinkQuotation(_ context.Context, enquiryID, quotationID int64) error {
-	e, ok := m.enquiries[enquiryID]
-	if !ok {
-		return ErrNotFound
+// AddOffer and RespondToOffer only record the call: the offer rules that
+// live in SQL are covered by the API journeys against a real database.
+func (m *mockRepo) AddOffer(_ context.Context, enquiryID, userID, nurseryID int64, req MakeOfferRequest, body string) (Message, error) {
+	m.lastOfferBody = body
+	return Message{ID: 2, EnquiryID: enquiryID, SentByUserID: userID, SentByNurseryID: nurseryID, Type: MessageOffer, Body: body}, nil
+}
+
+func (m *mockRepo) RespondToOffer(_ context.Context, enquiryID, _, _, _ int64, accept bool, dealBody func(float64, *int) string) error {
+	if accept {
+		e := m.enquiries[enquiryID]
+		e.Status = EnquiryDealAgreed
+		m.enquiries[enquiryID] = e
 	}
-	e.QuotationID = &quotationID
-	m.enquiries[enquiryID] = e
 	return nil
 }
 
 func (m *mockRepo) GetMessages(_ context.Context, _ int64) ([]Message, error) { return nil, nil }
 
-func (m *mockRepo) HasEnquiry(_ context.Context, adID, nurseryID int64) (bool, error) {
-	return m.enquiryExists[mk(adID, nurseryID)], nil
+func (m *mockRepo) EnquiryIDFor(_ context.Context, adID, nurseryID int64) (int64, error) {
+	for id, e := range m.enquiries {
+		if e.AdID == adID && e.EnquiringNurseryID == nurseryID {
+			return id, nil
+		}
+	}
+	if m.enquiryExists[mk(adID, nurseryID)] {
+		return 999, nil // seeded only as "exists"; the ID does not matter
+	}
+	return 0, nil
 }
 
 // ─── actors ──────────────────────────────────────────────────────────────────
@@ -681,8 +702,103 @@ func TestReplyToEnquiry_ClosedEnquiry(t *testing.T) {
 	repo.seedEnquiry(1, 1, 1, 2, EnquiryClosed)
 
 	_, err := svc(repo).ReplyToEnquiry(context.Background(), ownerActor(10), 1, ReplyEnquiryRequest{Body: "Late reply"})
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("want ErrInvalidInput for closed enquiry, got %v", err)
+	if !errors.Is(err, ErrConflict) {
+		t.Errorf("want ErrConflict for closed enquiry, got %v", err)
+	}
+}
+
+func TestChatIsReadOnlyOnceTheAdIsNotLive(t *testing.T) {
+	for _, status := range []string{StatusPaused, StatusExpired, StatusArchived} {
+		repo := newMock()
+		repo.seedNursery(1, true, 10)
+		repo.seedNursery(2, true, 20)
+		repo.seedAd(1, 1, status)
+		repo.seedEnquiry(1, 1, 1, 2, EnquiryInProgress)
+		s := svc(repo)
+
+		if _, err := s.ReplyToEnquiry(context.Background(), ownerActor(20), 1, ReplyEnquiryRequest{Body: "still there?"}); !errors.Is(err, ErrConflict) {
+			t.Errorf("%s ad: reply want ErrConflict, got %v", status, err)
+		}
+		if _, err := s.MakeOffer(context.Background(), ownerActor(20), 1, MakeOfferRequest{PricePerUnit: 50}); !errors.Is(err, ErrConflict) {
+			t.Errorf("%s ad: offer want ErrConflict, got %v", status, err)
+		}
+		e, err := s.GetEnquiry(context.Background(), ownerActor(20), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Capabilities.CanReply || e.Capabilities.CanOffer || e.Capabilities.ReadOnlyReason == "" {
+			t.Errorf("%s ad: want a read-only chat with a reason, got %+v", status, e.Capabilities)
+		}
+	}
+}
+
+func TestMakeOffer(t *testing.T) {
+	setup := func() (*mockRepo, *Service) {
+		repo := newMock()
+		repo.seedNursery(1, true, 10)
+		repo.seedNursery(2, true, 20)
+		ad := repo.seedAd(1, 1, StatusPublished)
+		qty, unit := 100, "PER_PLANT"
+		ad.Quantity, ad.PriceUnit = &qty, &unit
+		repo.ads[1] = ad
+		repo.seedEnquiry(1, 1, 1, 2, EnquiryInProgress)
+		return repo, svc(repo)
+	}
+	ctx := context.Background()
+	fifty, tooMany := 50, 101
+
+	repo, s := setup()
+	msg, err := s.MakeOffer(ctx, ownerActor(20), 1, MakeOfferRequest{PricePerUnit: 120, Quantity: &fifty})
+	if err != nil || !msg.IsMine {
+		t.Fatalf("buyer offer: %v %+v", err, msg)
+	}
+	if repo.lastOfferBody != "Offered ₹120 per plant × 50" {
+		t.Errorf("offer text = %q", repo.lastOfferBody)
+	}
+	if _, err := s.MakeOffer(ctx, ownerActor(10), 1, MakeOfferRequest{PricePerUnit: 140}); err != nil {
+		t.Errorf("the seller can counter: %v", err)
+	}
+	for name, req := range map[string]MakeOfferRequest{
+		"zero price":    {PricePerUnit: 0},
+		"negative":      {PricePerUnit: -5},
+		"over the ad's": {PricePerUnit: 10, Quantity: &tooMany},
+	} {
+		if _, err := s.MakeOffer(ctx, ownerActor(20), 1, req); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("%s: want ErrInvalidInput, got %v", name, err)
+		}
+	}
+	if _, err := s.MakeOffer(ctx, ownerActor(30), 1, MakeOfferRequest{PricePerUnit: 10}); !errors.Is(err, ErrForbidden) {
+		t.Errorf("an outsider: want ErrForbidden, got %v", err)
+	}
+
+	_, s = setup()
+	if _, err := s.AcceptOffer(ctx, ownerActor(10), 1, 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.MakeOffer(ctx, ownerActor(20), 1, MakeOfferRequest{PricePerUnit: 99}); !errors.Is(err, ErrConflict) {
+		t.Errorf("no more offers after a deal: want ErrConflict, got %v", err)
+	}
+	if _, err := s.ReplyToEnquiry(ctx, ownerActor(20), 1, ReplyEnquiryRequest{Body: "When can I pick up?"}); err != nil {
+		t.Errorf("chat stays open after a deal to arrange pickup: %v", err)
+	}
+}
+
+func TestEndEnquiryRules(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, true, 10)
+	repo.seedNursery(2, true, 20)
+	repo.seedEnquiry(1, 1, 1, 2, EnquiryInProgress)
+	s := svc(repo)
+	ctx := context.Background()
+
+	if _, err := s.CloseEnquiry(ctx, ownerActor(20), 1); !errors.Is(err, ErrForbidden) {
+		t.Errorf("the buyer cannot close: got %v", err)
+	}
+	if _, err := s.CloseEnquiry(ctx, ownerActor(10), 1); err != nil {
+		t.Fatalf("the seller closes: %v", err)
+	}
+	if _, err := s.CancelEnquiry(ctx, ownerActor(20), 1); !errors.Is(err, ErrConflict) {
+		t.Errorf("a closed chat cannot be cancelled: got %v", err)
 	}
 }
 

@@ -303,11 +303,11 @@ func marketAdActions(status string) Actions {
 func marketEnquiryActions(status string) Actions {
 	switch status {
 	case "NEW":
-		return Actions{Buyer: []string{"View Enquiry", "Cancel Enquiry"}, Seller: []string{"Reply", "Create Quotation", "Close Enquiry"}}
+		return Actions{Buyer: []string{"Reply", "Make Offer", "Cancel Enquiry"}, Seller: []string{"Reply", "Make Offer", "Close Enquiry"}}
 	case "IN_PROGRESS":
-		return Actions{Buyer: []string{"Reply", "Cancel Enquiry"}, Seller: []string{"Reply", "Create Quotation", "Close Enquiry"}}
-	case "QUOTATION_CREATED":
-		return Actions{Buyer: []string{"View Quotation"}, Seller: []string{"View Quotation", "Close Enquiry"}}
+		return Actions{Buyer: []string{"Reply", "Make Offer", "Cancel Enquiry"}, Seller: []string{"Reply", "Make Offer", "Close Enquiry"}}
+	case "DEAL_AGREED":
+		return Actions{Buyer: []string{"Reply", "Cancel Enquiry"}, Seller: []string{"Reply", "Close Enquiry"}}
 	case "CLOSED":
 		return Actions{Buyer: []string{"View Enquiry"}, Seller: []string{"View Enquiry"}}
 	case "CANCELLED":
@@ -552,8 +552,8 @@ func marketEnquiryBuyerDisplay(status string) Display {
 		return Display{"Sent", "Enquiry Sent", "Waiting for the seller to respond.", "warning"}
 	case "IN_PROGRESS":
 		return Display{"In Progress", "Seller Responded", "Continue the discussion.", "info"}
-	case "QUOTATION_CREATED":
-		return Display{"Quotation Created", "Quotation Ready", "Review the linked quotation.", "success"}
+	case "DEAL_AGREED":
+		return Display{"Deal Agreed", "Deal Agreed", "Arrange the pickup with the seller.", "success"}
 	case "CLOSED":
 		return Display{"Closed", "Enquiry Closed", "This enquiry is closed.", "neutral"}
 	case "CANCELLED":
@@ -567,11 +567,11 @@ func marketEnquiryBuyerDisplay(status string) Display {
 func marketEnquirySellerDisplay(status string) Display {
 	switch status {
 	case "NEW":
-		return Display{"New", "New Enquiry", "Reply or create a quotation.", "warning"}
+		return Display{"New", "New Enquiry", "Reply or make an offer.", "warning"}
 	case "IN_PROGRESS":
-		return Display{"In Progress", "Conversation Active", "Continue the discussion or create a quotation.", "info"}
-	case "QUOTATION_CREATED":
-		return Display{"Quotation Created", "Quotation Linked", "A quotation has been created for this enquiry.", "success"}
+		return Display{"In Progress", "Conversation Active", "Continue the discussion or make an offer.", "info"}
+	case "DEAL_AGREED":
+		return Display{"Deal Agreed", "Deal Agreed", "Arrange the pickup with the buyer.", "success"}
 	case "CLOSED":
 		return Display{"Closed", "Enquiry Closed", "This enquiry is closed.", "neutral"}
 	case "CANCELLED":

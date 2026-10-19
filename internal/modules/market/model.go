@@ -56,6 +56,7 @@ type Ad struct {
 	SaveCount            int                         `json:"save_count"`
 	EnquiryCount         int                         `json:"enquiry_count"`
 	IsSavedByMe          bool                        `json:"is_saved_by_me"`
+	MyEnquiryID          *int64                      `json:"my_enquiry_id,omitempty"` // the viewer's chat about this ad, if any
 	ExpiresAt            *time.Time                  `json:"expires_at,omitempty"`
 	PublishedAt          *time.Time                  `json:"published_at,omitempty"`
 	PausedAt             *time.Time                  `json:"paused_at,omitempty"`
@@ -76,7 +77,7 @@ type AdCapabilities struct {
 	CanRenew   bool `json:"can_renew"`
 	CanArchive bool `json:"can_archive"`
 	CanSave    bool `json:"can_save"`
-	CanEnquire bool `json:"can_enquire"`
+	CanEnquire bool `json:"can_enquire"` // false when the viewer already has a chat: open MyEnquiryID instead
 	CanReport  bool `json:"can_report"`
 }
 
@@ -91,11 +92,23 @@ type AdSummary struct {
 
 // Enquiry statuses.
 const (
-	EnquiryNew              = "NEW"
-	EnquiryInProgress       = "IN_PROGRESS"
-	EnquiryQuotationCreated = "QUOTATION_CREATED"
-	EnquiryClosed           = "CLOSED"
-	EnquiryCancelled        = "CANCELLED"
+	EnquiryNew        = "NEW"
+	EnquiryInProgress = "IN_PROGRESS"
+	EnquiryDealAgreed = "DEAL_AGREED" // an offer was accepted; the chat stays open to arrange pickup
+	EnquiryClosed     = "CLOSED"
+	EnquiryCancelled  = "CANCELLED"
+)
+
+// Chat message types and offer statuses.
+const (
+	MessageText   = "TEXT"
+	MessageOffer  = "OFFER"
+	MessageSystem = "SYSTEM"
+
+	OfferPending   = "PENDING"
+	OfferAccepted  = "ACCEPTED"
+	OfferDeclined  = "DECLINED"
+	OfferWithdrawn = "WITHDRAWN" // replaced by a newer offer in the same chat
 )
 
 type Enquiry struct {
@@ -103,6 +116,11 @@ type Enquiry struct {
 	Code               string                           `json:"code"`
 	AdID               int64                            `json:"ad_id"`
 	AdTitle            string                           `json:"ad_title"`
+	AdStatus           string                           `json:"ad_status"`
+	AdPricePerUnit     *float64                         `json:"ad_price_per_unit,omitempty"`
+	AdPriceUnit        *string                          `json:"ad_price_unit,omitempty"`
+	AdQuantity         *int                             `json:"ad_quantity,omitempty"`
+	AdPhoto            *string                          `json:"ad_photo,omitempty"`
 	AdNurseryID        int64                            `json:"ad_nursery_id"`
 	AdNurseryName      string                           `json:"ad_nursery_name"`
 	EnquiringNurseryID int64                            `json:"enquiring_nursery_id"`
@@ -111,7 +129,9 @@ type Enquiry struct {
 	Message            string                           `json:"message"`
 	QuantityNeeded     *int                             `json:"quantity_needed,omitempty"`
 	Status             string                           `json:"status"`
-	QuotationID        *int64                           `json:"quotation_id,omitempty"`
+	AgreedPricePerUnit *float64                         `json:"agreed_price_per_unit,omitempty"`
+	AgreedQuantity     *int                             `json:"agreed_quantity,omitempty"`
+	AgreedAt           *time.Time                       `json:"agreed_at,omitempty"`
 	ViewedAt           *time.Time                       `json:"viewed_at,omitempty"`
 	RepliedAt          *time.Time                       `json:"replied_at,omitempty"`
 	Messages           []Message                        `json:"messages,omitempty"`
@@ -123,11 +143,12 @@ type Enquiry struct {
 }
 
 type EnquiryCapabilities struct {
-	CanReply           bool `json:"can_reply"`
-	CanClose           bool `json:"can_close"`
-	CanCancel          bool `json:"can_cancel"`
-	CanCreateQuotation bool `json:"can_create_quotation"`
-	CanViewQuotation   bool `json:"can_view_quotation"`
+	CanReply  bool `json:"can_reply"`
+	CanOffer  bool `json:"can_offer"`
+	CanClose  bool `json:"can_close"`
+	CanCancel bool `json:"can_cancel"`
+	// ReadOnlyReason says why nobody can write, e.g. the ad is no longer live.
+	ReadOnlyReason string `json:"read_only_reason,omitempty"`
 }
 
 type EnquirySummary struct {
@@ -142,7 +163,14 @@ type Message struct {
 	SentByUserID    int64     `json:"sent_by_user_id"`
 	SentByNurseryID int64     `json:"sent_by_nursery_id"`
 	NurseryName     string    `json:"nursery_name"`
+	SenderName      string    `json:"sender_name"`
+	Type            string    `json:"type"`
 	Body            string    `json:"body"`
+	OfferPrice      *float64  `json:"offer_price_per_unit,omitempty"`
+	OfferQuantity   *int      `json:"offer_quantity,omitempty"`
+	OfferStatus     *string   `json:"offer_status,omitempty"`
+	IsMine          bool      `json:"is_mine"`
+	CanRespond      bool      `json:"can_respond"` // the viewer can accept or decline this offer
 	CreatedAt       time.Time `json:"created_at"`
 }
 
@@ -204,8 +232,9 @@ type ReportAdRequest struct {
 	Notes  *string `json:"notes"`
 }
 
-type LinkQuotationRequest struct {
-	QuotationID int64 `json:"quotation_id"`
+type MakeOfferRequest struct {
+	PricePerUnit float64 `json:"price_per_unit"`
+	Quantity     *int    `json:"quantity"`
 }
 
 // ── List queries ─────────────────────────────────────────────
