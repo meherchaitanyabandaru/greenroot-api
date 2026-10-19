@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/clientip"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/semver"
 )
 
 // Defaults that are only acceptable for local development. Validate rejects
@@ -44,6 +45,18 @@ func (c Config) Validate() error {
 		if _, err := time.LoadLocation(tz); err != nil {
 			add("DB_TIMEZONE %q is not an IANA time zone (e.g. Asia/Kolkata)", tz)
 		}
+	}
+	// A typo would silently disable forced updates. Empty means unset.
+	minV, errMin := semver.Parse(c.Client.MinVersion)
+	latestV, errLatest := semver.Parse(c.Client.LatestVersion)
+	if c.Client.MinVersion != "" && errMin != nil {
+		add("CLIENT_MIN_VERSION: %v", errMin)
+	}
+	if c.Client.LatestVersion != "" && errLatest != nil {
+		add("CLIENT_LATEST_VERSION: %v", errLatest)
+	}
+	if errMin == nil && errLatest == nil && latestV.Less(minV) {
+		add("CLIENT_LATEST_VERSION %s is older than CLIENT_MIN_VERSION %s", c.Client.LatestVersion, c.Client.MinVersion)
 	}
 	if c.IsProduction() {
 		errs = append(errs, c.productionProblems()...)

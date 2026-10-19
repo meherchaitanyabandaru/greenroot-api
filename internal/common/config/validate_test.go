@@ -123,3 +123,21 @@ func TestValidate_DBTimeZone(t *testing.T) {
 		t.Fatal("default DB_TIMEZONE must be the business zone Asia/Kolkata")
 	}
 }
+
+func TestValidate_ClientVersions(t *testing.T) {
+	c := Config{App: AppConfig{Env: "local"}}
+	c.Client = ClientAppConfig{MinVersion: "1.2.0", LatestVersion: "1.3.1"}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("valid versions rejected: %v", err)
+	}
+	for _, bad := range []ClientAppConfig{
+		{MinVersion: "1.x", LatestVersion: "1.3.1"},
+		{MinVersion: "1.2.0", LatestVersion: "latest"},
+		{MinVersion: "2.0.0", LatestVersion: "1.9.9"},
+	} {
+		c.Client = bad
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "CLIENT_") {
+			t.Errorf("%+v accepted: %v", bad, err)
+		}
+	}
+}

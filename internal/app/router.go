@@ -16,6 +16,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/attachments"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/audit"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/auth"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/clientapp"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/dispatches"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/drivers"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/email"
@@ -112,6 +113,7 @@ func NewRouter(deps Dependencies) chi.Router {
 		plants.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...).RegisterRoutes(r)
 		plantrequests.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		ratings.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
+		clientapp.NewModule(deps.DB, deps.Config.Client, deps.Redis).RegisterRoutes(r)
 		search.NewModule(deps.JWT, redisClients...).RegisterRoutes(r)
 		sourcing.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		storage.NewModule(deps.DB, deps.JWT, deps.Storage).RegisterRoutes(r)

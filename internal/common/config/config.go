@@ -18,6 +18,18 @@ type Config struct {
 	Redis    RedisConfig
 	SMS      SMSConfig
 	Email    EmailConfig
+	Client   ClientAppConfig
+}
+
+// ClientAppConfig is the mobile/web app version policy served at
+// GET /api/v1/app/version-policy. Versions are semantic (1.4.2).
+type ClientAppConfig struct {
+	// MinVersion: older apps must update before they can be used.
+	MinVersion string
+	// LatestVersion: newer releases are offered, not forced.
+	LatestVersion    string
+	UpdateURLAndroid string
+	UpdateURLIOS     string
 }
 
 type AppConfig struct {
@@ -134,6 +146,12 @@ func Load() Config {
 			MaxBodyBytes:       int64(getInt("HTTP_MAX_BODY_BYTES", 1<<20)),    // 1 MB
 			MaxUploadBytes:     int64(getInt("HTTP_MAX_UPLOAD_BYTES", 12<<20)), // 10 MB PDF + form overhead
 			TrustedProxies:     getStringSlice("TRUSTED_PROXIES", nil),
+		},
+		Client: ClientAppConfig{
+			MinVersion:       getString("CLIENT_MIN_VERSION", "1.0.0"),
+			LatestVersion:    getString("CLIENT_LATEST_VERSION", "1.0.0"),
+			UpdateURLAndroid: getString("CLIENT_UPDATE_URL_ANDROID", ""),
+			UpdateURLIOS:     getString("CLIENT_UPDATE_URL_IOS", ""),
 		},
 		Logging: LoggingConfig{
 			Dir:           getString("LOG_DIR", "logs"),

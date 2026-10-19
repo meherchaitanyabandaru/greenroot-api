@@ -7316,6 +7316,93 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+  /api/v1/app/version-policy:
+    get:
+      tags: [App]
+      summary: App version policy (forced / optional update)
+      description: >-
+        Public. Apps call this on launch. With `version`, the response says
+        whether this build must update (`update_required`, below the minimum)
+        or may update (`update_available`). Cached for 5 minutes.
+      parameters:
+        - name: platform
+          in: query
+          required: true
+          schema: { type: string, enum: [android, ios, web] }
+        - name: version
+          in: query
+          required: false
+          schema: { type: string, example: "1.4.2" }
+      responses:
+        "200":
+          description: Version policy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  policy:
+                    $ref: "#/components/schemas/VersionPolicy"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/v1/app/crash-reports:
+    post:
+      tags: [App]
+      summary: Report an app crash
+      description: >-
+        Public (a crash before sign-in is still reported); a valid bearer
+        token links the report to the user. Tokens, OTPs, passwords, mobile
+        numbers and email addresses are scrubbed and long fields truncated
+        before storage. No IP address is stored. Rate limited to 30 per IP
+        per 10 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CrashReportRequest"
+      responses:
+        "202":
+          description: Report stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer, format: int64 }
+        "400":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+  /api/v1/admin/crash-reports:
+    get:
+      tags: [App]
+      summary: List app crash reports (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - { name: app_version, in: query, schema: { type: string } }
+        - { name: platform, in: query, schema: { type: string, enum: [android, ios, web] } }
+        - { name: fatal, in: query, schema: { type: boolean } }
+        - { name: page, in: query, schema: { type: integer } }
+        - { name: per_page, in: query, schema: { type: integer, maximum: 100 } }
+      responses:
+        "200":
+          description: Newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CrashReport"
+                  total: { type: integer, format: int64 }
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
 components:
   responses:
     VersionConflict:
@@ -7463,6 +7550,43 @@ components:
       scheme: bearer
       bearerFormat: JWT
   schemas:
+    VersionPolicy:
+      type: object
+      properties:
+        platform: { type: string, enum: [android, ios, web] }
+        minimum_version: { type: string, example: "1.2.0" }
+        latest_version: { type: string, example: "1.4.0" }
+        update_url: { type: string }
+        current_version: { type: string }
+        update_required: { type: boolean }
+        update_available: { type: boolean }
+    CrashReportRequest:
+      type: object
+      required: [platform, app_version, error_type, message]
+      properties:
+        platform: { type: string, enum: [android, ios, web] }
+        app_version: { type: string, maxLength: 32 }
+        build_number: { type: string }
+        os_version: { type: string }
+        device_model: { type: string }
+        error_type: { type: string, maxLength: 200 }
+        message: { type: string, maxLength: 2000 }
+        stack_trace: { type: string, maxLength: 16000 }
+        context:
+          type: object
+          additionalProperties: { type: string }
+          description: Up to 20 keys, values up to 200 characters
+        is_fatal: { type: boolean }
+        occurred_at: { type: string, format: date-time }
+    CrashReport:
+      allOf:
+        - $ref: "#/components/schemas/CrashReportRequest"
+        - type: object
+          properties:
+            id: { type: integer, format: int64 }
+            user_id: { type: integer, format: int64 }
+            received_at: { type: string, format: date-time }
+            request_id: { type: string }
     SendOTPRequest:
       type: object
       required: [mobile]
