@@ -60,6 +60,22 @@ func validateAdType(req *CreateAdRequest) error {
 	}
 }
 
+// checkSize allows only catalog sizes (Seed, Sapling, Small, ...): a bare
+// "44" tells buyers nothing, with no unit. Empty means no size.
+func (s *Service) checkSize(ctx context.Context, size *string) error {
+	if size == nil || strings.TrimSpace(*size) == "" {
+		return nil
+	}
+	ok, err := s.repo.IsCatalogSize(ctx, strings.TrimSpace(*size))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%w: pick a size from the list (Seed, Sapling, Small, Medium, Large, Extra Large)", ErrInvalidInput)
+	}
+	return nil
+}
+
 // MaxAdPhotos keeps ads quick to load.
 const MaxAdPhotos = 3
 
@@ -143,6 +159,9 @@ func (s *Service) CreateAd(ctx context.Context, actor ActorContext, req CreateAd
 	}
 	if len(req.Photos) > MaxAdPhotos {
 		return Ad{}, fmt.Errorf("%w: at most %d photos per ad", ErrInvalidInput, MaxAdPhotos)
+	}
+	if err := s.checkSize(ctx, req.SizeDescription); err != nil {
+		return Ad{}, err
 	}
 	req = markConfirmedPickup(actor, req)
 	if err := validatePickup(req.PickupLatitude, req.PickupLongitude, req.PickupGPSAccuracyM, req.PickupLocationSource); err != nil {
@@ -359,6 +378,9 @@ func (s *Service) UpdateAd(ctx context.Context, actor ActorContext, id int64, re
 	}
 	if len(req.Photos) > MaxAdPhotos {
 		return Ad{}, fmt.Errorf("%w: at most %d photos per ad", ErrInvalidInput, MaxAdPhotos)
+	}
+	if err := s.checkSize(ctx, req.SizeDescription); err != nil {
+		return Ad{}, err
 	}
 	req = markConfirmedPickupUpdate(actor, req)
 	if err := validatePickup(req.PickupLatitude, req.PickupLongitude, req.PickupGPSAccuracyM, req.PickupLocationSource); err != nil {

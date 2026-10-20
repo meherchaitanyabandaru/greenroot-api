@@ -29,6 +29,8 @@ type Repository interface {
 	ListByNursery(ctx context.Context, nurseryID int64, q AdsQuery) ([]Ad, int, error)
 	UpdateAd(ctx context.Context, id, userID int64, req UpdateAdRequest) (Ad, error)
 	SetAdStatus(ctx context.Context, id int64, status string, ts *time.Time) error
+	// IsCatalogSize reports whether name is an active size (Seed, Sapling, ...).
+	IsCatalogSize(ctx context.Context, name string) (bool, error)
 	// SoftDeleteAd marks the ad DELETED; false when it is no longer deletable
 	// (a chat or pending report arrived since it was read).
 	SoftDeleteAd(ctx context.Context, id, userID int64) (bool, error)
@@ -438,6 +440,13 @@ func (r *PostgresRepository) SetAdStatus(ctx context.Context, id int64, status s
 	}
 	_, err := r.db.ExecContext(ctx, q, status, id)
 	return err
+}
+
+func (r *PostgresRepository) IsCatalogSize(ctx context.Context, name string) (bool, error) {
+	var ok bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM public.plant_sizes WHERE is_active AND display_name = $1::text)`, name).Scan(&ok)
+	return ok, err
 }
 
 func (r *PostgresRepository) SoftDeleteAd(ctx context.Context, id, userID int64) (bool, error) {

@@ -1063,6 +1063,9 @@ def journey_market():
     expect("…cannot chat on it", "POST", f"/market/ads/{live['id']}/enquiries", rival.token, {"message": "hi"}, status=404)
 
     # Photos (max 3) and pickup access, for plants you have only.
+    expect("a bare-number size (no unit) is refused", "POST", "/market/ads", owner.token, dict(ad, size_description="44"), status=400)
+    sized = expect("a catalog size is accepted", "POST", "/market/ads", owner.token, dict(ad, size_description="Medium"), status=201)["ad"]
+    expect("…and cannot be edited to a bare number", "PATCH", f"/market/ads/{sized['id']}", owner.token, {"size_description": "52"}, status=400)
     expect("four photos are refused", "POST", "/market/ads", owner.token, dict(ad, photos=["https://cdn.example/p.jpg"] * 4), status=400)
     expect("a truck with no road is refused", "POST", "/market/ads", owner.token, dict(ad, road_accessible=False, truck_accessible=True, pickup_landmark="Gate"), status=400)
     expect("no road and no pickup point is refused", "POST", "/market/ads", owner.token, dict(ad, road_accessible=False, truck_accessible=False), status=400)

@@ -112,6 +112,14 @@ func (m *mockRepo) GetAd(_ context.Context, id int64) (Ad, error) {
 	return ad, nil
 }
 
+func (m *mockRepo) IsCatalogSize(_ context.Context, name string) (bool, error) {
+	switch name {
+	case "Seed", "Sapling", "Small", "Medium", "Large", "Extra Large":
+		return true, nil
+	}
+	return false, nil
+}
+
 func (m *mockRepo) SoftDeleteAd(_ context.Context, id, _ int64) (bool, error) {
 	ad, ok := m.ads[id]
 	if !ok {
