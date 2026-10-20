@@ -276,7 +276,7 @@ func buildWhere(input ListPaymentsRequest) (string, []any) {
 	args := make([]any, 0)
 	if input.PaymentFor != "" {
 		args = append(args, input.PaymentFor)
-		clauses = append(clauses, fmt.Sprintf("p.payment_for = $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("p.payment_for::text = ANY(string_to_array($%d::text, ','))", len(args)))
 	}
 	if input.OrderID > 0 {
 		args = append(args, input.OrderID)
@@ -292,11 +292,11 @@ func buildWhere(input ListPaymentsRequest) (string, []any) {
 	}
 	if input.Status != "" {
 		args = append(args, input.Status)
-		clauses = append(clauses, fmt.Sprintf("p.status::text = $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("p.status::text = ANY(string_to_array($%d::text, ','))", len(args)))
 	}
 	if input.Method != "" {
 		args = append(args, input.Method)
-		clauses = append(clauses, fmt.Sprintf("p.payment_method::text = $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("p.payment_method::text = ANY(string_to_array($%d::text, ','))", len(args)))
 	}
 	if input.Search != "" {
 		args = append(args, "%"+input.Search+"%")

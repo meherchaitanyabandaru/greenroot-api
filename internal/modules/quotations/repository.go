@@ -833,7 +833,7 @@ func buildWhere(input ListQuotationsRequest) (string, []any) {
 	}
 	if input.Status != "" {
 		args = append(args, input.Status)
-		clauses = append(clauses, fmt.Sprintf("q.status = $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("q.status::text = ANY(string_to_array($%d::text, ','))", len(args)))
 	}
 	if input.Search != "" {
 		args = append(args, "%"+input.Search+"%")
@@ -875,6 +875,8 @@ func sortClause(input ListQuotationsRequest) string {
 		return "q.total_amount " + dir
 	case "status":
 		return "q.status " + dir
+	case "created_at":
+		return "q.created_at " + dir + ", q.quotation_id DESC"
 	default:
 		return "q.quotation_id DESC"
 	}

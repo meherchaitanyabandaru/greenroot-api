@@ -119,11 +119,13 @@ func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, b
 func listUsersRequest(r *http.Request) ListUsersRequest {
 	query := r.URL.Query()
 	return ListUsersRequest{
-		Page:    intQuery(query.Get("page")),
-		PerPage: intQuery(query.Get("per_page")),
-		Search:  query.Get("search"),
-		Status:  query.Get("status"),
-		Role:    query.Get("role"),
+		Page:      intQuery(query.Get("page")),
+		PerPage:   intQuery(query.Get("per_page")),
+		Search:    query.Get("search"),
+		Status:    query.Get("status"),
+		Role:      query.Get("role"),
+		SortBy:    query.Get("sort_by"),
+		SortOrder: query.Get("sort_order"),
 	}
 }
 

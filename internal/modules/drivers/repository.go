@@ -331,7 +331,7 @@ func buildWhere(input ListDriversRequest) (string, []any) {
 	args := make([]any, 0)
 	if input.Status != "" {
 		args = append(args, input.Status)
-		clauses = append(clauses, fmt.Sprintf("d.status::text = $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("d.status::text = ANY(string_to_array($%d::text, ','))", len(args)))
 	}
 	if input.Search != "" {
 		args = append(args, "%"+input.Search+"%")

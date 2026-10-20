@@ -396,7 +396,7 @@ func buildSubscriptionWhere(input ListSubscriptionsRequest) (string, []any) {
 	}
 	if input.Status != "" {
 		args = append(args, input.Status)
-		clauses = append(clauses, fmt.Sprintf("us.status::text = $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("us.status::text = ANY(string_to_array($%d::text, ','))", len(args)))
 	}
 	if input.Search != "" {
 		args = append(args, "%"+input.Search+"%")

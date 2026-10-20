@@ -101,12 +101,12 @@ func (r *PostgresRepository) ListUsers(ctx context.Context, input ListUsersReque
 		FROM public.users u
 		WHERE u.deleted_at IS NULL
 			AND ($1 = '' OR u.user_code ILIKE '%' || $1 || '%' OR u.first_name ILIKE '%' || $1 || '%' OR COALESCE(u.last_name, '') ILIKE '%' || $1 || '%' OR u.mobile ILIKE '%' || $1 || '%' OR COALESCE(u.email, '') ILIKE '%' || $1 || '%')
-			AND ($2 = '' OR UPPER(u.status) = UPPER($2))
+			AND ($2 = '' OR UPPER(u.status) = ANY(string_to_array(UPPER($2), ',')))
 			AND ($3 = '' OR EXISTS (
 				SELECT 1
 				FROM public.user_roles ur
 				JOIN public.roles r ON r.role_id = ur.role_id
-				WHERE ur.user_id = u.user_id AND UPPER(r.role_code) = UPPER($3)
+				WHERE ur.user_id = u.user_id AND UPPER(r.role_code) = ANY(string_to_array(UPPER($3), ','))
 			))
 	`
 	var total int64
@@ -135,18 +135,22 @@ func (r *PostgresRepository) ListUsers(ctx context.Context, input ListUsersReque
 		LEFT JOIN public.user_sessions us ON us.user_id = u.user_id
 		WHERE u.deleted_at IS NULL
 			AND ($1 = '' OR u.user_code ILIKE '%' || $1 || '%' OR u.first_name ILIKE '%' || $1 || '%' OR COALESCE(u.last_name, '') ILIKE '%' || $1 || '%' OR u.mobile ILIKE '%' || $1 || '%' OR COALESCE(u.email, '') ILIKE '%' || $1 || '%')
-			AND ($2 = '' OR UPPER(u.status) = UPPER($2))
+			AND ($2 = '' OR UPPER(u.status) = ANY(string_to_array(UPPER($2), ',')))
 			AND ($3 = '' OR EXISTS (
 				SELECT 1
 				FROM public.user_roles role_filter_ur
 				JOIN public.roles role_filter ON role_filter.role_id = role_filter_ur.role_id
-				WHERE role_filter_ur.user_id = u.user_id AND UPPER(role_filter.role_code) = UPPER($3)
+				WHERE role_filter_ur.user_id = u.user_id AND UPPER(role_filter.role_code) = ANY(string_to_array(UPPER($3), ','))
 			))
 		GROUP BY u.user_id, u.user_code, u.first_name, u.last_name, u.mobile, u.email, u.status, u.is_mobile_verified, u.is_email_verified, u.last_login_at, u.created_at
 		ORDER BY u.created_at DESC, u.user_id DESC
 		LIMIT $4 OFFSET $5
 	`
-	rows, err := r.db.QueryContext(ctx, listQuery, search, status, role, perPage, offset)
+	// The default order above is swapped for the chosen one; it comes from
+	// userSortClause's fixed allowlist, never user text.
+	orderedQuery := strings.Replace(listQuery, "ORDER BY u.created_at DESC, u.user_id DESC",
+		"ORDER BY "+userSortClause(input.SortBy, input.SortOrder), 1)
+	rows, err := r.db.QueryContext(ctx, orderedQuery, search, status, role, perPage, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -161,6 +165,26 @@ func (r *PostgresRepository) ListUsers(ctx context.Context, input ListUsersReque
 		users = append(users, user)
 	}
 	return users, total, rows.Err()
+}
+
+// userSortClause maps an admin sort key to SQL; unknown keys keep newest first.
+func userSortClause(by, order string) string {
+	dir := "ASC"
+	if strings.EqualFold(order, "desc") {
+		dir = "DESC"
+	}
+	col := map[string]string{
+		"name":          "LOWER(u.first_name || ' ' || COALESCE(u.last_name, ''))",
+		"mobile":        "u.mobile",
+		"status":        "u.status",
+		"user_code":     "u.user_code",
+		"last_login_at": "u.last_login_at",
+		"created_at":    "u.created_at",
+	}[strings.ToLower(strings.TrimSpace(by))]
+	if col == "" {
+		return "u.created_at DESC, u.user_id DESC"
+	}
+	return col + " " + dir + " NULLS LAST, u.user_id DESC"
 }
 
 func scanAdminUser(row interface{ Scan(dest ...any) error }) (User, error) {

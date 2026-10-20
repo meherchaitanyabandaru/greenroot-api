@@ -208,11 +208,11 @@ func buildWhere(input ListVehiclesRequest) (string, []any) {
 	args := make([]any, 0)
 	if input.Status != "" {
 		args = append(args, input.Status)
-		clauses = append(clauses, fmt.Sprintf("v.status::text = $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("v.status::text = ANY(string_to_array($%d::text, ','))", len(args)))
 	}
 	if input.Type != "" {
 		args = append(args, input.Type)
-		clauses = append(clauses, fmt.Sprintf("v.vehicle_type = $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("v.vehicle_type::text = ANY(string_to_array($%d::text, ','))", len(args)))
 	}
 	if input.Search != "" {
 		args = append(args, "%"+input.Search+"%")

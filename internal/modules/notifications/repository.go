@@ -269,7 +269,7 @@ func buildNotificationWhere(input ListNotificationsRequest) (string, []any) {
 	}
 	if input.Status != "" {
 		args = append(args, input.Status)
-		clauses = append(clauses, fmt.Sprintf("status::text=$%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("status::text = ANY(string_to_array($%d::text, ','))", len(args)))
 	}
 	if input.Channel != "" {
 		args = append(args, input.Channel)

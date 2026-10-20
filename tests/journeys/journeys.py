@@ -1279,6 +1279,21 @@ def journey_admin():
     expect("an unknown user status is refused", "PUT", f"/admin/users/{buyer.id}/status", boss.token, {"status": "GHOST"}, status=400)
     expect("no token, no admin", "GET", "/admin/dashboard", None, status=401)
 
+    # Admin tables: several values per filter (comma list) and sorting.
+    both = expect("users with either of two roles", "GET", "/admin/users?role=DRIVER,BUYER&per_page=100", boss.token)
+    roles = {r for u in both["users"] for r in u["roles"]}
+    check("…only those roles appear", roles and roles <= {"DRIVER", "BUYER", "MANAGER", "NURSERY_OWNER"} and ("DRIVER" in roles or "BUYER" in roles), roles)
+    one = expect("…one role alone still works", "GET", "/admin/users?role=DRIVER&per_page=1", boss.token)
+    two = expect("…and two give at least as many", "GET", "/admin/users?role=DRIVER,BUYER&per_page=1", boss.token)
+    check("…counts add up", two["pagination"]["total"] >= one["pagination"]["total"] > 0, (one["pagination"], two["pagination"]))
+    out = expect("users sorted by mobile", "GET", "/admin/users?sort_by=mobile&sort_order=asc&per_page=20", boss.token)
+    mobiles = [u["mobile"] for u in out["users"]]
+    check("…in order", mobiles == sorted(mobiles), mobiles)
+    out = expect("orders in two statuses", "GET", "/orders?order_status=PENDING,CANCELLED&per_page=100", boss.token)
+    check("…only those statuses", all(o["order_status"] in ("PENDING", "CANCELLED") for o in out["orders"]), {o["order_status"] for o in out["orders"]})
+    out = expect("payments by two methods", "GET", "/payments?payment_method=CASH,UPI&per_page=100", boss.token)
+    check("…only those methods", all(p["payment_method"] in ("CASH", "UPI", None) for p in out["payments"]), {p["payment_method"] for p in out["payments"]})
+
 
 def journey_redis():
     """Redis does its jobs: OTP rate limit, workspace cache invalidation, search cache generations expire, live GPS removed after delivery."""

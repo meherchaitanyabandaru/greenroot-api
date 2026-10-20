@@ -5,11 +5,13 @@ type DashboardResponse struct {
 }
 
 type ListUsersRequest struct {
-	Page    int
-	PerPage int
-	Search  string
-	Status  string
-	Role    string
+	Page      int
+	PerPage   int
+	Search    string
+	Status    string // one value or a comma list
+	Role      string // one value or a comma list
+	SortBy    string
+	SortOrder string
 }
 
 type Pagination struct {
