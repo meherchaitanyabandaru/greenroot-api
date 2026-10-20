@@ -48,6 +48,23 @@ type AdminAd struct {
 	PublishedAt        *time.Time `json:"published_at,omitempty"`
 	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
+
+	SizeDescription *string `json:"size_description,omitempty"`
+	NeededBy        *string `json:"needed_by,omitempty"`
+	// Where buyers collect. HasLocation false means nearby lists never show
+	// the ad (they filter by distance).
+	HasLocation        bool     `json:"has_location"`
+	PickupLatitude     *float64 `json:"pickup_latitude,omitempty"`
+	PickupLongitude    *float64 `json:"pickup_longitude,omitempty"`
+	PickupSource       *string  `json:"pickup_location_source,omitempty"`
+	PickupAddress      *string  `json:"pickup_address,omitempty"`
+	PickupPoint        *string  `json:"pickup_landmark,omitempty"`
+	RoadAccessible     *bool    `json:"road_accessible,omitempty"`
+	TruckAccessible    *bool    `json:"truck_accessible,omitempty"`
+	AccessInstructions *string  `json:"access_instructions,omitempty"`
+	// Owner soft delete.
+	DeletedAt     *time.Time `json:"deleted_at,omitempty"`
+	DeletedByName *string    `json:"deleted_by_name,omitempty"`
 }
 
 type ModerateAdRequest struct {
@@ -68,10 +85,15 @@ const adminAdSelect = `
 	       (SELECT count(*) FROM public.market_ads x WHERE x.nursery_id = n.nursery_id AND x.status = 'REMOVED'),
 	       CASE WHEN n.market_blocked_until > NOW() THEN n.market_blocked_until END,
 	       NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''), u.profile_image_url,
-	       a.published_at, a.expires_at, a.created_at
+	       a.published_at, a.expires_at, a.created_at,
+	       a.size_description, to_char(a.needed_by, 'YYYY-MM-DD'), a.pickup_location IS NOT NULL,
+	       a.pickup_latitude, a.pickup_longitude, a.pickup_location_source, a.pickup_address, a.pickup_landmark,
+	       a.is_road_accessible, a.is_truck_accessible, a.access_instructions,
+	       a.deleted_at, NULLIF(TRIM(CONCAT_WS(' ', du.first_name, du.last_name)), '')
 	FROM public.market_ads a
 	JOIN public.nurseries n ON n.nursery_id = a.nursery_id
-	LEFT JOIN public.users u ON u.user_id = a.created_by_user_id`
+	LEFT JOIN public.users u ON u.user_id = a.created_by_user_id
+	LEFT JOIN public.users du ON du.user_id = a.deleted_by_user_id`
 
 func scanAdminAd(row interface{ Scan(...any) error }) (AdminAd, error) {
 	var a AdminAd
@@ -79,7 +101,11 @@ func scanAdminAd(row interface{ Scan(...any) error }) (AdminAd, error) {
 	err := row.Scan(&a.ID, &a.Code, &a.AdType, &a.Title, &a.PlantName, &a.Description, &photos, &a.Status, &a.ModerationNote,
 		&a.Quantity, &a.PricePerUnit, &a.PriceUnit, &a.ViewCount, &a.EnquiryCount, &a.PendingReports,
 		&a.NurseryID, &a.NurseryName, &a.NurseryVerified, &a.NurseryStrikes, &a.NurseryBlockedTill,
-		&a.PostedByName, &a.PostedByPhoto, &a.PublishedAt, &a.ExpiresAt, &a.CreatedAt)
+		&a.PostedByName, &a.PostedByPhoto, &a.PublishedAt, &a.ExpiresAt, &a.CreatedAt,
+		&a.SizeDescription, &a.NeededBy, &a.HasLocation,
+		&a.PickupLatitude, &a.PickupLongitude, &a.PickupSource, &a.PickupAddress, &a.PickupPoint,
+		&a.RoadAccessible, &a.TruckAccessible, &a.AccessInstructions,
+		&a.DeletedAt, &a.DeletedByName)
 	a.Photos = []string{}
 	_ = json.Unmarshal(photos, &a.Photos)
 	return a, err
@@ -114,6 +140,8 @@ func (m *moderationHandler) ListAllAds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	// no_location=true: ads with no position, which nearby lists never show.
+	noLocation := r.URL.Query().Get("no_location") == "true"
 	page, perPage := intParam(r, "page", 1), intParam(r, "per_page", 20)
 	if perPage > 100 {
 		perPage = 100
@@ -121,11 +149,12 @@ func (m *moderationHandler) ListAllAds(w http.ResponseWriter, r *http.Request) {
 	const where = `
 		WHERE ($1::text = '' OR a.status = $1::text)
 		  AND ($2::text = '' OR a.title ILIKE '%' || $2::text || '%' OR a.plant_name ILIKE '%' || $2::text || '%'
-		       OR a.ad_code ILIKE '%' || $2::text || '%' OR n.nursery_name ILIKE '%' || $2::text || '%')`
+		       OR a.ad_code ILIKE '%' || $2::text || '%' OR n.nursery_name ILIKE '%' || $2::text || '%')
+		  AND (NOT $3::boolean OR a.pickup_location IS NULL)`
 	var total int64
 	if err := m.db.QueryRowContext(r.Context(),
 		`SELECT count(*) FROM public.market_ads a JOIN public.nurseries n ON n.nursery_id = a.nursery_id`+where,
-		status, search).Scan(&total); err != nil {
+		status, search, noLocation).Scan(&total); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -134,7 +163,7 @@ func (m *moderationHandler) ListAllAds(w http.ResponseWriter, r *http.Request) {
 		ORDER BY (a.status = 'SUSPENDED') DESC,
 		         EXISTS (SELECT 1 FROM public.market_ad_reports rp WHERE rp.ad_id = a.ad_id AND rp.status = 'PENDING') DESC,
 		         a.updated_at DESC
-		LIMIT $3 OFFSET $4`, status, search, perPage, (page-1)*perPage)
+		LIMIT $4 OFFSET $5`, status, search, noLocation, perPage, (page-1)*perPage)
 	if err != nil {
 		writeError(w, err)
 		return

@@ -1061,6 +1061,8 @@ def journey_market():
     expect("deleting twice is a 404", "DELETE", f"/market/ads/{d['id']}", owner.token, status=404)
     kept = expect("admin still has it on record", "GET", "/market/admin/ads?status=DELETED&per_page=50", boss.token)
     check("…as DELETED", d["id"] in [x["id"] for x in kept["ads"]], kept)
+    gone = next(x for x in kept["ads"] if x["id"] == d["id"])
+    check("…with who deleted it and when", gone.get("deleted_at") and gone.get("deleted_by_name"), gone)
     live = expect("owner posts another ad", "POST", "/market/ads", owner.token, dict(ad, title="Live, no chats"), status=201)["ad"]
     expect("…publishes it", "POST", f"/market/ads/{live['id']}/publish", owner.token, {})
     expect("…and deletes it before anyone chats", "DELETE", f"/market/ads/{live['id']}", owner.token, status=204)
@@ -1126,6 +1128,12 @@ def journey_market():
     expect("a nursery with no coordinates and no phone position gets a clear error", "GET", "/market/ads", nowhere.token, status=422)
     d = expect("…it can still save a draft", "POST", "/market/ads", nowhere.token, dict(ad, title="Nowhere"), status=201)["ad"]
     expect("…but cannot publish an ad nobody could find", "POST", f"/market/ads/{d['id']}/publish", nowhere.token, {}, status=400)
+    stuck = expect("admin lists ads with no location", "GET", "/market/admin/ads?no_location=true&per_page=100", boss.token)
+    check("…the draft that could not be published is there", d["id"] in [x["id"] for x in stuck["ads"]]
+          and all(not x["has_location"] for x in stuck["ads"]), stuck["pagination"])
+    row = expect("…admin opens the 80 km test ad", "GET", f"/market/admin/ads?search={cheap['code']}", boss.token)["ads"][0]
+    check("…with its location, size and pickup details", row["has_location"] and row.get("pickup_latitude") is not None
+          and "pickup_address" in row, row)
     d = expect("…sending the phone's position fixes it", "POST", "/market/ads", nowhere.token,
                dict(ad, title="From the phone", pickup_latitude=lat, pickup_longitude=lon, pickup_location_source="gps_confirmed"), status=201)["ad"]
     expect("…publishes", "POST", f"/market/ads/{d['id']}/publish", nowhere.token, {})
