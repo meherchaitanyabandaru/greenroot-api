@@ -29,6 +29,9 @@ type Repository interface {
 	ListByNursery(ctx context.Context, nurseryID int64, q AdsQuery) ([]Ad, int, error)
 	UpdateAd(ctx context.Context, id, userID int64, req UpdateAdRequest) (Ad, error)
 	SetAdStatus(ctx context.Context, id int64, status string, ts *time.Time) error
+	// SoftDeleteAd marks the ad DELETED; false when it is no longer deletable
+	// (a chat or pending report arrived since it was read).
+	SoftDeleteAd(ctx context.Context, id, userID int64) (bool, error)
 	SetExpiry(ctx context.Context, id int64, expiresAt time.Time) error
 	// ModerateAd moves an ad to SUSPENDED, REMOVED or back to PUBLISHED and
 	// records the note the seller sees.
@@ -188,7 +191,7 @@ func (r *PostgresRepository) GetAd(ctx context.Context, id int64) (Ad, error) {
 		FROM public.market_ads ma
 		JOIN public.nurseries n ON n.nursery_id = ma.nursery_id
 		LEFT JOIN public.users pu ON pu.user_id = ma.created_by_user_id
-		WHERE ma.ad_id = $1`
+		WHERE ma.ad_id = $1 AND ma.status <> 'DELETED'`
 	row := r.db.QueryRowContext(ctx, q, id)
 	return scanAd(row)
 }
@@ -244,7 +247,7 @@ func (r *PostgresRepository) ListByNursery(ctx context.Context, nurseryID int64,
 	// recently the draft was created; once a nursery accumulates >= one
 	// page of ever-published ads, new drafts fall off page 1 permanently
 	// (the My Ads screen has no "load more").
-	return r.listAds(ctx, "ma.nursery_id = $1", "mine", q.Page, q.PerPage, []any{nurseryID})
+	return r.listAds(ctx, "ma.nursery_id = $1 AND ma.status <> 'DELETED'", "mine", q.Page, q.PerPage, []any{nurseryID})
 }
 
 // listAds runs count + paginated SELECT. filterArgs are args for the WHERE clause only;
@@ -266,18 +269,15 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, p
 	case "mine":
 		orderBy = "ma.created_at DESC"
 	case "oldest":
-		orderBy = "ma.created_at ASC"
+		orderBy = "ma.published_at ASC NULLS LAST, ma.created_at ASC"
+	case "name":
+		orderBy = "LOWER(ma.plant_name) ASC, LOWER(ma.title) ASC, ma.created_at DESC"
 	case "price_asc":
 		orderBy = "ma.price_per_unit ASC NULLS LAST, ma.created_at DESC"
 	case "price_desc":
 		orderBy = "ma.price_per_unit DESC NULLS FIRST, ma.created_at DESC"
 	case "popular":
 		orderBy = "ma.view_count DESC, ma.created_at DESC"
-	case "nearest":
-		// Distance ordering is handled by the nearby filter appended to the filter
-		// clause; here we order by pickup_location distance when a reference point
-		// is embedded in the filter args. Fall back to newest if no location given.
-		orderBy = "ma.published_at DESC NULLS LAST, ma.created_at DESC"
 	}
 
 	offset := (page - 1) * perPage
@@ -428,6 +428,25 @@ func (r *PostgresRepository) SetAdStatus(ctx context.Context, id int64, status s
 	return err
 }
 
+func (r *PostgresRepository) SoftDeleteAd(ctx context.Context, id, userID int64) (bool, error) {
+	// The deletable check is repeated here so a chat or report that lands
+	// between the read and this write still blocks the delete.
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE public.market_ads ma
+		SET status = 'DELETED', deleted_at = NOW(), deleted_by_user_id = $2,
+		    updated_by_user_id = $2, updated_at = NOW()
+		WHERE ma.ad_id = $1
+		  AND (ma.status = 'DRAFT' OR (ma.status IN ('PUBLISHED', 'PAUSED')
+		       AND NOT EXISTS (SELECT 1 FROM public.market_enquiries e WHERE e.ad_id = ma.ad_id)
+		       AND NOT EXISTS (SELECT 1 FROM public.market_ad_reports rp WHERE rp.ad_id = ma.ad_id AND rp.status = 'PENDING')))`,
+		id, userID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 func (r *PostgresRepository) ModerateAd(ctx context.Context, id int64, status string, note *string) error {
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE public.market_ads SET status = $2, moderation_note = $3, moderated_at = NOW(), updated_at = NOW()
@@ -454,7 +473,7 @@ func (r *PostgresRepository) SellerProfile(ctx context.Context, nurseryID int64)
 		SELECT n.nursery_id, n.nursery_name, (n.status IN ('ACTIVE', 'APPROVED')), n.description, n.logo_url,
 		       (SELECT a.city FROM public.nursery_addresses a WHERE a.nursery_id = n.nursery_id ORDER BY a.is_primary DESC, a.nursery_address_id LIMIT 1),
 		       NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''), u.profile_image_url, n.created_at,
-		       (SELECT count(*) FROM public.market_ads x WHERE x.nursery_id = n.nursery_id AND x.published_at IS NOT NULL),
+		       (SELECT count(*) FROM public.market_ads x WHERE x.nursery_id = n.nursery_id AND x.published_at IS NOT NULL AND x.status <> 'DELETED'),
 		       (SELECT count(*) FROM public.market_ads x WHERE x.nursery_id = n.nursery_id AND x.status = 'PUBLISHED'),
 		       (SELECT count(*) FROM public.market_enquiries e WHERE e.ad_nursery_id = n.nursery_id AND e.agreed_at IS NOT NULL)
 		FROM public.nurseries n

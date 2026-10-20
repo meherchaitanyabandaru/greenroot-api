@@ -61,6 +61,7 @@ func (m Module) RegisterRoutes(r chi.Router) {
 		r.Post("/ads", m.handler.CreateAd)
 		r.Get("/ads/{id}", m.handler.GetAd)
 		r.Patch("/ads/{id}", m.handler.UpdateAd)
+		r.Delete("/ads/{id}", m.handler.DeleteAd)
 
 		// Status transitions
 		r.Post("/ads/{id}/publish", m.handler.PublishAd)

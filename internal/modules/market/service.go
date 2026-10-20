@@ -387,6 +387,39 @@ func (s *Service) ArchiveAd(ctx context.Context, actor ActorContext, id int64) (
 		})
 }
 
+// DeleteAd soft-deletes the owner's ad. Only drafts and live/paused ads nobody
+// has chatted on can go; anything with history is archived instead, so the
+// other side's chat and any report stay intact.
+func (s *Service) DeleteAd(ctx context.Context, actor ActorContext, id int64) error {
+	if !canAccessMarket(actor) {
+		return ErrForbidden
+	}
+	ad, err := s.repo.GetAd(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.requireOwner(ctx, actor, ad.NurseryID); err != nil {
+		return err
+	}
+	if !canDeleteAd(ad) {
+		return fmt.Errorf("%w: only drafts and ads nobody has chatted on can be deleted; archive this ad instead", ErrConflict)
+	}
+	ok, err := s.repo.SoftDeleteAd(ctx, id, actor.UserID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%w: this ad now has a chat or a report; archive it instead", ErrConflict)
+	}
+	s.bumpMarketSearchCache(ctx, actor.UserID)
+	return nil
+}
+
+func canDeleteAd(ad Ad) bool {
+	return ad.Status == StatusDraft ||
+		((ad.Status == StatusPublished || ad.Status == StatusPaused) && ad.EnquiryCount == 0)
+}
+
 func (s *Service) adTransition(ctx context.Context, actor ActorContext, id int64, target string, allowed []string, fn func(context.Context) error) (Ad, error) {
 	if !canAccessMarket(actor) {
 		return Ad{}, ErrForbidden
@@ -909,6 +942,7 @@ func enrichAd(ad Ad, actorNurseryID int64) Ad {
 		CanResume:  isOwner && status == StatusPaused,
 		CanRenew:   isOwner && status == StatusExpired,
 		CanArchive: isOwner && !contains([]string{StatusArchived, StatusSuspended, StatusRemoved}, status),
+		CanDelete:  isOwner && canDeleteAd(ad),
 		CanSave:    !isOwner && status == StatusPublished,
 		CanEnquire: !isOwner && status == StatusPublished && ad.MyEnquiryID == nil,
 		CanReport:  !isOwner && status == StatusPublished,

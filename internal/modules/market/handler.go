@@ -155,6 +155,22 @@ func (h *Handler) ArchiveAd(w http.ResponseWriter, r *http.Request) {
 	h.adTransition(w, r, h.svc.ArchiveAd)
 }
 
+func (h *Handler) DeleteAd(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteAd(r.Context(), actor, id); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) adTransition(
 	w http.ResponseWriter,
 	r *http.Request,

@@ -57,7 +57,7 @@ type ModerateAdRequest struct {
 
 var adminAdStatuses = map[string]bool{
 	StatusDraft: true, StatusPublished: true, StatusPaused: true, StatusExpired: true,
-	StatusArchived: true, StatusSuspended: true, StatusRemoved: true,
+	StatusArchived: true, StatusSuspended: true, StatusRemoved: true, StatusDeleted: true,
 }
 
 const adminAdSelect = `
@@ -253,6 +253,9 @@ func (m *moderationHandler) moderate(ctx context.Context, actor ActorContext, id
 	case "REMOVE":
 		if status == StatusRemoved {
 			return ReviewOutcome{}, fmt.Errorf("%w: this ad is already removed", ErrConflict)
+		}
+		if status == StatusDeleted {
+			return ReviewOutcome{}, fmt.Errorf("%w: the owner already deleted this ad", ErrConflict)
 		}
 		outcome, err = removeAd(ctx, tx, id, nurseryID, actor.UserID, "Removed by GreenRoot: "+req.Note)
 		if err != nil {

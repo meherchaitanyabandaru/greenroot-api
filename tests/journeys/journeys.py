@@ -978,6 +978,9 @@ def journey_market():
     expect("the posting nursery cannot enquire on its own ad", "POST", f"/market/ads/{a['id']}/enquiries", owner.token, {"message": "self"}, status=400)
     e = expect("a rival enquires", "POST", f"/market/ads/{a['id']}/enquiries", rival.token, {"message": "Need 50, can you deliver?"}, status=(200, 201))
     expect("a second enquiry from the same nursery is refused", "POST", f"/market/ads/{a['id']}/enquiries", rival.token, {"message": "again"}, status=400)
+    got = expect("…the owner's view of the ad", "GET", f"/market/ads/{a['id']}", owner.token)["ad"]
+    check("…can no longer be deleted (it has a chat)", got["capabilities"]["can_delete"] is False, got["capabilities"])
+    expect("…delete is refused: archive it instead", "DELETE", f"/market/ads/{a['id']}", owner.token, status=409)
     eid = e.get("enquiry", e).get("id")
     expect("manager replies", "POST", f"/market/enquiries/{eid}/reply", manager.token, {"body": "Yes, Rs 120 each"}, status=(200, 201))
     inbox = expect("the rival's chat list", "GET", "/market/enquiries?direction=sent", rival.token)
@@ -1038,6 +1041,34 @@ def journey_market():
     expect("the buyer cannot close the chat", "POST", f"{chat}/close", rival.token, {}, status=403)
     expect("the seller closes the chat", "POST", f"{chat}/close", owner.token, {})
     expect("a closed chat cannot be cancelled", "POST", f"{chat}/cancel", rival.token, {}, status=409)
+    expect("an archived ad cannot be deleted", "DELETE", f"/market/ads/{a['id']}", owner.token, status=409)
+
+    # Soft delete: drafts and live ads nobody has chatted on.
+    d = expect("owner saves a draft", "POST", "/market/ads", owner.token, dict(ad, title="Draft to bin"), status=201)["ad"]
+    check("…can be deleted", d["capabilities"]["can_delete"] is True, d["capabilities"])
+    expect("a rival cannot delete it", "DELETE", f"/market/ads/{d['id']}", rival.token, status=(403, 404))
+    expect("owner deletes the draft", "DELETE", f"/market/ads/{d['id']}", owner.token, status=204)
+    expect("…it is gone for the owner", "GET", f"/market/ads/{d['id']}", owner.token, status=404)
+    mine = expect("…and not in My Ads", "GET", "/market/ads/mine?per_page=50", owner.token)
+    check("…not listed", d["id"] not in [x["id"] for x in mine["ads"]], mine["total"])
+    expect("deleting twice is a 404", "DELETE", f"/market/ads/{d['id']}", owner.token, status=404)
+    kept = expect("admin still has it on record", "GET", "/market/admin/ads?status=DELETED&per_page=50", boss.token)
+    check("…as DELETED", d["id"] in [x["id"] for x in kept["ads"]], kept)
+    live = expect("owner posts another ad", "POST", "/market/ads", owner.token, dict(ad, title="Live, no chats"), status=201)["ad"]
+    expect("…publishes it", "POST", f"/market/ads/{live['id']}/publish", owner.token, {})
+    expect("…and deletes it before anyone chats", "DELETE", f"/market/ads/{live['id']}", owner.token, status=204)
+    out = expect("a rival browses again", "GET", "/market/ads?per_page=50", rival.token)
+    check("…the deleted ad is not listed", live["id"] not in [x["id"] for x in out["ads"]], out["total"])
+    expect("…cannot open it", "GET", f"/market/ads/{live['id']}", rival.token, status=404)
+    expect("…cannot chat on it", "POST", f"/market/ads/{live['id']}/enquiries", rival.token, {"message": "hi"}, status=404)
+
+    # Sort and server-side paging.
+    out = expect("browse sorted by plant name", "GET", "/market/ads?sort=name&per_page=50", rival.token)
+    names = [x["plant_name"].lower() for x in out["ads"]]
+    check("…A to Z", names == sorted(names), names)
+    p1 = expect("page 1 of 1-per-page", "GET", "/market/ads?per_page=1&page=1", rival.token)
+    p2 = expect("page 2", "GET", "/market/ads?per_page=1&page=2", rival.token)
+    check("…pages differ and share the total", p1["total"] == p2["total"] >= 2 and p1["ads"][0]["id"] != p2["ads"][0]["id"], (p1["total"], p2["total"]))
 
 
 def journey_wanted():

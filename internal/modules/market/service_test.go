@@ -106,10 +106,28 @@ func (m *mockRepo) CreateAd(_ context.Context, nurseryID, userID int64, req Crea
 
 func (m *mockRepo) GetAd(_ context.Context, id int64) (Ad, error) {
 	ad, ok := m.ads[id]
-	if !ok {
+	if !ok || ad.Status == StatusDeleted {
 		return Ad{}, ErrNotFound
 	}
 	return ad, nil
+}
+
+func (m *mockRepo) SoftDeleteAd(_ context.Context, id, _ int64) (bool, error) {
+	ad, ok := m.ads[id]
+	if !ok {
+		return false, nil
+	}
+	for _, e := range m.enquiries {
+		if e.AdID == id {
+			return false, nil
+		}
+	}
+	if ad.Status != StatusDraft && ad.Status != StatusPublished && ad.Status != StatusPaused {
+		return false, nil
+	}
+	ad.Status = StatusDeleted
+	m.ads[id] = ad
+	return true, nil
 }
 
 func (m *mockRepo) ListPublished(_ context.Context, _ AdsQuery) ([]Ad, int, error) {
@@ -545,6 +563,47 @@ func TestArchiveAd_FromPublished(t *testing.T) {
 	}
 	if repo.ads[1].Status != StatusArchived {
 		t.Errorf("want ARCHIVED, got %s", repo.ads[1].Status)
+	}
+}
+
+func TestDeleteAd(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name    string
+		status  string
+		chatted bool
+		actor   int64
+		wantErr error
+	}{
+		{"draft", StatusDraft, false, 10, nil},
+		{"live, no chats", StatusPublished, false, 10, nil},
+		{"paused, no chats", StatusPaused, false, 10, nil},
+		{"live with a chat", StatusPublished, true, 10, ErrConflict},
+		{"archived", StatusArchived, false, 10, ErrConflict},
+		{"expired", StatusExpired, false, 10, ErrConflict},
+		{"removed by admin", StatusRemoved, false, 10, ErrConflict},
+		{"another nursery's ad", StatusDraft, false, 20, ErrForbidden},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newMock()
+			repo.seedNursery(1, true, 10)
+			repo.seedNursery(2, true, 20)
+			ad := repo.seedAd(1, 1, tc.status)
+			if tc.chatted {
+				repo.seedEnquiry(5, 1, 1, 2, EnquiryNew)
+				ad.EnquiryCount = 1
+				repo.ads[1] = ad
+			}
+			err := svc(repo).DeleteAd(ctx, ownerActor(tc.actor), 1)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("want %v, got %v", tc.wantErr, err)
+			}
+			_, getErr := repo.GetAd(ctx, 1)
+			if deleted := errors.Is(getErr, ErrNotFound); deleted != (tc.wantErr == nil) {
+				t.Errorf("deleted = %v, want %v", deleted, tc.wantErr == nil)
+			}
+		})
 	}
 }
 

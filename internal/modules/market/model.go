@@ -24,6 +24,8 @@ const (
 	// report; REMOVED is final (the report was upheld).
 	StatusSuspended = "SUSPENDED"
 	StatusRemoved   = "REMOVED"
+	// DELETED is the owner's soft delete: hidden everywhere, kept in the DB.
+	StatusDeleted = "DELETED"
 )
 
 // Ad types: a nursery offers plants (SELL) or asks for them (WANT).
@@ -91,6 +93,7 @@ type AdCapabilities struct {
 	CanResume  bool `json:"can_resume"`
 	CanRenew   bool `json:"can_renew"`
 	CanArchive bool `json:"can_archive"`
+	CanDelete  bool `json:"can_delete"` // drafts, and live/paused ads nobody has chatted on
 	CanSave    bool `json:"can_save"`
 	CanEnquire bool `json:"can_enquire"` // false when the viewer already has a chat: open MyEnquiryID instead
 	CanReport  bool `json:"can_report"`
@@ -296,7 +299,7 @@ type MakeOfferRequest struct {
 type AdsQuery struct {
 	Type     string  // SELL | WANT | "" (both)
 	Search   string  // full-text across title, plant_name, nursery_name, description
-	Sort     string  // newest|oldest|price_asc|price_desc|popular|nearest
+	Sort     string  // newest|oldest|name|price_asc|price_desc|popular
 	Category string  // exact match on category_name (case-insensitive)
 	MinPrice float64 // 0 = no lower bound
 	MaxPrice float64 // 0 = no upper bound

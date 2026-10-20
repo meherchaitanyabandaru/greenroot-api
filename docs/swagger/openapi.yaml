@@ -2794,6 +2794,7 @@ paths:
           required: false
           schema:
             type: string
+            enum: [newest, oldest, name, price_asc, price_desc, popular]
         - in: query
           name: category
           required: false
@@ -2954,6 +2955,37 @@ paths:
         "403":
           $ref: '#/components/responses/Error'
         "404":
+          $ref: '#/components/responses/Error'
+        "500":
+          $ref: '#/components/responses/Error'
+    delete:
+      tags:
+        - Local Market
+      summary: Delete own ad (soft delete)
+      description: >-
+        Marks the ad DELETED (kept in the DB with deleted_at and deleted_by_user_id,
+        hidden everywhere). Allowed for drafts and for live or paused ads with no
+        chats and no pending reports; anything else returns 409 and should be archived.
+      operationId: deleteMarketAdsByid
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+        "404":
+          $ref: '#/components/responses/Error'
+        "409":
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
@@ -9806,6 +9838,8 @@ components:
       type: object
       properties:
         can_archive:
+          type: boolean
+        can_delete:
           type: boolean
         can_edit:
           type: boolean
