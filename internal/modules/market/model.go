@@ -280,6 +280,7 @@ type AdsQuery struct {
 type EnquiriesQuery struct {
 	Direction string // "received" | "sent" | "" (both)
 	Status    string
+	AdID      int64 // 0 = all ads; the seller's chats about one ad
 	Page      int
 	PerPage   int
 }

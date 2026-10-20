@@ -2,7 +2,6 @@ package market
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -19,26 +18,7 @@ var (
 	ErrForbidden    = apperrs.ErrForbidden
 	ErrInvalidInput = apperrs.ErrInvalidInput
 	ErrConflict     = apperrs.ErrConflict
-	// ErrSelfieRequired: posting an ad or starting a chat needs a profile
-	// photo taken with the camera, shown to the other nursery on the ad.
-	ErrSelfieRequired = errors.New("take a profile selfie first: nurseries see your photo on your ads and chats")
 )
-
-// requireSelfie is the trust gate for selling and contacting sellers;
-// browsing stays open. Admins act for GreenRoot and are exempt.
-func (s *Service) requireSelfie(ctx context.Context, actor ActorContext) error {
-	if isAdmin(actor) {
-		return nil
-	}
-	ok, err := s.repo.HasProfilePhoto(ctx, actor.UserID)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return ErrSelfieRequired
-	}
-	return nil
-}
 
 func (s *Service) SellerProfile(ctx context.Context, actor ActorContext, nurseryID int64) (SellerProfile, error) {
 	if !canAccessMarket(actor) {
@@ -107,9 +87,6 @@ func (s *Service) CreateAd(ctx context.Context, actor ActorContext, req CreateAd
 		return Ad{}, fmt.Errorf("%w: nursery must be ACTIVE to post ads", ErrForbidden)
 	}
 	if err := s.checkPostingAllowed(ctx, nurseryID); err != nil {
-		return Ad{}, err
-	}
-	if err := s.requireSelfie(ctx, actor); err != nil {
 		return Ad{}, err
 	}
 	ad, err := s.repo.CreateAd(ctx, nurseryID, actor.UserID, req)
@@ -354,9 +331,6 @@ func (s *Service) adTransition(ctx context.Context, actor ActorContext, id int64
 		if err := s.checkPostingAllowed(ctx, ad.NurseryID); err != nil {
 			return Ad{}, err
 		}
-		if err := s.requireSelfie(ctx, actor); err != nil {
-			return Ad{}, err
-		}
 	}
 	if err := fn(ctx); err != nil {
 		return Ad{}, err
@@ -583,9 +557,6 @@ func (s *Service) SendEnquiry(ctx context.Context, actor ActorContext, adID int6
 	}
 	if ad.NurseryID == nurseryID {
 		return Enquiry{}, fmt.Errorf("%w: cannot enquire about your own ad", ErrInvalidInput)
-	}
-	if err := s.requireSelfie(ctx, actor); err != nil {
-		return Enquiry{}, err
 	}
 	existing, err := s.repo.EnquiryIDFor(ctx, adID, nurseryID)
 	if err != nil {

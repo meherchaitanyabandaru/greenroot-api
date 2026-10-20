@@ -3240,6 +3240,13 @@ paths:
           required: false
           schema:
             type: string
+        - in: query
+          name: ad_id
+          required: false
+          description: Only chats about this ad (the seller's chats from their own ad)
+          schema:
+            type: integer
+            format: int64
       responses:
         "200":
           content:
@@ -7385,7 +7392,7 @@ paths:
       tags:
         - Users
       summary: Delete the profile photo (seller selfie) and its stored file
-      description: Without a photo the user cannot post market ads or start market chats (403 selfie_required).
+      description: The photo shown on the user's market ads and chats; nothing is blocked without one.
       operationId: deleteUsersMeAvatar
       security:
         - BearerAuth: []
@@ -9973,7 +9980,7 @@ components:
         posted_by_photo:
           type: string
           nullable: true
-          description: The poster's profile selfie. Posting, publishing and starting a chat return 403 selfie_required without one.
+          description: The poster's profile photo (taken with the camera in the app); shown, not required.
         moderation_note:
           type: string
           nullable: true

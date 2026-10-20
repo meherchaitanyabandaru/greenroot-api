@@ -34,8 +34,6 @@ type Repository interface {
 	// records the note the seller sees.
 	ModerateAd(ctx context.Context, id int64, status string, note *string) error
 	PostingBlockedUntil(ctx context.Context, nurseryID int64) (*time.Time, error)
-	// HasProfilePhoto: the camera selfie required to post ads or start chats.
-	HasProfilePhoto(ctx context.Context, userID int64) (bool, error)
 	SellerProfile(ctx context.Context, nurseryID int64) (SellerProfile, error)
 
 	// Views & saves
@@ -432,14 +430,6 @@ func (r *PostgresRepository) PostingBlockedUntil(ctx context.Context, nurseryID 
 	return &until.Time, err
 }
 
-func (r *PostgresRepository) HasProfilePhoto(ctx context.Context, userID int64) (bool, error) {
-	var ok bool
-	err := r.db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM public.users WHERE user_id = $1 AND COALESCE(profile_image_url, '') <> '')`,
-		userID).Scan(&ok)
-	return ok, err
-}
-
 // SellerProfile is the public market face of a nursery: no strikes, no
 // private contact beyond what its ads already show.
 func (r *PostgresRepository) SellerProfile(ctx context.Context, nurseryID int64) (SellerProfile, error) {
@@ -608,8 +598,8 @@ func (r *PostgresRepository) GetEnquiry(ctx context.Context, id int64) (Enquiry,
 }
 
 func (r *PostgresRepository) ListEnquiries(ctx context.Context, nurseryID int64, q EnquiriesQuery) ([]Enquiry, int, error) {
-	offset := (q.Page - 1) * q.PerPage
-	args := []any{nurseryID, q.PerPage, offset}
+	// Filter values first ($1..$n), paging last: the count query takes only the filters.
+	args := []any{nurseryID}
 	cond := "(me.ad_nursery_id = $1 OR me.enquiring_nursery_id = $1)"
 	if q.Direction == "received" {
 		cond = "me.ad_nursery_id = $1"
@@ -620,14 +610,20 @@ func (r *PostgresRepository) ListEnquiries(ctx context.Context, nurseryID int64,
 		args = append(args, q.Status)
 		cond += fmt.Sprintf(" AND me.status = $%d", len(args))
 	}
+	if q.AdID > 0 {
+		args = append(args, q.AdID)
+		cond += fmt.Sprintf(" AND me.ad_id = $%d", len(args))
+	}
 
 	var total int
 	if err := r.db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT COUNT(*) FROM public.market_enquiries me WHERE %s`, cond),
-		args[:len(args)-2]...,
+		args...,
 	).Scan(&total); err != nil {
 		return nil, 0, err
 	}
+
+	args = append(args, q.PerPage, (q.Page-1)*q.PerPage)
 
 	rows, err := r.db.QueryContext(ctx, enquirySelect+fmt.Sprintf(`
 		WHERE %s

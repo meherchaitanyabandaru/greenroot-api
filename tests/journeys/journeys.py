@@ -946,11 +946,9 @@ def journey_market():
     owner, manager, buyer, driver, _ = team(boss)
     rival = approved_owner(boss, "Rival")
 
-    # Selling and contacting sellers need a camera selfie; browsing does not.
+    # The profile photo is shown on ads, not required: posting works without one.
     shy = approved_owner(boss, "No Selfie", selfie=False)
-    expect("browsing works without a selfie", "GET", "/market/ads", shy.token)
-    code, out = call("POST", "/market/ads", shy.token, {"plant_name": "Rose", "title": "No face"})
-    check("posting without a selfie is refused (403 selfie_required)", code == 403 and err_code(out) == "selfie_required", out)
+    expect("posting without a profile photo works", "POST", "/market/ads", shy.token, {"plant_name": "Rose", "title": "No face"}, status=201)
     photo = upload_selfie("the owner takes a selfie", shy)
     expect("a profile save keeps the selfie", "PUT", "/users/me", shy.token, {"first_name": "Shy", "last_name": "Owner"})
     me = expect("…check", "GET", "/users/me", shy.token)
@@ -958,9 +956,8 @@ def journey_market():
     expect("a profile save cannot point the photo elsewhere", "PUT", "/users/me", shy.token, {"first_name": "Shy", "profile_image_url": "https://evil.example/x.jpg"})
     me = expect("…check", "GET", "/users/me", shy.token)
     check("…photo unchanged", me.get("user", me).get("profile_image_url") == photo, me)
-    expect("the owner deletes the selfie", "DELETE", "/users/me/avatar", shy.token)
-    code, out = call("POST", "/market/ads", shy.token, {"plant_name": "Rose", "title": "No face"})
-    check("…and cannot post again until a new one", code == 403 and err_code(out) == "selfie_required", out)
+    me = expect("the owner deletes the selfie", "DELETE", "/users/me/avatar", shy.token)
+    check("…photo gone", not me.get("user", me).get("profile_image_url"), me)
 
     tamarind = expect("look up a catalog plant", "GET", "/plants/lookup?q=Tamarindus", owner.token)["results"][0]["plant"]
     ad = {"plant_id": tamarind["id"], "plant_name": "Imli", "title": "Sweet grafts", "description": "2 ft grafts", "quantity": 200, "price_per_unit": 120, "price_unit": "PER_PLANT", "photos": []}
@@ -986,6 +983,12 @@ def journey_market():
     check("…name, owner selfie, activity and the live ad", seller["nursery_name"] and seller["owner_photo"] and seller["live_ads"] >= 1
           and a["id"] in [x["id"] for x in seller["ads"]], seller)
     expect("a buyer cannot open seller profiles", "GET", f"/market/nurseries/{owner.nursery_id}", buyer.token, status=403)
+    out = expect("the seller lists this ad's chats", "GET", f"/market/enquiries?direction=received&ad_id={a['id']}", owner.token)
+    check("…exactly the rival's chat", [x["id"] for x in out["enquiries"]] == [eid] and out["total"] == 1, out)
+    out = expect("…filtered by status too", "GET", f"/market/enquiries?direction=received&ad_id={a['id']}&status=IN_PROGRESS&per_page=5", owner.token)
+    check("…count and page agree", out["total"] == len(out["enquiries"]) == 1, out)
+    out = expect("…another ad has none", "GET", f"/market/enquiries?direction=received&ad_id={a['id'] + 999999}", owner.token)
+    check("…empty", out["total"] == 0 and out["enquiries"] == [], out)
     seen = expect("the rival reopens the ad", "GET", f"/market/ads/{a['id']}", rival.token)["ad"]
     check("…and is pointed at its existing chat", seen.get("my_enquiry_id") == eid and not seen["capabilities"]["can_enquire"], seen)
 

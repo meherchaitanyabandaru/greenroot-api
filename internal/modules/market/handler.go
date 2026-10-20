@@ -253,6 +253,7 @@ func (h *Handler) ListEnquiries(w http.ResponseWriter, r *http.Request) {
 	q := EnquiriesQuery{
 		Direction: r.URL.Query().Get("direction"),
 		Status:    r.URL.Query().Get("status"),
+		AdID:      int64(intParam(r, "ad_id", 0)),
 		Page:      intParam(r, "page", 1),
 		PerPage:   intParam(r, "per_page", 20),
 	}
@@ -470,8 +471,6 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusForbidden, "forbidden", err.Error())
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_input", err.Error())
-	case errors.Is(err, ErrSelfieRequired):
-		response.Error(w, http.StatusForbidden, "selfie_required", err.Error())
 	case errors.Is(err, ErrConflict):
 		response.Error(w, http.StatusConflict, "conflict", err.Error())
 	default:
