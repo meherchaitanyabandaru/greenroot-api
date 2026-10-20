@@ -270,7 +270,10 @@ func (h *Handler) ListEnquiries(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	response.OK(w, EnquiriesResponse{Enquiries: enquiries, Total: total, Page: q.Page, PerPage: q.PerPage})
+	response.OK(w, EnquiriesResponse{
+		Enquiries: enquiries, Total: total, Page: q.Page, PerPage: q.PerPage,
+		UnreadTotal: h.svc.UnreadChats(r.Context(), actor),
+	})
 }
 
 func (h *Handler) GetEnquiry(w http.ResponseWriter, r *http.Request) {

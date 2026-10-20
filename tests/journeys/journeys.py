@@ -967,6 +967,7 @@ def journey_market():
     a = expect("manager posts an ad", "POST", "/market/ads", manager.token, ad, status=201)["ad"]
     check("…DRAFT", a["status"] == "DRAFT", a["status"])
     check("…shows who posted it, with their selfie", a.get("posted_by_name") and a.get("posted_by_photo"), a)
+    check("…pickup defaults to the nursery's address", "Plot 1" in (a.get("pickup_address") or ""), a.get("pickup_address"))
     expect("a rival cannot publish it", "POST", f"/market/ads/{a['id']}/publish", rival.token, {}, status=(403, 404))
     expect("owner publishes", "POST", f"/market/ads/{a['id']}/publish", owner.token, {})
     out = expect("a rival browses the market", "GET", "/market/ads", rival.token)
@@ -979,6 +980,12 @@ def journey_market():
     expect("a second enquiry from the same nursery is refused", "POST", f"/market/ads/{a['id']}/enquiries", rival.token, {"message": "again"}, status=400)
     eid = e.get("enquiry", e).get("id")
     expect("manager replies", "POST", f"/market/enquiries/{eid}/reply", manager.token, {"body": "Yes, Rs 120 each"}, status=(200, 201))
+    inbox = expect("the rival's chat list", "GET", "/market/enquiries?direction=sent", rival.token)
+    row = next(x for x in inbox["enquiries"] if x["id"] == eid)
+    check("…shows the reply as unread, with a preview", row["unread_count"] == 1 and row.get("last_message") == "Yes, Rs 120 each" and inbox["unread_total"] >= 1, row)
+    expect("the rival opens the chat", "GET", f"/market/enquiries/{eid}", rival.token)
+    inbox = expect("…and the list again", "GET", "/market/enquiries?direction=sent", rival.token)
+    check("…now read", next(x for x in inbox["enquiries"] if x["id"] == eid)["unread_count"] == 0, inbox["unread_total"])
     seller = expect("the rival opens the seller's profile", "GET", f"/market/nurseries/{owner.nursery_id}", rival.token)["seller"]
     check("…name, owner selfie, activity and the live ad", seller["nursery_name"] and seller["owner_photo"] and seller["live_ads"] >= 1
           and a["id"] in [x["id"] for x in seller["ads"]], seller)

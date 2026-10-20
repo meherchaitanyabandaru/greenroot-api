@@ -57,6 +57,13 @@ type Repository interface {
 	SetEnquiryStatus(ctx context.Context, id int64, status string) error
 	GetMessages(ctx context.Context, enquiryID int64) ([]Message, error)
 	EnquiryIDFor(ctx context.Context, adID, nurseryID int64) (int64, error) // 0 when the nursery has no chat on the ad
+	// MarkChatRead records that the viewer's side opened the chat now.
+	MarkChatRead(ctx context.Context, enquiryID, viewerNurseryID int64) error
+	// ChatSummaries fills LastMessage* and UnreadCount for the viewer.
+	ChatSummaries(ctx context.Context, enquiries []Enquiry, viewerNurseryID int64) error
+	UnreadTotal(ctx context.Context, viewerNurseryID int64) (int, error)
+	// NurseryPickup is the nursery's primary address, the default pickup for its ads.
+	NurseryPickup(ctx context.Context, nurseryID int64) (address *string, lat, lon *float64, err error)
 }
 
 type PostgresRepository struct{ db *sql.DB }
@@ -847,6 +854,84 @@ func (r *PostgresRepository) getMessage(ctx context.Context, id int64) (Message,
 		return Message{}, ErrNotFound
 	}
 	return m, err
+}
+
+// unreadForViewer counts the other side's messages after the viewer's last
+// visit; $1 is the viewer's nursery, e the enquiry row.
+const unreadForViewer = `(SELECT count(*) FROM public.market_enquiry_messages m
+	 WHERE m.enquiry_id = e.enquiry_id AND m.sent_by_nursery_id <> $1
+	   AND m.created_at > COALESCE(CASE WHEN e.ad_nursery_id = $1 THEN e.ad_nursery_read_at ELSE e.enquirer_read_at END, '-infinity'))`
+
+func (r *PostgresRepository) MarkChatRead(ctx context.Context, enquiryID, viewerNurseryID int64) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE public.market_enquiries
+		SET ad_nursery_read_at = CASE WHEN ad_nursery_id = $2 THEN NOW() ELSE ad_nursery_read_at END,
+		    enquirer_read_at   = CASE WHEN enquiring_nursery_id = $2 THEN NOW() ELSE enquirer_read_at END
+		WHERE enquiry_id = $1`, enquiryID, viewerNurseryID)
+	return err
+}
+
+func (r *PostgresRepository) ChatSummaries(ctx context.Context, enquiries []Enquiry, viewerNurseryID int64) error {
+	if len(enquiries) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(enquiries))
+	index := make(map[int64]int, len(enquiries))
+	for i, e := range enquiries {
+		ids[i] = e.ID
+		index[e.ID] = i
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT e.enquiry_id, lm.body, lm.message_type, lm.created_at, `+unreadForViewer+`
+		FROM public.market_enquiries e
+		LEFT JOIN LATERAL (
+			SELECT body, message_type, created_at FROM public.market_enquiry_messages
+			WHERE enquiry_id = e.enquiry_id ORDER BY created_at DESC, message_id DESC LIMIT 1
+		) lm ON true
+		WHERE e.enquiry_id = ANY($2)`, viewerNurseryID, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var body, typ sql.NullString
+		var at sql.NullTime
+		var unread int
+		if err := rows.Scan(&id, &body, &typ, &at, &unread); err != nil {
+			return err
+		}
+		e := &enquiries[index[id]]
+		if body.Valid {
+			e.LastMessage, e.LastMessageType, e.LastMessageAt = &body.String, &typ.String, &at.Time
+		}
+		e.UnreadCount = unread
+	}
+	return rows.Err()
+}
+
+func (r *PostgresRepository) UnreadTotal(ctx context.Context, viewerNurseryID int64) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(`+unreadForViewer+`), 0)
+		FROM public.market_enquiries e
+		WHERE (e.ad_nursery_id = $1 OR e.enquiring_nursery_id = $1)
+		  AND e.status IN ('NEW', 'IN_PROGRESS', 'DEAL_AGREED')`, viewerNurseryID).Scan(&n)
+	return n, err
+}
+
+func (r *PostgresRepository) NurseryPickup(ctx context.Context, nurseryID int64) (*string, *float64, *float64, error) {
+	var addr *string
+	var lat, lon *float64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT NULLIF(CONCAT_WS(', ', NULLIF(address_line1, ''), NULLIF(address_line2, ''), NULLIF(city, '')), ''),
+		       latitude, longitude
+		FROM public.nursery_addresses WHERE nursery_id = $1
+		ORDER BY is_primary DESC, nursery_address_id LIMIT 1`, nurseryID).Scan(&addr, &lat, &lon)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, nil, nil
+	}
+	return addr, lat, lon, err
 }
 
 func (r *PostgresRepository) EnquiryIDFor(ctx context.Context, adID, nurseryID int64) (int64, error) {

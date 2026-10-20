@@ -167,6 +167,16 @@ func (m *mockRepo) SellerProfile(_ context.Context, nurseryID int64) (SellerProf
 	return SellerProfile{NurseryID: nurseryID}, nil
 }
 
+func (m *mockRepo) MarkChatRead(_ context.Context, _, _ int64) error { return nil }
+
+func (m *mockRepo) ChatSummaries(_ context.Context, _ []Enquiry, _ int64) error { return nil }
+
+func (m *mockRepo) UnreadTotal(_ context.Context, _ int64) (int, error) { return 0, nil }
+
+func (m *mockRepo) NurseryPickup(_ context.Context, _ int64) (*string, *float64, *float64, error) {
+	return nil, nil, nil, nil
+}
+
 func (m *mockRepo) PostingBlockedUntil(_ context.Context, nurseryID int64) (*time.Time, error) {
 	return m.blockedUntil[nurseryID], nil
 }

@@ -62,7 +62,7 @@ func validateNeededBy(v string) error {
 	if err != nil {
 		return fmt.Errorf("%w: needed_by must be a date like 2026-11-30", ErrInvalidInput)
 	}
-	if d.Before(time.Now().Truncate(24 * time.Hour).AddDate(0, 0, -1)) {
+	if d.Before(time.Now().Truncate(24*time.Hour).AddDate(0, 0, -1)) {
 		return fmt.Errorf("%w: needed_by is in the past", ErrInvalidInput)
 	}
 	return nil
@@ -139,6 +139,18 @@ func (s *Service) CreateAd(ctx context.Context, actor ActorContext, req CreateAd
 	}
 	if err := s.checkPostingAllowed(ctx, nurseryID); err != nil {
 		return Ad{}, err
+	}
+	// No pickup given: use the nursery's own address, so the ad shows where
+	// to collect and (when the address has coordinates) "Near me" finds it.
+	if req.PickupAddress == nil && req.PickupLatitude == nil {
+		addr, lat, lon, err := s.repo.NurseryPickup(ctx, nurseryID)
+		if err != nil {
+			return Ad{}, err
+		}
+		if addr != nil || lat != nil {
+			src := "nursery_default"
+			req.PickupAddress, req.PickupLatitude, req.PickupLongitude, req.PickupLocationSource = addr, lat, lon, &src
+		}
 	}
 	ad, err := s.repo.CreateAd(ctx, nurseryID, actor.UserID, req)
 	if err != nil {
@@ -649,6 +661,9 @@ func (s *Service) GetEnquiry(ctx context.Context, actor ActorContext, id int64) 
 	if nurseryID == e.AdNurseryID {
 		_ = s.repo.MarkEnquiryViewed(ctx, id)
 	}
+	if nurseryID == e.AdNurseryID || nurseryID == e.EnquiringNurseryID {
+		_ = s.repo.MarkChatRead(ctx, id, nurseryID)
+	}
 	msgs, _ := s.repo.GetMessages(ctx, id)
 	e.Messages = msgs
 	return enrichEnquiry(e, nurseryID), nil
@@ -672,10 +687,24 @@ func (s *Service) ListEnquiries(ctx context.Context, actor ActorContext, q Enqui
 	if err != nil {
 		return nil, 0, err
 	}
+	if err := s.repo.ChatSummaries(ctx, enquiries, nurseryID); err != nil {
+		return nil, 0, err
+	}
 	for i := range enquiries {
 		enquiries[i] = enrichEnquiry(enquiries[i], nurseryID)
 	}
 	return enquiries, total, nil
+}
+
+// UnreadChats is the viewer's unread message count across open chats, for
+// the app's Chats badge. Admins have no nursery and get 0.
+func (s *Service) UnreadChats(ctx context.Context, actor ActorContext) int {
+	nurseryID, err := s.actorNurseryID(ctx, actor)
+	if err != nil {
+		return 0
+	}
+	n, _ := s.repo.UnreadTotal(ctx, nurseryID)
+	return n
 }
 
 func (s *Service) ReplyToEnquiry(ctx context.Context, actor ActorContext, id int64, req ReplyEnquiryRequest) (Message, error) {

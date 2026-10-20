@@ -156,35 +156,41 @@ const (
 )
 
 type Enquiry struct {
-	ID                 int64                            `json:"id"`
-	Code               string                           `json:"code"`
-	AdID               int64                            `json:"ad_id"`
-	AdTitle            string                           `json:"ad_title"`
-	AdType             string                           `json:"ad_type"`
-	AdStatus           string                           `json:"ad_status"`
-	AdPricePerUnit     *float64                         `json:"ad_price_per_unit,omitempty"`
-	AdPriceUnit        *string                          `json:"ad_price_unit,omitempty"`
-	AdQuantity         *int                             `json:"ad_quantity,omitempty"`
-	AdPhoto            *string                          `json:"ad_photo,omitempty"`
-	AdNurseryID        int64                            `json:"ad_nursery_id"`
-	AdNurseryName      string                           `json:"ad_nursery_name"`
-	EnquiringNurseryID int64                            `json:"enquiring_nursery_id"`
-	EnquiryNurseryName string                           `json:"enquiring_nursery_name"`
-	CreatedByUserID    int64                            `json:"created_by_user_id"`
-	Message            string                           `json:"message"`
-	QuantityNeeded     *int                             `json:"quantity_needed,omitempty"`
-	Status             string                           `json:"status"`
-	AgreedPricePerUnit *float64                         `json:"agreed_price_per_unit,omitempty"`
-	AgreedQuantity     *int                             `json:"agreed_quantity,omitempty"`
-	AgreedAt           *time.Time                       `json:"agreed_at,omitempty"`
-	ViewedAt           *time.Time                       `json:"viewed_at,omitempty"`
-	RepliedAt          *time.Time                       `json:"replied_at,omitempty"`
-	Messages           []Message                        `json:"messages,omitempty"`
-	CreatedAt          time.Time                        `json:"created_at"`
-	UpdatedAt          time.Time                        `json:"updated_at"`
-	Lifecycle          *lifecycle.MarketEnquiryDisplays `json:"lifecycle,omitempty"`
-	Capabilities       *EnquiryCapabilities             `json:"capabilities,omitempty"`
-	Summary            *EnquirySummary                  `json:"summary,omitempty"`
+	ID                 int64      `json:"id"`
+	Code               string     `json:"code"`
+	AdID               int64      `json:"ad_id"`
+	AdTitle            string     `json:"ad_title"`
+	AdType             string     `json:"ad_type"`
+	AdStatus           string     `json:"ad_status"`
+	AdPricePerUnit     *float64   `json:"ad_price_per_unit,omitempty"`
+	AdPriceUnit        *string    `json:"ad_price_unit,omitempty"`
+	AdQuantity         *int       `json:"ad_quantity,omitempty"`
+	AdPhoto            *string    `json:"ad_photo,omitempty"`
+	AdNurseryID        int64      `json:"ad_nursery_id"`
+	AdNurseryName      string     `json:"ad_nursery_name"`
+	EnquiringNurseryID int64      `json:"enquiring_nursery_id"`
+	EnquiryNurseryName string     `json:"enquiring_nursery_name"`
+	CreatedByUserID    int64      `json:"created_by_user_id"`
+	Message            string     `json:"message"`
+	QuantityNeeded     *int       `json:"quantity_needed,omitempty"`
+	Status             string     `json:"status"`
+	AgreedPricePerUnit *float64   `json:"agreed_price_per_unit,omitempty"`
+	AgreedQuantity     *int       `json:"agreed_quantity,omitempty"`
+	AgreedAt           *time.Time `json:"agreed_at,omitempty"`
+	ViewedAt           *time.Time `json:"viewed_at,omitempty"`
+	RepliedAt          *time.Time `json:"replied_at,omitempty"`
+	Messages           []Message  `json:"messages,omitempty"`
+	// For the viewer's chat list: the latest message and how many messages
+	// from the other nursery arrived since the viewer last opened the chat.
+	LastMessage     *string                          `json:"last_message,omitempty"`
+	LastMessageType *string                          `json:"last_message_type,omitempty"`
+	LastMessageAt   *time.Time                       `json:"last_message_at,omitempty"`
+	UnreadCount     int                              `json:"unread_count"`
+	CreatedAt       time.Time                        `json:"created_at"`
+	UpdatedAt       time.Time                        `json:"updated_at"`
+	Lifecycle       *lifecycle.MarketEnquiryDisplays `json:"lifecycle,omitempty"`
+	Capabilities    *EnquiryCapabilities             `json:"capabilities,omitempty"`
+	Summary         *EnquirySummary                  `json:"summary,omitempty"`
 }
 
 type EnquiryCapabilities struct {
@@ -330,8 +336,10 @@ type EnquiryResponse struct {
 type EnquiriesResponse struct {
 	Enquiries []Enquiry `json:"enquiries"`
 	Total     int       `json:"total"`
-	Page      int       `json:"page"`
-	PerPage   int       `json:"per_page"`
+	// UnreadTotal counts unread messages across all the viewer's chats.
+	UnreadTotal int `json:"unread_total"`
+	Page        int `json:"page"`
+	PerPage     int `json:"per_page"`
 }
 
 type SaveToggleResponse struct {

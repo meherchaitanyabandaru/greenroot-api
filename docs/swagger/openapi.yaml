@@ -9933,6 +9933,9 @@ components:
     MarketEnquiriesResponse:
       type: object
       properties:
+        unread_total:
+          type: integer
+          description: Unread messages across all the viewer's open chats (Chats badge)
         enquiries:
           type: array
           items:
@@ -9946,6 +9949,21 @@ components:
     MarketEnquiry:
       type: object
       properties:
+        last_message:
+          type: string
+          nullable: true
+          description: Newest message in the chat (chat lists)
+        last_message_type:
+          type: string
+          nullable: true
+          enum: [TEXT, OFFER, SYSTEM]
+        last_message_at:
+          type: string
+          format: date-time
+          nullable: true
+        unread_count:
+          type: integer
+          description: Messages from the other nursery since the viewer last opened the chat
         ad_id:
           type: integer
           format: int64
