@@ -29,12 +29,6 @@ type QuotationDisplays struct {
 	NextActions Actions `json:"next_actions"`
 }
 
-type PlantRequestDisplays struct {
-	Requester   Display `json:"requester"`
-	Supplier    Display `json:"supplier"`
-	NextActions Actions `json:"next_actions"`
-}
-
 type SubscriptionDisplays struct {
 	Customer    Display `json:"customer"`
 	Operator    Display `json:"operator"`
@@ -120,15 +114,6 @@ func Quotation(status string) QuotationDisplays {
 		Customer:    quotationCustomerDisplay(status),
 		Operator:    quotationOperatorDisplay(status),
 		NextActions: quotationActions(status),
-	}
-}
-
-func PlantRequest(status string) PlantRequestDisplays {
-	status = strings.ToUpper(strings.TrimSpace(status))
-	return PlantRequestDisplays{
-		Requester:   plantRequestDisplay(status, true),
-		Supplier:    plantRequestDisplay(status, false),
-		NextActions: plantRequestActions(status),
 	}
 }
 
@@ -243,25 +228,6 @@ func quotationActions(status string) Actions {
 		return Actions{Customer: []string{"View Expired Quotation"}, Operator: []string{"Create New Quotation"}}
 	default:
 		return Actions{Customer: []string{"View Quotation"}, Operator: []string{"View Quotation"}}
-	}
-}
-
-func plantRequestActions(status string) Actions {
-	switch status {
-	case "DRAFT":
-		return Actions{Operator: []string{"Publish Request"}}
-	case "OPEN":
-		return Actions{Operator: []string{"Review Responses", "Close Request"}, Supplier: []string{"Respond to Request"}}
-	case "PARTIALLY_ACCEPTED":
-		return Actions{Operator: []string{"Accept More Responses", "Close Request"}, Supplier: []string{"Respond to Request"}}
-	case "ACCEPTED":
-		return Actions{Operator: []string{"View Accepted Responses"}, Supplier: []string{"View Request"}}
-	case "REJECTED":
-		return Actions{Operator: []string{"View Request"}, Supplier: []string{"View Request"}}
-	case "CLOSED":
-		return Actions{Operator: []string{"View Request"}, Supplier: []string{"View Request"}}
-	default:
-		return Actions{Operator: []string{"View Request"}, Supplier: []string{"View Request"}}
 	}
 }
 
@@ -457,29 +423,6 @@ func quotationOperatorDisplay(status string) Display {
 		return Display{"Converted", "Converted to Order", "This quotation is locked.", "success"}
 	case "EXPIRED":
 		return Display{"Expired", "Quotation Expired", "Create a fresh quotation if needed.", "error"}
-	default:
-		label := pretty(status)
-		return Display{label, label, "", "neutral"}
-	}
-}
-
-func plantRequestDisplay(status string, requester bool) Display {
-	switch status {
-	case "DRAFT":
-		return Display{"Draft", "Request Draft", "Publish the request when ready.", "neutral"}
-	case "OPEN":
-		if requester {
-			return Display{"Open", "Awaiting Supplier Responses", "Suppliers can respond to this request.", "warning"}
-		}
-		return Display{"Open", "Response Needed", "Submit availability for this request.", "warning"}
-	case "PARTIALLY_ACCEPTED":
-		return Display{"Partially Accepted", "Partially Accepted", "Some requested quantity has been accepted.", "accent"}
-	case "ACCEPTED":
-		return Display{"Accepted", "Request Accepted", "Required quantity has been accepted.", "success"}
-	case "REJECTED":
-		return Display{"Rejected", "Request Rejected", "This request was rejected.", "error"}
-	case "CLOSED":
-		return Display{"Closed", "Request Closed", "No more responses are needed.", "neutral"}
 	default:
 		label := pretty(status)
 		return Display{label, label, "", "neutral"}
