@@ -399,12 +399,19 @@ def journey_accounts():
 
 # ── shared set-ups for the trade journeys ──────────────────────────────────
 
-def approved_owner(boss, name="Journey Nursery", selfie=True):
+# Journey nurseries sit in Port Blair, over 1,000 km from the dev users in
+# Hyderabad, so the market's 100 km limit keeps test ads out of their lists.
+PORT_BLAIR = (11.6234, 92.7265)
+
+
+def approved_owner(boss, name="Journey Nursery", selfie=True, coords=True):
     """A nursery owner whose nursery the admin has approved (trial subscription), with a profile selfie."""
     owner = User(first="Owner", activity="OWNER")
-    n = expect("register nursery", "POST", "/nurseries", owner.token, {
-        "name": f"{name} {owner.mobile[-4:]}", "mobile": owner.mobile, "address_line1": "Plot 1",
-        "city": "Hyderabad", "state": "Telangana", "country": "India", "postal_code": "500032"}, status=201)
+    body = {"name": f"{name} {owner.mobile[-4:]}", "mobile": owner.mobile, "address_line1": "Plot 1",
+            "city": "Hyderabad", "state": "Telangana", "country": "India", "postal_code": "500032"}
+    if coords:
+        body.update(latitude=PORT_BLAIR[0], longitude=PORT_BLAIR[1])
+    n = expect("register nursery", "POST", "/nurseries", owner.token, body, status=201)
     nid = n["nursery"]["id"]
     expect("admin approves nursery", "PUT", f"/nurseries/{nid}/status", boss.token, {"status": "APPROVED"})
     owner.refresh()
@@ -1093,11 +1100,38 @@ def journey_market():
         prices = [x.get("price_per_unit") or 0 for x in out["ads"]]
         priced = [p for p in prices if p > 0]
         check(f"…priced ads in order, price on request last", prices[:len(priced)] == sorted(priced, reverse=sort == "price_desc") and all(p == 0 for p in prices[len(priced):]), prices)
-    for leftover in (cheap, ask):  # keep test ads out of the dev market
-        expect("…tidy up", "POST", f"/market/ads/{leftover['id']}/archive", owner.token, {})
     p1 = expect("page 1 of 1-per-page", "GET", "/market/ads?per_page=1&page=1", rival.token)
     p2 = expect("page 2", "GET", "/market/ads?per_page=1&page=2", rival.token)
     check("…pages differ and share the total", p1["total"] == p2["total"] >= 2 and p1["ads"][0]["id"] != p2["ads"][0]["id"], (p1["total"], p2["total"]))
+
+    # Local market: ads within the viewer's radius only (60 km default, 100 km cap).
+    lat, lon = PORT_BLAIR
+    near = expect("browse from the nursery's own address (no phone position)", "GET", "/market/ads?per_page=50", rival.token)
+    hit = next((x for x in near["ads"] if x["id"] == cheap["id"]), None)
+    check("…finds the ad, with its distance", hit is not None and hit.get("distance_km") is not None and hit["distance_km"] < 1, hit)
+    delhi = expect("browse from Delhi", "GET", "/market/ads?per_page=50&near_lat=28.61&near_lon=77.21", rival.token)
+    check("…a Port Blair ad is too far to show", cheap["id"] not in [x["id"] for x in delhi["ads"]], delhi["total"])
+    away = f"near_lat={lat + 0.72}&near_lon={lon}"  # about 80 km north
+    out = expect("browse from 80 km away, default radius", "GET", f"/market/ads?per_page=50&{away}", rival.token)
+    check("…outside the 60 km default", cheap["id"] not in [x["id"] for x in out["ads"]], out["total"])
+    out = expect("…widened to 100 km", "GET", f"/market/ads?per_page=50&{away}&radius_km=100", rival.token)
+    check("…now it shows, about 80 km away", any(x["id"] == cheap["id"] and 70 < x["distance_km"] < 90 for x in out["ads"]), [x.get("distance_km") for x in out["ads"]])
+    far = f"near_lat={lat + 1.35}&near_lon={lon}"  # about 150 km north
+    out = expect("browse from 150 km asking for 500 km", "GET", f"/market/ads?per_page=50&{far}&radius_km=500", rival.token)
+    check("…capped at 100 km, so not shown", cheap["id"] not in [x["id"] for x in out["ads"]], out["total"])
+    out = expect("sort by nearest", "GET", f"/market/ads?per_page=50&sort=nearest&{away}&radius_km=100", rival.token)
+    dists = [x["distance_km"] for x in out["ads"]]
+    check("…closest first", dists == sorted(dists), dists)
+    nowhere = approved_owner(boss, "No Location", coords=False)
+    expect("a nursery with no coordinates and no phone position gets a clear error", "GET", "/market/ads", nowhere.token, status=422)
+    d = expect("…it can still save a draft", "POST", "/market/ads", nowhere.token, dict(ad, title="Nowhere"), status=201)["ad"]
+    expect("…but cannot publish an ad nobody could find", "POST", f"/market/ads/{d['id']}/publish", nowhere.token, {}, status=400)
+    d = expect("…sending the phone's position fixes it", "POST", "/market/ads", nowhere.token,
+               dict(ad, title="From the phone", pickup_latitude=lat, pickup_longitude=lon, pickup_location_source="gps_confirmed"), status=201)["ad"]
+    expect("…publishes", "POST", f"/market/ads/{d['id']}/publish", nowhere.token, {})
+    expect("…tidy up", "POST", f"/market/ads/{d['id']}/archive", nowhere.token, {})
+    for leftover in (cheap, ask):  # keep test ads out of the dev market
+        expect("…tidy up", "POST", f"/market/ads/{leftover['id']}/archive", owner.token, {})
 
 
 def journey_wanted():

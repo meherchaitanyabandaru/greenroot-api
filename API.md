@@ -378,7 +378,9 @@ Runtime behavior:
 
 Only returns ads with a confirmed `pickup_location`. Combines with all existing filters.
 
-`sort`: `newest` (default), `oldest`, `name` (plant name A→Z), `price_asc`, `price_desc`, `popular`. All lists page with `page` / `per_page` (max 50) and return `total`.
+`sort`: `newest` (default), `oldest`, `name` (plant name A→Z), `price_asc`, `price_desc`, `popular`, `nearest`.
+
+**The market is local.** Browse always limits to ads within `radius_km` of the viewer: default 60, capped at 100. The position is `near_lat`/`near_lon` (the phone) or, when absent, the viewer's nursery address; with neither the API returns 422 `location_required`. Each ad carries `distance_km`. Admins are not limited. An ad cannot be published without a location (GPS sent while posting, or the nursery's coordinates). All lists page with `page` / `per_page` (max 50) and return `total`.
 
 ---
 

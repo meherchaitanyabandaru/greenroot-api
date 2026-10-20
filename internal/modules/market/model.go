@@ -59,6 +59,7 @@ type Ad struct {
 	Photos               []string                    `json:"photos"`
 	PickupAddress        *string                     `json:"pickup_address,omitempty"`
 	PickupLandmark       *string                     `json:"pickup_landmark,omitempty"`
+	DistanceKM           *float64                    `json:"distance_km,omitempty"` // from the viewer, when browsing nearby
 	RoadAccessible       *bool                       `json:"road_accessible,omitempty"`
 	TruckAccessible      *bool                       `json:"truck_accessible,omitempty"`
 	AccessInstructions   *string                     `json:"access_instructions,omitempty"`
@@ -308,7 +309,7 @@ type MakeOfferRequest struct {
 type AdsQuery struct {
 	Type     string  // SELL | WANT | "" (both)
 	Search   string  // full-text across title, plant_name, nursery_name, description
-	Sort     string  // newest|oldest|name|price_asc|price_desc|popular
+	Sort     string  // newest|oldest|name|price_asc|price_desc|popular|nearest
 	Category string  // exact match on category_name (case-insensitive)
 	MinPrice float64 // 0 = no lower bound
 	MaxPrice float64 // 0 = no upper bound

@@ -190,7 +190,7 @@ func (r *PostgresRepository) GetAd(ctx context.Context, id int64) (Ad, error) {
 		       ma.expires_at, ma.published_at,
 		       ma.paused_at, ma.expired_at, ma.archived_at, ma.moderation_note,
 		       NULLIF(TRIM(CONCAT_WS(' ', pu.first_name, pu.last_name)), ''), pu.profile_image_url,
-		       ma.created_at, ma.updated_at
+		       ma.created_at, ma.updated_at, NULL::float8
 		FROM public.market_ads ma
 		JOIN public.nurseries n ON n.nursery_id = ma.nursery_id
 		LEFT JOIN public.users pu ON pu.user_id = ma.created_by_user_id
@@ -229,8 +229,9 @@ func (r *PostgresRepository) ListPublished(ctx context.Context, q AdsQuery) ([]A
 		args = append(args, q.MaxPrice)
 		filter += fmt.Sprintf(" AND ma.price_per_unit <= $%d", len(args))
 	}
+	distance := noDistance
 	if q.NearLat != nil && q.NearLon != nil {
-		radiusKM := 50.0
+		radiusKM := DefaultRadiusKM
 		if q.RadiusKM != nil && *q.RadiusKM > 0 {
 			radiusKM = *q.RadiusKM
 		}
@@ -238,8 +239,9 @@ func (r *PostgresRepository) ListPublished(ctx context.Context, q AdsQuery) ([]A
 		lonIdx, latIdx := len(args)-1, len(args)
 		filter += " AND ma.pickup_location IS NOT NULL AND " +
 			location.DWithin("ma.pickup_location", lonIdx, latIdx, radiusKM*1000)
+		distance = location.DistanceKM("ma.pickup_location", lonIdx, latIdx)
 	}
-	return r.listAds(ctx, filter, q.Sort, q.Page, q.PerPage, args)
+	return r.listAds(ctx, filter, q.Sort, q.Page, q.PerPage, args, distance)
 }
 
 func (r *PostgresRepository) ListByNursery(ctx context.Context, nurseryID int64, q AdsQuery) ([]Ad, int, error) {
@@ -250,12 +252,17 @@ func (r *PostgresRepository) ListByNursery(ctx context.Context, nurseryID int64,
 	// recently the draft was created; once a nursery accumulates >= one
 	// page of ever-published ads, new drafts fall off page 1 permanently
 	// (the My Ads screen has no "load more").
-	return r.listAds(ctx, "ma.nursery_id = $1 AND ma.status <> 'DELETED'", "mine", q.Page, q.PerPage, []any{nurseryID})
+	return r.listAds(ctx, "ma.nursery_id = $1 AND ma.status <> 'DELETED'", "mine", q.Page, q.PerPage, []any{nurseryID}, noDistance)
 }
 
 // listAds runs count + paginated SELECT. filterArgs are args for the WHERE clause only;
 // LIMIT and OFFSET are appended here so parameter indices are always correct.
-func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, page, perPage int, filterArgs []any) ([]Ad, int, error) {
+// noDistance fills the distance column when the list is not around a point.
+const noDistance = "NULL::float8"
+
+// listAds runs count + page; distance is the SQL for each ad's distance in km
+// from the viewer (noDistance when not browsing nearby).
+func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, page, perPage int, filterArgs []any, distance string) ([]Ad, int, error) {
 	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
 	countQ := fmt.Sprintf(`
 		SELECT COUNT(*) FROM public.market_ads ma
@@ -282,6 +289,8 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, p
 		orderBy = "NULLIF(ma.price_per_unit, 0) DESC NULLS LAST, ma.created_at DESC"
 	case "popular":
 		orderBy = "ma.view_count DESC, ma.created_at DESC"
+	case "nearest":
+		orderBy = "distance_km ASC NULLS LAST, ma.created_at DESC"
 	}
 
 	offset := (page - 1) * perPage
@@ -304,13 +313,13 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, p
 		       ma.expires_at, ma.published_at,
 		       ma.paused_at, ma.expired_at, ma.archived_at, ma.moderation_note,
 		       NULLIF(TRIM(CONCAT_WS(' ', pu.first_name, pu.last_name)), ''), pu.profile_image_url,
-		       ma.created_at, ma.updated_at
+		       ma.created_at, ma.updated_at, %s AS distance_km
 		FROM public.market_ads ma
 		JOIN public.nurseries n ON n.nursery_id = ma.nursery_id
 		LEFT JOIN public.users pu ON pu.user_id = ma.created_by_user_id
 		WHERE %s
 		ORDER BY %s
-		LIMIT $%d OFFSET $%d`, filter, orderBy, limitIdx, offsetIdx)
+		LIMIT $%d OFFSET $%d`, distance, filter, orderBy, limitIdx, offsetIdx)
 
 	rows, err := r.db.QueryContext(ctx, listQ, listArgs...)
 	if err != nil {
@@ -508,7 +517,7 @@ func (r *PostgresRepository) SellerProfile(ctx context.Context, nurseryID int64)
 	if err != nil {
 		return SellerProfile{}, err
 	}
-	p.Ads, _, err = r.listAds(ctx, "ma.status = 'PUBLISHED' AND ma.nursery_id = $1", "newest", 1, 50, []any{nurseryID})
+	p.Ads, _, err = r.listAds(ctx, "ma.status = 'PUBLISHED' AND ma.nursery_id = $1", "newest", 1, 50, []any{nurseryID}, noDistance)
 	if err != nil {
 		return SellerProfile{}, err
 	}
@@ -590,7 +599,7 @@ func (r *PostgresRepository) ListSaved(ctx context.Context, nurseryID int64, q A
 		SELECT 1 FROM public.market_ad_saves s
 		WHERE s.ad_id = ma.ad_id AND s.nursery_id = $1
 	)`
-	return r.listAds(ctx, filter, "", q.Page, q.PerPage, []any{nurseryID})
+	return r.listAds(ctx, filter, "", q.Page, q.PerPage, []any{nurseryID}, noDistance)
 }
 
 func (r *PostgresRepository) FlushAdCounters(ctx context.Context, views map[int64]int64, saves map[int64]int64) error {
@@ -1034,7 +1043,7 @@ func scanAdRow(row rowScanner) (Ad, error) {
 		&a.Status, &a.ViewCount, &a.SaveCount, &a.EnquiryCount,
 		&expiresAt, &publishedAt, &pausedAt, &expiredAt, &archivedAt, &a.ModerationNote,
 		&a.PostedByName, &a.PostedByPhoto,
-		&a.CreatedAt, &a.UpdatedAt,
+		&a.CreatedAt, &a.UpdatedAt, &a.DistanceKM,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Ad{}, ErrNotFound

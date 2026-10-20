@@ -500,6 +500,9 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusBadRequest, "invalid_input", err.Error())
 	case errors.Is(err, ErrConflict):
 		response.Error(w, http.StatusConflict, "conflict", err.Error())
+	case errors.Is(err, ErrLocationRequired):
+		response.Error(w, http.StatusUnprocessableEntity, "location_required",
+			"Turn on location, or add your nursery's location, to see ads near you")
 	default:
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 	}

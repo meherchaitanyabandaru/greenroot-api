@@ -20,6 +20,7 @@ type mockRepo struct {
 	enquiryExists map[string]bool // "adID:nurseryID"
 	lastOfferBody string
 	blockedUntil  map[int64]*time.Time
+	noCoords      map[int64]bool
 	nextAdID      int64
 	nextEnqID     int64
 }
@@ -34,6 +35,7 @@ func newMock() *mockRepo {
 		saves:         make(map[string]bool),
 		enquiryExists: make(map[string]bool),
 		blockedUntil:  make(map[int64]*time.Time),
+		noCoords:      make(map[int64]bool),
 		nextAdID:      100,
 		nextEnqID:     200,
 	}
@@ -50,7 +52,9 @@ func (m *mockRepo) seedNursery(nurseryID int64, active bool, userIDs ...int64) {
 }
 
 func (m *mockRepo) seedAd(id, nurseryID int64, status string) Ad {
-	ad := Ad{ID: id, NurseryID: nurseryID, Status: status, Title: "Test Ad", PlantName: "Rose"}
+	lat, lon := 17.44, 78.35
+	ad := Ad{ID: id, NurseryID: nurseryID, Status: status, Title: "Test Ad", PlantName: "Rose",
+		PickupLatitude: &lat, PickupLongitude: &lon}
 	m.ads[id] = ad
 	return ad
 }
@@ -199,8 +203,13 @@ func (m *mockRepo) ChatSummaries(_ context.Context, _ []Enquiry, _ int64) error 
 
 func (m *mockRepo) UnreadTotal(_ context.Context, _ int64) (int, error) { return 0, nil }
 
-func (m *mockRepo) NurseryPickup(_ context.Context, _ int64) (*string, *float64, *float64, error) {
-	return nil, nil, nil, nil
+// NurseryPickup: every mock nursery sits in Hyderabad unless listed in noCoords.
+func (m *mockRepo) NurseryPickup(_ context.Context, nurseryID int64) (*string, *float64, *float64, error) {
+	if m.noCoords[nurseryID] {
+		return nil, nil, nil, nil
+	}
+	lat, lon := 17.44, 78.35
+	return nil, &lat, &lon, nil
 }
 
 func (m *mockRepo) PostingBlockedUntil(_ context.Context, nurseryID int64) (*time.Time, error) {
@@ -1118,5 +1127,43 @@ func TestValidateAccess(t *testing.T) {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestNearbyArea(t *testing.T) {
+	ctx := context.Background()
+	repo := newMock()
+	repo.seedNursery(1, true, 10)
+	repo.seedNursery(2, true, 20)
+	repo.noCoords[2] = true
+	f := func(v float64) *float64 { return &v }
+
+	q := AdsQuery{}
+	if err := svc(repo).nearbyArea(ctx, ownerActor(10), &q); err != nil {
+		t.Fatal(err)
+	}
+	if *q.NearLat != 17.44 || *q.RadiusKM != DefaultRadiusKM {
+		t.Errorf("no position: want the nursery's address and %v km, got %v, %v", DefaultRadiusKM, *q.NearLat, *q.RadiusKM)
+	}
+
+	q = AdsQuery{NearLat: f(28.6), NearLon: f(77.2), RadiusKM: f(500)}
+	_ = svc(repo).nearbyArea(ctx, ownerActor(10), &q)
+	if *q.NearLat != 28.6 || *q.RadiusKM != MaxRadiusKM {
+		t.Errorf("phone position kept and radius capped at %v, got %v, %v", MaxRadiusKM, *q.NearLat, *q.RadiusKM)
+	}
+
+	if err := svc(repo).nearbyArea(ctx, ownerActor(20), &AdsQuery{}); !errors.Is(err, ErrLocationRequired) {
+		t.Errorf("no phone position and no nursery coordinates: want ErrLocationRequired, got %v", err)
+	}
+}
+
+func TestPublishAd_NeedsLocation(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, true, 10)
+	ad := repo.seedAd(1, 1, StatusDraft)
+	ad.PickupLatitude, ad.PickupLongitude = nil, nil
+	repo.ads[1] = ad
+	if _, err := svc(repo).PublishAd(context.Background(), ownerActor(10), 1); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("want ErrInvalidInput for an ad with no location, got %v", err)
 	}
 }

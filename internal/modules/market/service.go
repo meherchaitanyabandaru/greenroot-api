@@ -2,6 +2,7 @@ package market
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -18,7 +19,48 @@ var (
 	ErrForbidden    = apperrs.ErrForbidden
 	ErrInvalidInput = apperrs.ErrInvalidInput
 	ErrConflict     = apperrs.ErrConflict
+	// ErrLocationRequired: the viewer sent no position and their nursery has
+	// no coordinates, so "nearby" cannot be worked out.
+	ErrLocationRequired = errors.New("location required")
 )
+
+// The market is local: everyone sees ads around them, never across the
+// country. 60 km unless the viewer widens it, and never past 100 km.
+const (
+	DefaultRadiusKM = 60.0
+	MaxRadiusKM     = 100.0
+)
+
+// nearbyArea fills the viewer's position (the phone's, else their nursery's
+// address) and clamps the radius. Admins browse everything.
+func (s *Service) nearbyArea(ctx context.Context, actor ActorContext, q *AdsQuery) error {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
+		return nil
+	}
+	if q.NearLat == nil || q.NearLon == nil {
+		nurseryID, err := s.actorNurseryID(ctx, actor)
+		if err != nil {
+			return ErrForbidden
+		}
+		_, lat, lon, err := s.repo.NurseryPickup(ctx, nurseryID)
+		if err != nil {
+			return err
+		}
+		if lat == nil || lon == nil {
+			return ErrLocationRequired
+		}
+		q.NearLat, q.NearLon = lat, lon
+	}
+	if *q.NearLat < -90 || *q.NearLat > 90 || *q.NearLon < -180 || *q.NearLon > 180 {
+		return fmt.Errorf("%w: invalid near_lat / near_lon", ErrInvalidInput)
+	}
+	radius := DefaultRadiusKM
+	if q.RadiusKM != nil && *q.RadiusKM > 0 {
+		radius = min(*q.RadiusKM, MaxRadiusKM)
+	}
+	q.RadiusKM = &radius
+	return nil
+}
 
 // validateAdType defaults the type to SELL and enforces what a WANT is: a
 // catalog plant, a size and an optional quantity and date, never a price or
@@ -90,6 +132,14 @@ func validateAccess(road, truck *bool, pickupPoint *string) error {
 		return fmt.Errorf("%w: no road to the plants: give a pickup point buyers can reach", ErrInvalidInput)
 	}
 	return nil
+}
+
+// areaKey keeps cached search pages per area (about 100 m and 1 km steps).
+func areaKey(q AdsQuery) string {
+	if q.NearLat == nil || q.NearLon == nil || q.RadiusKM == nil {
+		return "all"
+	}
+	return fmt.Sprintf("%.3f,%.3f,%.0f", *q.NearLat, *q.NearLon, *q.RadiusKM)
 }
 
 func validateNeededBy(v string) error {
@@ -180,14 +230,19 @@ func (s *Service) CreateAd(ctx context.Context, actor ActorContext, req CreateAd
 	}
 	// No pickup given: use the nursery's own address, so the ad shows where
 	// to collect and (when the address has coordinates) "Near me" finds it.
-	if req.PickupAddress == nil && req.PickupLatitude == nil {
+	// The phone's GPS (when sent) beats the nursery's coordinates; the
+	// address text still comes from the nursery.
+	if req.PickupAddress == nil || req.PickupLatitude == nil {
 		addr, lat, lon, err := s.repo.NurseryPickup(ctx, nurseryID)
 		if err != nil {
 			return Ad{}, err
 		}
-		if addr != nil || lat != nil {
+		if req.PickupAddress == nil {
+			req.PickupAddress = addr
+		}
+		if req.PickupLatitude == nil && lat != nil {
 			src := "nursery_default"
-			req.PickupAddress, req.PickupLatitude, req.PickupLongitude, req.PickupLocationSource = addr, lat, lon, &src
+			req.PickupLatitude, req.PickupLongitude, req.PickupLocationSource = lat, lon, &src
 		}
 	}
 	ad, err := s.repo.CreateAd(ctx, nurseryID, actor.UserID, req)
@@ -250,6 +305,9 @@ func (s *Service) BrowseAds(ctx context.Context, actor ActorContext, q AdsQuery)
 	if q.PerPage < 1 || q.PerPage > 50 {
 		q.PerPage = 20
 	}
+	if err := s.nearbyArea(ctx, actor, &q); err != nil {
+		return nil, 0, err
+	}
 
 	if q.Search == "" {
 		return s.browseAds(ctx, actor, q)
@@ -263,7 +321,7 @@ func (s *Service) BrowseAds(ctx context.Context, actor ActorContext, q AdsQuery)
 	gen := redisutil.SearchGeneration(ctx, s.redis, nil, module, actor.UserID)
 	key := redisutil.SearchCacheKey(module, actor.UserID, gen,
 		q.Type, q.Search, q.Sort, q.Category, fmt.Sprint(q.MinPrice), fmt.Sprint(q.MaxPrice),
-		fmt.Sprint(q.Page), fmt.Sprint(q.PerPage))
+		fmt.Sprint(q.Page), fmt.Sprint(q.PerPage), areaKey(q))
 
 	if cached, ok := redisutil.GetCachedSearch[cachedAdsList](ctx, s.redis, nil, module, q.Search, key); ok {
 		return cached.Ads, cached.Total, nil
@@ -498,6 +556,10 @@ func (s *Service) adTransition(ctx context.Context, actor ActorContext, id int64
 	if target == StatusPublished {
 		if err := s.checkPostingAllowed(ctx, ad.NurseryID); err != nil {
 			return Ad{}, err
+		}
+		// Browsing is by distance: an ad with no location could never be found.
+		if ad.PickupLatitude == nil || ad.PickupLongitude == nil {
+			return Ad{}, fmt.Errorf("%w: this ad has no location; turn on location while posting, or add your nursery's location, so nearby nurseries can find it", ErrInvalidInput)
 		}
 	}
 	if err := fn(ctx); err != nil {
