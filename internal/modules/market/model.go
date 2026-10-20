@@ -110,6 +110,18 @@ type SellerProfile struct {
 	LiveAds     int       `json:"live_ads"`
 	DealsAgreed int       `json:"deals_agreed"`
 	Ads         []Ad      `json:"ads"` // live ads, newest first
+	// TopItems is the nursery's showcase (up to 20 plants it is known for).
+	TopItems []SellerTopItem `json:"top_items"`
+}
+
+type SellerTopItem struct {
+	PlantID      int64    `json:"plant_id"`
+	PlantName    string   `json:"plant_name"`
+	CommonName   *string  `json:"common_name,omitempty"`
+	SizeName     string   `json:"size_name"`
+	UnitPrice    *float64 `json:"unit_price,omitempty"`
+	QualityNotes *string  `json:"quality_notes,omitempty"`
+	Photo        *string  `json:"photo,omitempty"`
 }
 
 // ── Enquiry ──────────────────────────────────────────────────

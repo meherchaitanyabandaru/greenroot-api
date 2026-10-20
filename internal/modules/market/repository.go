@@ -453,7 +453,29 @@ func (r *PostgresRepository) SellerProfile(ctx context.Context, nurseryID int64)
 		return SellerProfile{}, err
 	}
 	p.Ads, _, err = r.listAds(ctx, "ma.status = 'PUBLISHED' AND ma.nursery_id = $1", "newest", 1, 50, []any{nurseryID})
-	return p, err
+	if err != nil {
+		return SellerProfile{}, err
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT t.plant_id, p.scientific_name, p.common_name, s.display_name, t.unit_price, t.quality_notes, t.photos->>0
+		FROM public.nursery_top_items t
+		JOIN public.plants p      ON p.plant_id = t.plant_id
+		JOIN public.plant_sizes s ON s.size_id  = t.size_id
+		WHERE t.nursery_id = $1
+		ORDER BY t.display_order, t.top_item_id`, nurseryID)
+	if err != nil {
+		return SellerProfile{}, err
+	}
+	defer rows.Close()
+	p.TopItems = []SellerTopItem{}
+	for rows.Next() {
+		var t SellerTopItem
+		if err := rows.Scan(&t.PlantID, &t.PlantName, &t.CommonName, &t.SizeName, &t.UnitPrice, &t.QualityNotes, &t.Photo); err != nil {
+			return SellerProfile{}, err
+		}
+		p.TopItems = append(p.TopItems, t)
+	}
+	return p, rows.Err()
 }
 
 func (r *PostgresRepository) SetExpiry(ctx context.Context, id int64, expiresAt time.Time) error {

@@ -982,6 +982,8 @@ def journey_market():
     seller = expect("the rival opens the seller's profile", "GET", f"/market/nurseries/{owner.nursery_id}", rival.token)["seller"]
     check("…name, owner selfie, activity and the live ad", seller["nursery_name"] and seller["owner_photo"] and seller["live_ads"] >= 1
           and a["id"] in [x["id"] for x in seller["ads"]], seller)
+    check("…and its top items (team() lists mango and neem)", len(seller["top_items"]) >= 2
+          and all(t["plant_name"] and t["size_name"] for t in seller["top_items"]), seller.get("top_items"))
     expect("a buyer cannot open seller profiles", "GET", f"/market/nurseries/{owner.nursery_id}", buyer.token, status=403)
     out = expect("the seller lists this ad's chats", "GET", f"/market/enquiries?direction=received&ad_id={a['id']}", owner.token)
     check("…exactly the rival's chat", [x["id"] for x in out["enquiries"]] == [eid] and out["total"] == 1, out)
