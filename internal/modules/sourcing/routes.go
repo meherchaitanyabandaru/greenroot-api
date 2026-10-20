@@ -29,16 +29,4 @@ func (m Module) RegisterRoutes(r chi.Router) {
 		r.Get("/", m.handler.ListNearby)
 		r.Get("/{nurseryId}", m.handler.GetNurseryProfile)
 	})
-
-	// Sourcing posts (NEED / AVAILABLE announcements)
-	r.Route("/sourcing-posts", func(r chi.Router) {
-		r.Get("/", m.handler.ListPosts)
-		r.Post("/", m.handler.CreatePost)
-		r.Get("/{id}", m.handler.GetPost)
-		r.Put("/{id}", m.handler.UpdatePost)
-		r.Delete("/{id}", m.handler.DeletePost)
-		r.Get("/{id}/responses", m.handler.ListResponses)
-		r.Post("/{id}/responses", m.handler.CreateResponse)
-		r.Put("/{id}/responses/{responseId}", m.handler.UpdateResponse)
-	})
 }

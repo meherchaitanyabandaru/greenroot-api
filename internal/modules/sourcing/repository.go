@@ -7,11 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/location"
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/publiccode"
 )
 
 var ErrNotFound = apperrs.ErrNotFound
@@ -25,18 +23,6 @@ type Repository interface {
 	// Nearby discovery
 	ListNearby(ctx context.Context, q NearbyQuery) ([]NearbyNursery, int64, error)
 	GetNurseryProfile(ctx context.Context, nurseryID int64) (*NearbyNursery, error)
-
-	// Sourcing posts
-	ListPosts(ctx context.Context, q ListPostsQuery) ([]SourcingPost, int64, error)
-	GetPost(ctx context.Context, postID int64) (*SourcingPost, error)
-	CreatePost(ctx context.Context, userID int64, req CreatePostRequest) (*SourcingPost, error)
-	UpdatePost(ctx context.Context, postID int64, req UpdatePostRequest) (*SourcingPost, error)
-	DeletePost(ctx context.Context, postID int64) error
-
-	// Post responses
-	ListResponses(ctx context.Context, postID int64) ([]PostResponse, error)
-	CreateResponse(ctx context.Context, postID int64, userID int64, req CreateResponseRequest) (*PostResponse, error)
-	UpdateResponse(ctx context.Context, responseID int64, req UpdateResponseRequest) (*PostResponse, error)
 
 	// Auth helpers
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
@@ -298,213 +284,7 @@ func (r *PostgresRepository) topItems(ctx context.Context, nurseryIDs []int64, p
 
 // ---- Sourcing posts ----
 
-func (r *PostgresRepository) ListPosts(ctx context.Context, q ListPostsQuery) ([]SourcingPost, int64, error) {
-	where, args := buildPostWhere(q)
-
-	var total int64
-	countQ := `SELECT COUNT(*) FROM public.sourcing_posts sp ` + where
-	if err := r.db.QueryRowContext(ctx, countQ, args...).Scan(&total); err != nil {
-		return nil, 0, err
-	}
-
-	page, perPage := q.Page, q.PerPage
-	if page <= 0 {
-		page = 1
-	}
-	if perPage <= 0 || perPage > 100 {
-		perPage = 20
-	}
-	offset := (page - 1) * perPage
-	args = append(args, perPage, offset)
-
-	dataQ := fmt.Sprintf(`%s %s ORDER BY sp.post_id DESC LIMIT $%d OFFSET $%d`,
-		postBaseSelect(), where, len(args)-1, len(args))
-	rows, err := r.db.QueryContext(ctx, dataQ, args...)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-
-	var posts []SourcingPost
-	for rows.Next() {
-		p, err := scanPost(rows)
-		if err != nil {
-			return nil, 0, err
-		}
-		posts = append(posts, p)
-	}
-	if posts == nil {
-		posts = []SourcingPost{}
-	}
-	return posts, total, rows.Err()
-}
-
-func (r *PostgresRepository) GetPost(ctx context.Context, postID int64) (*SourcingPost, error) {
-	p, err := scanPostRow(r.db.QueryRowContext(ctx, postBaseSelect()+` WHERE sp.post_id = $1 AND sp.deleted_at IS NULL`, postID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	p.Photos, _ = r.listPostPhotos(ctx, postID)
-	return p, nil
-}
-
-func (r *PostgresRepository) CreatePost(ctx context.Context, userID int64, req CreatePostRequest) (*SourcingPost, error) {
-	now := time.Now()
-	postCode, err := publiccode.Next(ctx, r.db, publiccode.SourcingPosts, now)
-	if err != nil {
-		return nil, err
-	}
-	radius := req.RadiusKM
-	if radius <= 0 {
-		radius = 50
-	}
-	urgency := strings.ToUpper(req.Urgency)
-	if urgency == "" {
-		urgency = "FLEXIBLE"
-	}
-	const q = `
-		INSERT INTO public.sourcing_posts
-			(post_code, nursery_id, posted_by_user_id, post_type, plant_id, plant_name,
-			size_description, quantity, urgency, needed_by_date, notes, radius_km, status, expires_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'OPEN', $13, $14, $14)
-		RETURNING post_id
-	`
-	var id int64
-	if err := r.db.QueryRowContext(ctx, q,
-		postCode, req.NurseryID, userID, strings.ToUpper(req.PostType),
-		req.PlantID, strings.TrimSpace(req.PlantName),
-		strPtrOrNil(req.SizeDesc), intPtrOrNil(req.Quantity), urgency,
-		parseDateOrNil(req.NeededByDate), strPtrOrNil(req.Notes), radius,
-		parseTimeOrNil(req.ExpiresAt), now,
-	).Scan(&id); err != nil {
-		return nil, err
-	}
-	return r.GetPost(ctx, id)
-}
-
-func (r *PostgresRepository) UpdatePost(ctx context.Context, postID int64, req UpdatePostRequest) (*SourcingPost, error) {
-	status := strings.ToUpper(strings.TrimSpace(req.Status))
-	urgency := strings.ToUpper(strings.TrimSpace(req.Urgency))
-	result, err := r.db.ExecContext(ctx, `
-		UPDATE public.sourcing_posts
-		SET plant_name = $2, size_description = $3, quantity = $4, urgency = $5, notes = $6,
-			status = $7,
-			closed_at = CASE WHEN $8 = 'CLOSED' THEN COALESCE(closed_at, CURRENT_TIMESTAMP) ELSE closed_at END,
-			updated_at = CURRENT_TIMESTAMP
-		WHERE post_id = $1 AND deleted_at IS NULL`,
-		postID, strings.TrimSpace(req.PlantName), strPtrOrNil(req.SizeDesc),
-		intPtrOrNil(req.Quantity), urgency, strPtrOrNil(req.Notes), status, status,
-	)
-	if err != nil {
-		return nil, err
-	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return nil, ErrNotFound
-	}
-	return r.GetPost(ctx, postID)
-}
-
-func (r *PostgresRepository) DeletePost(ctx context.Context, postID int64) error {
-	result, err := r.db.ExecContext(ctx,
-		`UPDATE public.sourcing_posts SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE post_id = $1 AND deleted_at IS NULL`,
-		postID)
-	if err != nil {
-		return err
-	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-func (r *PostgresRepository) listPostPhotos(ctx context.Context, postID int64) ([]PostPhoto, error) {
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT photo_id, post_id, photo_url, display_order, created_at FROM public.sourcing_post_photos WHERE post_id = $1 ORDER BY display_order ASC`,
-		postID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var photos []PostPhoto
-	for rows.Next() {
-		var ph PostPhoto
-		if err := rows.Scan(&ph.ID, &ph.PostID, &ph.PhotoURL, &ph.DisplayOrder, &ph.CreatedAt); err != nil {
-			return nil, err
-		}
-		photos = append(photos, ph)
-	}
-	return photos, rows.Err()
-}
-
 // ---- Post responses ----
-
-func (r *PostgresRepository) ListResponses(ctx context.Context, postID int64) ([]PostResponse, error) {
-	rows, err := r.db.QueryContext(ctx, responseBaseSelect()+` WHERE spr.post_id = $1 ORDER BY spr.response_id DESC`, postID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var responses []PostResponse
-	for rows.Next() {
-		resp, err := scanResponseRow(rows)
-		if err != nil {
-			return nil, err
-		}
-		responses = append(responses, *resp)
-	}
-	if responses == nil {
-		responses = []PostResponse{}
-	}
-	return responses, rows.Err()
-}
-
-func (r *PostgresRepository) CreateResponse(ctx context.Context, postID int64, userID int64, req CreateResponseRequest) (*PostResponse, error) {
-	const q = `
-		INSERT INTO public.sourcing_post_responses
-			(post_id, responder_nursery_id, responded_by_user_id, available_quantity, notes, contact_info, status)
-		VALUES ($1, $2, $3, $4, $5, $6, 'PENDING')
-		ON CONFLICT (post_id, responder_nursery_id) DO UPDATE
-			SET responded_by_user_id = $3, available_quantity = $4, notes = $5,
-				contact_info = $6, status = 'PENDING', responded_at = CURRENT_TIMESTAMP
-		RETURNING response_id
-	`
-	var id int64
-	if err := r.db.QueryRowContext(ctx, q,
-		postID, req.ResponderNurseryID, userID,
-		intPtrOrNil(req.AvailableQuantity), strPtrOrNil(req.Notes), strPtrOrNil(req.ContactInfo),
-	).Scan(&id); err != nil {
-		return nil, err
-	}
-	// increment response_count on the post
-	_, _ = r.db.ExecContext(ctx,
-		`UPDATE public.sourcing_posts SET response_count = response_count + 1, updated_at = CURRENT_TIMESTAMP WHERE post_id = $1`,
-		postID)
-	return r.findResponse(ctx, id)
-}
-
-func (r *PostgresRepository) UpdateResponse(ctx context.Context, responseID int64, req UpdateResponseRequest) (*PostResponse, error) {
-	result, err := r.db.ExecContext(ctx,
-		`UPDATE public.sourcing_post_responses SET status = $2 WHERE response_id = $1`,
-		responseID, strings.ToUpper(req.Status))
-	if err != nil {
-		return nil, err
-	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return nil, ErrNotFound
-	}
-	return r.findResponse(ctx, responseID)
-}
-
-func (r *PostgresRepository) findResponse(ctx context.Context, id int64) (*PostResponse, error) {
-	resp, err := scanResponseRow(r.db.QueryRowContext(ctx, responseBaseSelect()+` WHERE spr.response_id = $1`, id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	return resp, err
-}
 
 // ---- Auth helpers ----
 
@@ -530,54 +310,6 @@ func (r *PostgresRepository) IsNurseryOwner(ctx context.Context, nurseryID int64
 
 // ---- SQL helpers ----
 
-func postBaseSelect() string {
-	return `
-		SELECT sp.post_id, sp.post_code, sp.nursery_id, n.nursery_name,
-			sp.posted_by_user_id, u.first_name,
-			sp.post_type, sp.plant_id, sp.plant_name, sp.size_description,
-			sp.quantity, sp.urgency, sp.needed_by_date, sp.notes,
-			sp.radius_km, sp.response_count, sp.status,
-			sp.expires_at, sp.closed_at, sp.created_at, sp.updated_at
-		FROM public.sourcing_posts sp
-		JOIN public.nurseries n ON n.nursery_id = sp.nursery_id
-		JOIN public.users u ON u.user_id = sp.posted_by_user_id
-	`
-}
-
-func responseBaseSelect() string {
-	return `
-		SELECT spr.response_id, spr.post_id, spr.responder_nursery_id, n.nursery_name,
-			spr.responded_by_user_id, u.first_name,
-			spr.available_quantity, spr.notes, spr.contact_info, spr.status,
-			spr.responded_at, spr.created_at
-		FROM public.sourcing_post_responses spr
-		JOIN public.nurseries n ON n.nursery_id = spr.responder_nursery_id
-		JOIN public.users u ON u.user_id = spr.responded_by_user_id
-	`
-}
-
-func buildPostWhere(q ListPostsQuery) (string, []any) {
-	clauses := []string{"sp.deleted_at IS NULL"}
-	args := []any{}
-	if q.NurseryID > 0 {
-		args = append(args, q.NurseryID)
-		clauses = append(clauses, fmt.Sprintf("sp.nursery_id = $%d", len(args)))
-	}
-	if q.PostType != "" {
-		args = append(args, strings.ToUpper(q.PostType))
-		clauses = append(clauses, fmt.Sprintf("sp.post_type = $%d", len(args)))
-	}
-	if q.Status != "" {
-		args = append(args, strings.ToUpper(q.Status))
-		clauses = append(clauses, fmt.Sprintf("sp.status = $%d", len(args)))
-	}
-	if q.PlantName != "" {
-		args = append(args, "%"+q.PlantName+"%")
-		clauses = append(clauses, fmt.Sprintf("sp.plant_name ILIKE $%d", len(args)))
-	}
-	return "WHERE " + strings.Join(clauses, " AND "), args
-}
-
 // ---- Scan helpers ----
 
 func scanMember(row interface{ Scan(...any) error }) (*Member, error) {
@@ -591,112 +323,9 @@ func scanMember(row interface{ Scan(...any) error }) (*Member, error) {
 	return &m, nil
 }
 
-func scanPost(row interface{ Scan(...any) error }) (SourcingPost, error) {
-	var p SourcingPost
-	var sizeDesc, notes sql.NullString
-	var plantID sql.NullInt64
-	var qty sql.NullInt32
-	var neededByDate, expiresAt, closedAt sql.NullTime
-	if err := row.Scan(
-		&p.ID, &p.PostCode, &p.NurseryID, &p.NurseryName,
-		&p.PostedByUserID, &p.PostedByName,
-		&p.PostType, &plantID, &p.PlantName, &sizeDesc,
-		&qty, &p.Urgency, &neededByDate, &notes,
-		&p.RadiusKM, &p.ResponseCount, &p.Status,
-		&expiresAt, &closedAt, &p.CreatedAt, &p.UpdatedAt,
-	); err != nil {
-		return SourcingPost{}, err
-	}
-	if plantID.Valid {
-		p.PlantID = &plantID.Int64
-	}
-	p.SizeDesc = nullStr(sizeDesc)
-	p.Notes = nullStr(notes)
-	if qty.Valid {
-		v := int(qty.Int32)
-		p.Quantity = &v
-	}
-	if neededByDate.Valid {
-		p.NeededByDate = &neededByDate.Time
-	}
-	if expiresAt.Valid {
-		p.ExpiresAt = &expiresAt.Time
-	}
-	if closedAt.Valid {
-		p.ClosedAt = &closedAt.Time
-	}
-	return p, nil
-}
-
-func scanPostRow(row interface{ Scan(...any) error }) (*SourcingPost, error) {
-	p, err := scanPost(row)
-	if err != nil {
-		return nil, err
-	}
-	return &p, nil
-}
-
-func scanResponseRow(row interface{ Scan(...any) error }) (*PostResponse, error) {
-	var resp PostResponse
-	var notes, contactInfo sql.NullString
-	var qty sql.NullInt32
-	if err := row.Scan(
-		&resp.ID, &resp.PostID, &resp.ResponderNurseryID, &resp.ResponderNursery,
-		&resp.RespondedByUserID, &resp.RespondedByName,
-		&qty, &notes, &contactInfo, &resp.Status,
-		&resp.RespondedAt, &resp.CreatedAt,
-	); err != nil {
-		return nil, err
-	}
-	if qty.Valid {
-		v := int(qty.Int32)
-		resp.AvailableQuantity = &v
-	}
-	resp.Notes = nullStr(notes)
-	resp.ContactInfo = nullStr(contactInfo)
-	return &resp, nil
-}
-
 func nullStr(s sql.NullString) *string {
 	if !s.Valid || s.String == "" {
 		return nil
 	}
 	return &s.String
-}
-
-func strPtrOrNil(s *string) any {
-	if s == nil || *s == "" {
-		return nil
-	}
-	return *s
-}
-
-func intPtrOrNil(v *int) any {
-	if v == nil {
-		return nil
-	}
-	return *v
-}
-
-func parseDateOrNil(s *string) any {
-	if s == nil || *s == "" {
-		return nil
-	}
-	t, err := time.Parse("2006-01-02", *s)
-	if err != nil {
-		return nil
-	}
-	return t
-}
-
-func parseTimeOrNil(s *string) any {
-	if s == nil || *s == "" {
-		return nil
-	}
-	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05", "2006-01-02"} {
-		if t, err := time.Parse(layout, *s); err == nil {
-			return t
-		}
-	}
-	return nil
 }

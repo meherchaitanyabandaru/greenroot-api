@@ -51,57 +51,6 @@ type TopItem struct {
 	Photos       []string `json:"photos"`
 }
 
-// SourcingPost is a NEED or AVAILABLE announcement broadcast to nearby members.
-type SourcingPost struct {
-	ID             int64       `json:"id"`
-	PostCode       string      `json:"post_code"`
-	NurseryID      int64       `json:"nursery_id"`
-	NurseryName    string      `json:"nursery_name"`
-	PostedByUserID int64       `json:"posted_by_user_id"`
-	PostedByName   string      `json:"posted_by_name"`
-	PostType       string      `json:"post_type"` // NEED | AVAILABLE
-	PlantID        *int64      `json:"plant_id,omitempty"`
-	PlantName      string      `json:"plant_name"`
-	SizeDesc       *string     `json:"size_description,omitempty"`
-	Quantity       *int        `json:"quantity,omitempty"`
-	Urgency        string      `json:"urgency"` // TODAY | URGENT | FLEXIBLE
-	NeededByDate   *time.Time  `json:"needed_by_date,omitempty"`
-	Notes          *string     `json:"notes,omitempty"`
-	RadiusKM       int         `json:"radius_km"`
-	ResponseCount  int         `json:"response_count"`
-	Status         string      `json:"status"` // OPEN | CLOSED | EXPIRED
-	ExpiresAt      *time.Time  `json:"expires_at,omitempty"`
-	ClosedAt       *time.Time  `json:"closed_at,omitempty"`
-	Photos         []PostPhoto `json:"photos,omitempty"`
-	CreatedAt      time.Time   `json:"created_at"`
-	UpdatedAt      time.Time   `json:"updated_at"`
-}
-
-// PostPhoto is a photo attached to a SourcingPost.
-type PostPhoto struct {
-	ID           int64     `json:"id"`
-	PostID       int64     `json:"post_id"`
-	PhotoURL     string    `json:"photo_url"`
-	DisplayOrder int16     `json:"display_order"`
-	CreatedAt    time.Time `json:"created_at"`
-}
-
-// PostResponse is a reply from another network member to an open SourcingPost.
-type PostResponse struct {
-	ID                 int64     `json:"id"`
-	PostID             int64     `json:"post_id"`
-	ResponderNurseryID int64     `json:"responder_nursery_id"`
-	ResponderNursery   string    `json:"responder_nursery"`
-	RespondedByUserID  int64     `json:"responded_by_user_id"`
-	RespondedByName    string    `json:"responded_by_name"`
-	AvailableQuantity  *int      `json:"available_quantity,omitempty"`
-	Notes              *string   `json:"notes,omitempty"`
-	ContactInfo        *string   `json:"contact_info,omitempty"`
-	Status             string    `json:"status"` // PENDING | ACCEPTED | DECLINED
-	RespondedAt        time.Time `json:"responded_at"`
-	CreatedAt          time.Time `json:"created_at"`
-}
-
 type Pagination struct {
 	Page       int   `json:"page"`
 	PerPage    int   `json:"per_page"`
@@ -127,49 +76,6 @@ type NearbyQuery struct {
 	PerPage   int      `json:"-"`
 }
 
-type CreatePostRequest struct {
-	NurseryID    int64   `json:"nursery_id"`
-	PostType     string  `json:"post_type"`
-	PlantID      *int64  `json:"plant_id,omitempty"`
-	PlantName    string  `json:"plant_name"`
-	SizeDesc     *string `json:"size_description,omitempty"`
-	Quantity     *int    `json:"quantity,omitempty"`
-	Urgency      string  `json:"urgency"`
-	NeededByDate *string `json:"needed_by_date,omitempty"`
-	Notes        *string `json:"notes,omitempty"`
-	RadiusKM     int     `json:"radius_km"`
-	ExpiresAt    *string `json:"expires_at,omitempty"`
-}
-
-type UpdatePostRequest struct {
-	PlantName string  `json:"plant_name"`
-	SizeDesc  *string `json:"size_description,omitempty"`
-	Quantity  *int    `json:"quantity,omitempty"`
-	Urgency   string  `json:"urgency"`
-	Notes     *string `json:"notes,omitempty"`
-	Status    string  `json:"status"`
-}
-
-type ListPostsQuery struct {
-	NurseryID int64  `json:"-"`
-	PostType  string `json:"-"`
-	Status    string `json:"-"`
-	PlantName string `json:"-"`
-	Page      int    `json:"-"`
-	PerPage   int    `json:"-"`
-}
-
-type CreateResponseRequest struct {
-	ResponderNurseryID int64   `json:"responder_nursery_id"`
-	AvailableQuantity  *int    `json:"available_quantity,omitempty"`
-	Notes              *string `json:"notes,omitempty"`
-	ContactInfo        *string `json:"contact_info,omitempty"`
-}
-
-type UpdateResponseRequest struct {
-	Status string `json:"status"` // ACCEPTED | DECLINED
-}
-
 // ---- Response wrappers ----
 
 type MemberResponse struct {
@@ -179,21 +85,4 @@ type MemberResponse struct {
 type NearbyNurseriesResponse struct {
 	Nurseries  []NearbyNursery `json:"nurseries"`
 	Pagination Pagination      `json:"pagination"`
-}
-
-type PostWrapResponse struct {
-	Post SourcingPost `json:"post"`
-}
-
-type PostsResponse struct {
-	Posts      []SourcingPost `json:"posts"`
-	Pagination Pagination     `json:"pagination"`
-}
-
-type ResponseWrap struct {
-	Response PostResponse `json:"response"`
-}
-
-type ResponsesWrap struct {
-	Responses []PostResponse `json:"responses"`
 }
