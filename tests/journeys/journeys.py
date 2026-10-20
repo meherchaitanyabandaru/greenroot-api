@@ -1093,6 +1093,8 @@ def journey_market():
         prices = [x.get("price_per_unit") or 0 for x in out["ads"]]
         priced = [p for p in prices if p > 0]
         check(f"…priced ads in order, price on request last", prices[:len(priced)] == sorted(priced, reverse=sort == "price_desc") and all(p == 0 for p in prices[len(priced):]), prices)
+    for leftover in (cheap, ask):  # keep test ads out of the dev market
+        expect("…tidy up", "POST", f"/market/ads/{leftover['id']}/archive", owner.token, {})
     p1 = expect("page 1 of 1-per-page", "GET", "/market/ads?per_page=1&page=1", rival.token)
     p2 = expect("page 2", "GET", "/market/ads?per_page=1&page=2", rival.token)
     check("…pages differ and share the total", p1["total"] == p2["total"] >= 2 and p1["ads"][0]["id"] != p2["ads"][0]["id"], (p1["total"], p2["total"]))
