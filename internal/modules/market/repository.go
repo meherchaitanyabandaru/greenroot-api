@@ -273,10 +273,11 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, p
 		orderBy = "ma.published_at ASC NULLS LAST, ma.created_at ASC"
 	case "name":
 		orderBy = "LOWER(ma.plant_name) ASC, LOWER(ma.title) ASC, ma.created_at DESC"
+	// "Price on request" (no price, or 0 from older clients) sorts last both ways.
 	case "price_asc":
-		orderBy = "ma.price_per_unit ASC NULLS LAST, ma.created_at DESC"
+		orderBy = "NULLIF(ma.price_per_unit, 0) ASC NULLS LAST, ma.created_at DESC"
 	case "price_desc":
-		orderBy = "ma.price_per_unit DESC NULLS FIRST, ma.created_at DESC"
+		orderBy = "NULLIF(ma.price_per_unit, 0) DESC NULLS LAST, ma.created_at DESC"
 	case "popular":
 		orderBy = "ma.view_count DESC, ma.created_at DESC"
 	}

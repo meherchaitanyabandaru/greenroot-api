@@ -1081,6 +1081,15 @@ def journey_market():
     out = expect("browse sorted by plant name", "GET", "/market/ads?sort=name&per_page=50", rival.token)
     names = [x["plant_name"].lower() for x in out["ads"]]
     check("…A to Z", names == sorted(names), names)
+    cheap = expect("an ad priced 10", "POST", "/market/ads", owner.token, dict(ad, title="Cheap", price_per_unit=10), status=201)["ad"]
+    expect("…published", "POST", f"/market/ads/{cheap['id']}/publish", owner.token, {})
+    ask = expect("an ad at price on request (0)", "POST", "/market/ads", owner.token, dict(ad, title="On request", price_per_unit=0), status=201)["ad"]
+    expect("…published", "POST", f"/market/ads/{ask['id']}/publish", owner.token, {})
+    for sort in ("price_asc", "price_desc"):
+        out = expect(f"browse sorted {sort}", "GET", f"/market/ads?sort={sort}&per_page=50", rival.token)
+        prices = [x.get("price_per_unit") or 0 for x in out["ads"]]
+        priced = [p for p in prices if p > 0]
+        check(f"…priced ads in order, price on request last", prices[:len(priced)] == sorted(priced, reverse=sort == "price_desc") and all(p == 0 for p in prices[len(priced):]), prices)
     p1 = expect("page 1 of 1-per-page", "GET", "/market/ads?per_page=1&page=1", rival.token)
     p2 = expect("page 2", "GET", "/market/ads?per_page=1&page=2", rival.token)
     check("…pages differ and share the total", p1["total"] == p2["total"] >= 2 and p1["ads"][0]["id"] != p2["ads"][0]["id"], (p1["total"], p2["total"]))
