@@ -26,12 +26,20 @@ const (
 	StatusRemoved   = "REMOVED"
 )
 
+// Ad types: a nursery offers plants (SELL) or asks for them (WANT).
+const (
+	AdTypeSell = "SELL"
+	AdTypeWant = "WANT"
+)
+
 // AdExpireDays is how long a published ad stays live before auto-expiring.
 const AdExpireDays = 30
 
 type Ad struct {
 	ID                   int64                       `json:"id"`
 	Code                 string                      `json:"code"`
+	AdType               string                      `json:"ad_type"`             // SELL | WANT
+	NeededBy             *time.Time                  `json:"needed_by,omitempty"` // WANT only, a date
 	NurseryID            int64                       `json:"nursery_id"`
 	NurseryName          string                      `json:"nursery_name"`
 	NurseryVerified      bool                        `json:"nursery_verified"`
@@ -152,6 +160,7 @@ type Enquiry struct {
 	Code               string                           `json:"code"`
 	AdID               int64                            `json:"ad_id"`
 	AdTitle            string                           `json:"ad_title"`
+	AdType             string                           `json:"ad_type"`
 	AdStatus           string                           `json:"ad_status"`
 	AdPricePerUnit     *float64                         `json:"ad_price_per_unit,omitempty"`
 	AdPriceUnit        *string                          `json:"ad_price_unit,omitempty"`
@@ -213,6 +222,8 @@ type Message struct {
 // ── Request DTOs ─────────────────────────────────────────────
 
 type CreateAdRequest struct {
+	AdType               string     `json:"ad_type"`   // SELL (default) or WANT
+	NeededBy             *string    `json:"needed_by"` // WANT only, YYYY-MM-DD
 	PlantID              *int64     `json:"plant_id"`
 	PlantName            string     `json:"plant_name"`
 	CategoryName         *string    `json:"category_name"`
@@ -234,6 +245,7 @@ type CreateAdRequest struct {
 }
 
 type UpdateAdRequest struct {
+	NeededBy             *string    `json:"needed_by"` // WANT only, YYYY-MM-DD; "" clears
 	PlantID              *int64     `json:"plant_id"`
 	PlantName            *string    `json:"plant_name"`
 	CategoryName         *string    `json:"category_name"`
@@ -276,6 +288,7 @@ type MakeOfferRequest struct {
 // ── List queries ─────────────────────────────────────────────
 
 type AdsQuery struct {
+	Type     string  // SELL | WANT | "" (both)
 	Search   string  // full-text across title, plant_name, nursery_name, description
 	Sort     string  // newest|oldest|price_asc|price_desc|popular|nearest
 	Category string  // exact match on category_name (case-insensitive)

@@ -20,6 +20,54 @@ var (
 	ErrConflict     = apperrs.ErrConflict
 )
 
+// validateAdType defaults the type to SELL and enforces what a WANT is: a
+// catalog plant, a size and an optional quantity and date, never a price or
+// photos (sellers answer with an offer in the chat).
+func validateAdType(req *CreateAdRequest) error {
+	req.AdType = strings.ToUpper(strings.TrimSpace(req.AdType))
+	if req.AdType == "" {
+		req.AdType = AdTypeSell
+	}
+	switch req.AdType {
+	case AdTypeSell:
+		if req.NeededBy != nil {
+			return fmt.Errorf("%w: needed_by is only for wanted posts", ErrInvalidInput)
+		}
+		return nil
+	case AdTypeWant:
+		if req.PlantID == nil || *req.PlantID <= 0 {
+			return fmt.Errorf("%w: pick the plant you want from the catalog", ErrInvalidInput)
+		}
+		if req.PricePerUnit != nil || req.PriceUnit != nil {
+			return fmt.Errorf("%w: a wanted post has no price; sellers offer one in the chat", ErrInvalidInput)
+		}
+		if len(req.Photos) > 0 {
+			return fmt.Errorf("%w: a wanted post has no photos", ErrInvalidInput)
+		}
+		if req.NeededBy != nil {
+			if *req.NeededBy == "" {
+				req.NeededBy = nil
+			} else if err := validateNeededBy(*req.NeededBy); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: ad_type must be SELL or WANT", ErrInvalidInput)
+	}
+}
+
+func validateNeededBy(v string) error {
+	d, err := time.Parse("2006-01-02", v)
+	if err != nil {
+		return fmt.Errorf("%w: needed_by must be a date like 2026-11-30", ErrInvalidInput)
+	}
+	if d.Before(time.Now().Truncate(24 * time.Hour).AddDate(0, 0, -1)) {
+		return fmt.Errorf("%w: needed_by is in the past", ErrInvalidInput)
+	}
+	return nil
+}
+
 func (s *Service) SellerProfile(ctx context.Context, actor ActorContext, nurseryID int64) (SellerProfile, error) {
 	if !canAccessMarket(actor) {
 		return SellerProfile{}, ErrForbidden
@@ -70,6 +118,9 @@ func (s *Service) CreateAd(ctx context.Context, actor ActorContext, req CreateAd
 	}
 	if strings.TrimSpace(req.Title) == "" || strings.TrimSpace(req.PlantName) == "" {
 		return Ad{}, fmt.Errorf("%w: title and plant_name are required", ErrInvalidInput)
+	}
+	if err := validateAdType(&req); err != nil {
+		return Ad{}, err
 	}
 	if len(req.Photos) > 10 {
 		return Ad{}, fmt.Errorf("%w: maximum 10 photos allowed", ErrInvalidInput)
@@ -161,7 +212,7 @@ func (s *Service) BrowseAds(ctx context.Context, actor ActorContext, q AdsQuery)
 	redisutil.RecordSearchTerm(ctx, s.redis, nil, module, q.Search)
 	gen := redisutil.SearchGeneration(ctx, s.redis, nil, module, actor.UserID)
 	key := redisutil.SearchCacheKey(module, actor.UserID, gen,
-		q.Search, q.Sort, q.Category, fmt.Sprint(q.MinPrice), fmt.Sprint(q.MaxPrice),
+		q.Type, q.Search, q.Sort, q.Category, fmt.Sprint(q.MinPrice), fmt.Sprint(q.MaxPrice),
 		fmt.Sprint(q.Page), fmt.Sprint(q.PerPage))
 
 	if cached, ok := redisutil.GetCachedSearch[cachedAdsList](ctx, s.redis, nil, module, q.Search, key); ok {
@@ -245,6 +296,17 @@ func (s *Service) UpdateAd(ctx context.Context, actor ActorContext, id int64, re
 	}
 	if err := s.requireOwner(ctx, actor, ad.NurseryID); err != nil {
 		return Ad{}, err
+	}
+	if ad.AdType == AdTypeWant && (req.PricePerUnit != nil || req.PriceUnit != nil || len(req.Photos) > 0) {
+		return Ad{}, fmt.Errorf("%w: a wanted post has no price or photos; sellers offer a price in the chat", ErrInvalidInput)
+	}
+	if req.NeededBy != nil && ad.AdType != AdTypeWant {
+		return Ad{}, fmt.Errorf("%w: needed_by is only for wanted posts", ErrInvalidInput)
+	}
+	if req.NeededBy != nil && *req.NeededBy != "" {
+		if err := validateNeededBy(*req.NeededBy); err != nil {
+			return Ad{}, err
+		}
 	}
 	switch ad.Status {
 	case StatusArchived, StatusRemoved:

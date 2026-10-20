@@ -141,19 +141,21 @@ func (r *PostgresRepository) CreateAd(ctx context.Context, nurseryID, userID int
 		   (nursery_id, created_by_user_id, plant_id, plant_name, category_name,
 		    title, description, quantity, size_description, price_per_unit, price_unit, photos,
 		    pickup_address, pickup_landmark, pickup_latitude, pickup_longitude, pickup_location,
-		    pickup_gps_accuracy_meters, pickup_location_source, pickup_confirmed_by_user_id, pickup_confirmed_at)
+		    pickup_gps_accuracy_meters, pickup_location_source, pickup_confirmed_by_user_id, pickup_confirmed_at,
+		    ad_type, needed_by)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
 		    CASE WHEN $15::numeric IS NOT NULL AND $16::numeric IS NOT NULL
 		      THEN ST_SetSRID(ST_MakePoint($16::double precision, $15::double precision), 4326)::geography
 		      ELSE NULL
 		    END,
-		    $17,$18,$19,$20)
+		    $17,$18,$19,$20,$21,$22::date)
 		 RETURNING ad_id`,
 		nurseryID, userID, req.PlantID, req.PlantName, req.CategoryName,
 		req.Title, req.Description, req.Quantity, req.SizeDescription,
 		req.PricePerUnit, req.PriceUnit, photos,
 		req.PickupAddress, req.PickupLandmark, req.PickupLatitude, req.PickupLongitude,
 		req.PickupGPSAccuracyM, req.PickupLocationSource, req.PickupConfirmedBy, req.PickupConfirmedAt,
+		req.AdType, req.NeededBy,
 	).Scan(&id)
 	if err != nil {
 		return Ad{}, err
@@ -163,7 +165,7 @@ func (r *PostgresRepository) CreateAd(ctx context.Context, nurseryID, userID int
 
 func (r *PostgresRepository) GetAd(ctx context.Context, id int64) (Ad, error) {
 	const q = `
-		SELECT ma.ad_id, ma.ad_code, ma.nursery_id, n.nursery_name,
+		SELECT ma.ad_id, ma.ad_code, ma.ad_type, ma.needed_by, ma.nursery_id, n.nursery_name,
 		       (n.status IN ('ACTIVE', 'APPROVED')) AS nursery_verified, n.mobile AS nursery_mobile,
 		       ma.created_by_user_id, ma.plant_id, ma.plant_name, ma.category_name,
 		       ma.title, ma.description, ma.quantity, ma.size_description,
@@ -187,6 +189,10 @@ func (r *PostgresRepository) GetAd(ctx context.Context, id int64) (Ad, error) {
 func (r *PostgresRepository) ListPublished(ctx context.Context, q AdsQuery) ([]Ad, int, error) {
 	args := []any{}
 	filter := "ma.status = 'PUBLISHED'"
+	if q.Type != "" {
+		args = append(args, q.Type)
+		filter += fmt.Sprintf(" AND ma.ad_type = $%d", len(args))
+	}
 	if q.Search != "" {
 		args = append(args, "%"+strings.ToLower(q.Search)+"%")
 		n := len(args)
@@ -274,7 +280,7 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, p
 
 	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
 	listQ := fmt.Sprintf(`
-		SELECT ma.ad_id, ma.ad_code, ma.nursery_id, n.nursery_name,
+		SELECT ma.ad_id, ma.ad_code, ma.ad_type, ma.needed_by, ma.nursery_id, n.nursery_name,
 		       (n.status IN ('ACTIVE', 'APPROVED')) AS nursery_verified, n.mobile AS nursery_mobile,
 		       ma.created_by_user_id, ma.plant_id, ma.plant_name, ma.category_name,
 		       ma.title, ma.description, ma.quantity, ma.size_description,
@@ -333,6 +339,9 @@ func (r *PostgresRepository) UpdateAd(ctx context.Context, id, userID int64, req
 	}
 	if req.PlantName != nil {
 		add("plant_name", *req.PlantName)
+	}
+	if req.NeededBy != nil {
+		addExpr("needed_by = NULLIF($1, '')::date", *req.NeededBy)
 	}
 	if req.PlantID != nil {
 		add("plant_id", *req.PlantID)
@@ -890,7 +899,7 @@ func scanAdRow(row rowScanner) (Ad, error) {
 	var pickupConfirmedAt, expiresAt, publishedAt, pausedAt, expiredAt, archivedAt sql.NullTime
 
 	if err := row.Scan(
-		&a.ID, &a.Code, &a.NurseryID, &a.NurseryName, &a.NurseryVerified, &nurseryMobile,
+		&a.ID, &a.Code, &a.AdType, &a.NeededBy, &a.NurseryID, &a.NurseryName, &a.NurseryVerified, &nurseryMobile,
 		&a.CreatedByUserID, &plantID, &a.PlantName, &categoryName,
 		&a.Title, &description, &quantity, &sizeDesc,
 		&pricePerUnit, &priceUnit, &photosRaw,
@@ -985,7 +994,7 @@ func scanEnquiry(row rowScanner) (Enquiry, error) {
 
 const enquirySelect = `
 	SELECT me.enquiry_id, me.enquiry_code,
-	       me.ad_id, ma.title, ma.status, ma.price_per_unit, ma.price_unit, ma.quantity, ma.photos->>0,
+	       me.ad_id, ma.title, ma.ad_type, ma.status, ma.price_per_unit, ma.price_unit, ma.quantity, ma.photos->>0,
 	       me.ad_nursery_id, ln.nursery_name,
 	       me.enquiring_nursery_id, en.nursery_name,
 	       me.created_by_user_id, me.message, me.quantity_needed,
@@ -1004,7 +1013,7 @@ func scanEnquiryRow(row rowScanner) (Enquiry, error) {
 
 	if err := row.Scan(
 		&e.ID, &e.Code,
-		&e.AdID, &e.AdTitle, &e.AdStatus, &e.AdPricePerUnit, &e.AdPriceUnit, &e.AdQuantity, &e.AdPhoto,
+		&e.AdID, &e.AdTitle, &e.AdType, &e.AdStatus, &e.AdPricePerUnit, &e.AdPriceUnit, &e.AdQuantity, &e.AdPhoto,
 		&e.AdNurseryID, &e.AdNurseryName,
 		&e.EnquiringNurseryID, &e.EnquiryNurseryName,
 		&e.CreatedByUserID, &e.Message, &quantityNeeded,

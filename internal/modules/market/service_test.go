@@ -985,3 +985,34 @@ func TestBlockDays(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateAdType(t *testing.T) {
+	plant, price, unit := int64(7), 120.0, "PER_PLANT"
+	future := time.Now().AddDate(0, 0, 10).Format("2006-01-02")
+	past := time.Now().AddDate(0, 0, -10).Format("2006-01-02")
+	cases := []struct {
+		name string
+		req  CreateAdRequest
+		ok   bool
+	}{
+		{"default is SELL", CreateAdRequest{}, true},
+		{"want with a catalog plant", CreateAdRequest{AdType: "want", PlantID: &plant, NeededBy: &future}, true},
+		{"want without a plant", CreateAdRequest{AdType: "WANT"}, false},
+		{"want with a price", CreateAdRequest{AdType: "WANT", PlantID: &plant, PricePerUnit: &price}, false},
+		{"want with a price unit", CreateAdRequest{AdType: "WANT", PlantID: &plant, PriceUnit: &unit}, false},
+		{"want with photos", CreateAdRequest{AdType: "WANT", PlantID: &plant, Photos: []string{"x"}}, false},
+		{"want needed in the past", CreateAdRequest{AdType: "WANT", PlantID: &plant, NeededBy: &past}, false},
+		{"sell with needed_by", CreateAdRequest{AdType: "SELL", NeededBy: &future}, false},
+		{"unknown type", CreateAdRequest{AdType: "SWAP"}, false},
+	}
+	for _, c := range cases {
+		req := c.req
+		err := validateAdType(&req)
+		if (err == nil) != c.ok {
+			t.Errorf("%s: err = %v, want ok=%v", c.name, err, c.ok)
+		}
+		if c.ok && req.AdType != AdTypeSell && req.AdType != AdTypeWant {
+			t.Errorf("%s: type not normalised: %q", c.name, req.AdType)
+		}
+	}
+}

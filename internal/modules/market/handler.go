@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
@@ -31,7 +33,13 @@ func (h *Handler) BrowseAds(w http.ResponseWriter, r *http.Request) {
 	}
 	minPrice, _ := strconv.ParseFloat(r.URL.Query().Get("min_price"), 64)
 	maxPrice, _ := strconv.ParseFloat(r.URL.Query().Get("max_price"), 64)
+	adType := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("type")))
+	if adType != "" && adType != AdTypeSell && adType != AdTypeWant {
+		writeError(w, fmt.Errorf("%w: type must be SELL or WANT", ErrInvalidInput))
+		return
+	}
 	q := AdsQuery{
+		Type:     adType,
 		Search:   r.URL.Query().Get("q"),
 		Sort:     r.URL.Query().Get("sort"),
 		Category: r.URL.Query().Get("category"),

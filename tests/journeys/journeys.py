@@ -1033,6 +1033,39 @@ def journey_market():
     expect("a closed chat cannot be cancelled", "POST", f"{chat}/cancel", rival.token, {}, status=409)
 
 
+def journey_wanted():
+    """Wanted posts: a nursery asks for a plant and size (no price); others answer with 'I have this' and offer a price in the chat."""
+    boss = admin()
+    owner, _, buyer, _, plants = team(boss)
+    rival = approved_owner(boss, "Supplier")
+    want = {"ad_type": "WANT", "plant_id": plants[1], "plant_name": "Neem", "title": "Wanted: Neem",
+            "size_description": "Sapling", "quantity": 300, "needed_by": time.strftime("%Y-%m-%d", time.localtime(time.time() + 20 * 86400)),
+            "description": "For a highway project"}
+    expect("a want with a price is refused", "POST", "/market/ads", owner.token, {**want, "price_per_unit": 50}, status=400)
+    expect("a want without a catalog plant is refused", "POST", "/market/ads", owner.token, {k: v for k, v in want.items() if k != "plant_id"}, status=400)
+    expect("a want needed in the past is refused", "POST", "/market/ads", owner.token, {**want, "needed_by": "2020-01-01"}, status=400)
+    expect("needed_by on a sale ad is refused", "POST", "/market/ads", owner.token, {"plant_name": "Neem", "title": "x", "needed_by": want["needed_by"]}, status=400)
+    expect("an unknown ad type is refused", "POST", "/market/ads", owner.token, {**want, "ad_type": "SWAP"}, status=400)
+    w = expect("owner posts a want", "POST", "/market/ads", owner.token, want, status=201)["ad"]
+    check("…WANT, no price, with the date", w["ad_type"] == "WANT" and w.get("price_per_unit") is None and w.get("needed_by", "").startswith(want["needed_by"]), w)
+    expect("a want cannot gain a price later", "PATCH", f"/market/ads/{w['id']}", owner.token, {"price_per_unit": 10}, status=400)
+    expect("owner publishes the want", "POST", f"/market/ads/{w['id']}/publish", owner.token, {})
+    wanted = expect("a supplier browses wants", "GET", "/market/ads?type=WANT&per_page=50", rival.token)
+    check("…sees it", w["id"] in [x["id"] for x in wanted["ads"]] and all(x["ad_type"] == "WANT" for x in wanted["ads"]), [x["id"] for x in wanted["ads"]])
+    sale = expect("…and the for-sale list", "GET", "/market/ads?type=SELL&per_page=50", rival.token)
+    check("…does not show wants", all(x["ad_type"] == "SELL" for x in sale["ads"]), [x["ad_type"] for x in sale["ads"]])
+    expect("an unknown browse type is refused", "GET", "/market/ads?type=SWAP", rival.token, status=400)
+    e = expect("the supplier answers 'I have this'", "POST", f"/market/ads/{w['id']}/enquiries", rival.token, {"message": "I have 300 neem saplings"}, status=201)["enquiry"]
+    check("…a chat about the want", e["ad_type"] == "WANT", e)
+    chat = f"/market/enquiries/{e['id']}"
+    offer = expect("the supplier offers a price", "POST", f"{chat}/offers", rival.token, {"price_per_unit": 45, "quantity": 300}, status=201)["message"]
+    deal = expect("the nursery that wanted it accepts", "POST", f"{chat}/offers/{offer['id']}/accept", owner.token, {})["enquiry"]
+    check("…deal agreed at Rs 45 × 300", deal["status"] == "DEAL_AGREED" and float(deal["agreed_price_per_unit"]) == 45, deal)
+    prof = expect("the wanting nursery's profile", "GET", f"/market/nurseries/{owner.nursery_id}", rival.token)["seller"]
+    check("…lists the want", any(x["id"] == w["id"] and x["ad_type"] == "WANT" for x in prof["ads"]), [x["id"] for x in prof["ads"]])
+    expect("buyers still cannot see the market", "GET", "/market/ads?type=WANT", buyer.token, status=403)
+
+
 def journey_moderation():
     """Reported ads: a serious report hides the ad at once; the admin restores or removes it; removals are strikes that block posting."""
     boss = admin()
@@ -1255,6 +1288,7 @@ JOURNEYS = [
     ("top_items", journey_top_items),
     ("payments", journey_payments),
     ("market", journey_market),
+    ("wanted", journey_wanted),
     ("moderation", journey_moderation),
     ("admin", journey_admin),
     ("redis", journey_redis),

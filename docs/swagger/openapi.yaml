@@ -2783,6 +2783,13 @@ paths:
           schema:
             type: string
         - in: query
+          name: type
+          required: false
+          description: SELL (for sale) or WANT (wanted); both when omitted
+          schema:
+            type: string
+            enum: [SELL, WANT]
+        - in: query
           name: sort
           required: false
           schema:
@@ -9937,6 +9944,15 @@ components:
     MarketAd:
       type: object
       properties:
+        ad_type:
+          type: string
+          enum: [SELL, WANT]
+          description: SELL offers plants; WANT asks for them and never has a price
+        needed_by:
+          type: string
+          format: date-time
+          nullable: true
+          description: WANT only
         archived_at:
           type: string
           format: date-time
@@ -10123,6 +10139,16 @@ components:
     MarketCreateAdRequest:
       type: object
       properties:
+        ad_type:
+          type: string
+          enum: [SELL, WANT]
+          default: SELL
+          description: A WANT needs plant_id and has no price, price_unit or photos
+        needed_by:
+          type: string
+          format: date
+          nullable: true
+          description: WANT only, YYYY-MM-DD, not in the past
         category_name:
           type: string
           nullable: true
@@ -10383,6 +10409,10 @@ components:
     MarketUpdateAdRequest:
       type: object
       properties:
+        needed_by:
+          type: string
+          nullable: true
+          description: WANT only, YYYY-MM-DD; empty string clears it
         category_name:
           type: string
           nullable: true

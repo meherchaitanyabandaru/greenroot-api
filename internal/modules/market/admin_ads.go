@@ -25,6 +25,7 @@ import (
 type AdminAd struct {
 	ID                 int64      `json:"id"`
 	Code               string     `json:"code"`
+	AdType             string     `json:"ad_type"`
 	Title              string     `json:"title"`
 	PlantName          string     `json:"plant_name"`
 	Description        *string    `json:"description,omitempty"`
@@ -60,7 +61,7 @@ var adminAdStatuses = map[string]bool{
 }
 
 const adminAdSelect = `
-	SELECT a.ad_id, a.ad_code, a.title, a.plant_name, a.description, a.photos, a.status, a.moderation_note,
+	SELECT a.ad_id, a.ad_code, a.ad_type, a.title, a.plant_name, a.description, a.photos, a.status, a.moderation_note,
 	       a.quantity, a.price_per_unit, a.price_unit, a.view_count, a.enquiry_count,
 	       (SELECT count(*) FROM public.market_ad_reports rp WHERE rp.ad_id = a.ad_id AND rp.status = 'PENDING'),
 	       n.nursery_id, n.nursery_name, (n.status IN ('ACTIVE', 'APPROVED')),
@@ -75,7 +76,7 @@ const adminAdSelect = `
 func scanAdminAd(row interface{ Scan(...any) error }) (AdminAd, error) {
 	var a AdminAd
 	var photos []byte
-	err := row.Scan(&a.ID, &a.Code, &a.Title, &a.PlantName, &a.Description, &photos, &a.Status, &a.ModerationNote,
+	err := row.Scan(&a.ID, &a.Code, &a.AdType, &a.Title, &a.PlantName, &a.Description, &photos, &a.Status, &a.ModerationNote,
 		&a.Quantity, &a.PricePerUnit, &a.PriceUnit, &a.ViewCount, &a.EnquiryCount, &a.PendingReports,
 		&a.NurseryID, &a.NurseryName, &a.NurseryVerified, &a.NurseryStrikes, &a.NurseryBlockedTill,
 		&a.PostedByName, &a.PostedByPhoto, &a.PublishedAt, &a.ExpiresAt, &a.CreatedAt)
