@@ -1085,3 +1085,30 @@ func TestValidateAdType(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateAccess(t *testing.T) {
+	yes, no := true, false
+	spot, blank := "Gate on NH-44", "  "
+	cases := []struct {
+		name        string
+		road, truck *bool
+		pickup      *string
+		wantErr     bool
+	}{
+		{"not stated", nil, nil, nil, false},
+		{"road and truck", &yes, &yes, nil, false},
+		{"road, no truck (narrow road)", &yes, &no, nil, false},
+		{"no road, pickup point given", &no, &no, &spot, false},
+		{"no road, no pickup point", &no, &no, nil, true},
+		{"no road, blank pickup point", &no, nil, &blank, true},
+		{"truck without a road", &no, &yes, &spot, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateAccess(tc.road, tc.truck, tc.pickup)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}

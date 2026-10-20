@@ -33,7 +33,7 @@ func validateAdType(req *CreateAdRequest) error {
 		if req.NeededBy != nil {
 			return fmt.Errorf("%w: needed_by is only for wanted posts", ErrInvalidInput)
 		}
-		return nil
+		return validateAccess(req.RoadAccessible, req.TruckAccessible, req.PickupLandmark)
 	case AdTypeWant:
 		if req.PlantID == nil || *req.PlantID <= 0 {
 			return fmt.Errorf("%w: pick the plant you want from the catalog", ErrInvalidInput)
@@ -43,6 +43,9 @@ func validateAdType(req *CreateAdRequest) error {
 		}
 		if len(req.Photos) > 0 {
 			return fmt.Errorf("%w: a wanted post has no photos", ErrInvalidInput)
+		}
+		if req.RoadAccessible != nil || req.TruckAccessible != nil || req.AccessInstructions != nil {
+			return fmt.Errorf("%w: road and truck access are only for plants you have", ErrInvalidInput)
 		}
 		if req.NeededBy != nil {
 			if *req.NeededBy == "" {
@@ -55,6 +58,22 @@ func validateAdType(req *CreateAdRequest) error {
 	default:
 		return fmt.Errorf("%w: ad_type must be SELL or WANT", ErrInvalidInput)
 	}
+}
+
+// MaxAdPhotos keeps ads quick to load.
+const MaxAdPhotos = 3
+
+// validateAccess checks a for-sale ad's pickup answers. Road and truck are
+// separate (a road may be too narrow for a truck), but a truck needs a road,
+// and with no road the seller must name a pickup point buyers can reach.
+func validateAccess(road, truck *bool, pickupPoint *string) error {
+	if truck != nil && *truck && road != nil && !*road {
+		return fmt.Errorf("%w: a truck cannot reach a place with no road", ErrInvalidInput)
+	}
+	if road != nil && !*road && (pickupPoint == nil || strings.TrimSpace(*pickupPoint) == "") {
+		return fmt.Errorf("%w: no road to the plants: give a pickup point buyers can reach", ErrInvalidInput)
+	}
+	return nil
 }
 
 func validateNeededBy(v string) error {
@@ -122,8 +141,8 @@ func (s *Service) CreateAd(ctx context.Context, actor ActorContext, req CreateAd
 	if err := validateAdType(&req); err != nil {
 		return Ad{}, err
 	}
-	if len(req.Photos) > 10 {
-		return Ad{}, fmt.Errorf("%w: maximum 10 photos allowed", ErrInvalidInput)
+	if len(req.Photos) > MaxAdPhotos {
+		return Ad{}, fmt.Errorf("%w: at most %d photos per ad", ErrInvalidInput, MaxAdPhotos)
 	}
 	req = markConfirmedPickup(actor, req)
 	if err := validatePickup(req.PickupLatitude, req.PickupLongitude, req.PickupGPSAccuracyM, req.PickupLocationSource); err != nil {
@@ -312,6 +331,18 @@ func (s *Service) UpdateAd(ctx context.Context, actor ActorContext, id int64, re
 	if ad.AdType == AdTypeWant && (req.PricePerUnit != nil || req.PriceUnit != nil || len(req.Photos) > 0) {
 		return Ad{}, fmt.Errorf("%w: a wanted post has no price or photos; sellers offer a price in the chat", ErrInvalidInput)
 	}
+	if ad.AdType == AdTypeWant && (req.RoadAccessible != nil || req.TruckAccessible != nil || req.AccessInstructions != nil) {
+		return Ad{}, fmt.Errorf("%w: road and truck access are only for plants you have", ErrInvalidInput)
+	}
+	if ad.AdType == AdTypeSell {
+		if err := validateAccess(
+			firstNonNil(req.RoadAccessible, ad.RoadAccessible),
+			firstNonNil(req.TruckAccessible, ad.TruckAccessible),
+			firstNonNil(req.PickupLandmark, ad.PickupLandmark),
+		); err != nil {
+			return Ad{}, err
+		}
+	}
 	if req.NeededBy != nil && ad.AdType != AdTypeWant {
 		return Ad{}, fmt.Errorf("%w: needed_by is only for wanted posts", ErrInvalidInput)
 	}
@@ -326,8 +357,8 @@ func (s *Service) UpdateAd(ctx context.Context, actor ActorContext, id int64, re
 	case StatusSuspended:
 		return Ad{}, fmt.Errorf("%w: this ad is under review and cannot be edited", ErrConflict)
 	}
-	if req.Photos != nil && len(req.Photos) > 10 {
-		return Ad{}, fmt.Errorf("%w: maximum 10 photos allowed", ErrInvalidInput)
+	if len(req.Photos) > MaxAdPhotos {
+		return Ad{}, fmt.Errorf("%w: at most %d photos per ad", ErrInvalidInput, MaxAdPhotos)
 	}
 	req = markConfirmedPickupUpdate(actor, req)
 	if err := validatePickup(req.PickupLatitude, req.PickupLongitude, req.PickupGPSAccuracyM, req.PickupLocationSource); err != nil {
@@ -413,6 +444,14 @@ func (s *Service) DeleteAd(ctx context.Context, actor ActorContext, id int64) er
 	}
 	s.bumpMarketSearchCache(ctx, actor.UserID)
 	return nil
+}
+
+// firstNonNil is the value an update leaves: the request's, else the stored one.
+func firstNonNil[T any](a, b *T) *T {
+	if a != nil {
+		return a
+	}
+	return b
 }
 
 func canDeleteAd(ad Ad) bool {

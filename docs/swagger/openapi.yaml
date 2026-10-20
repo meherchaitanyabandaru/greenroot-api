@@ -9790,6 +9790,19 @@ components:
         pickup_landmark:
           type: string
           nullable: true
+          description: Pickup point (roadside spot or meeting place); required when road_accessible is false
+        road_accessible:
+          type: boolean
+          nullable: true
+          description: SELL only. A road reaches the plants.
+        truck_accessible:
+          type: boolean
+          nullable: true
+          description: SELL only. A truck can reach the plants directly; cannot be true when road_accessible is false.
+        access_instructions:
+          type: string
+          nullable: true
+          description: SELL only. Directions, narrow roads, timing.
         pickup_latitude:
           type: number
           nullable: true
@@ -9907,6 +9920,7 @@ components:
           type: string
           nullable: true
         photos:
+          maxItems: 3
           type: array
           items:
             type: string
@@ -9927,6 +9941,19 @@ components:
         pickup_landmark:
           type: string
           nullable: true
+          description: Pickup point (roadside spot or meeting place); required when road_accessible is false
+        road_accessible:
+          type: boolean
+          nullable: true
+          description: SELL only. A road reaches the plants.
+        truck_accessible:
+          type: boolean
+          nullable: true
+          description: SELL only. A truck can reach the plants directly; cannot be true when road_accessible is false.
+        access_instructions:
+          type: string
+          nullable: true
+          description: SELL only. Directions, narrow roads, timing.
         pickup_latitude:
           type: number
           nullable: true
@@ -10189,6 +10216,7 @@ components:
           type: string
           nullable: true
         photos:
+          maxItems: 3
           type: array
           items:
             type: string
@@ -10209,6 +10237,19 @@ components:
         pickup_landmark:
           type: string
           nullable: true
+          description: Pickup point (roadside spot or meeting place); required when road_accessible is false
+        road_accessible:
+          type: boolean
+          nullable: true
+          description: SELL only. A road reaches the plants.
+        truck_accessible:
+          type: boolean
+          nullable: true
+          description: SELL only. A truck can reach the plants directly; cannot be true when road_accessible is false.
+        access_instructions:
+          type: string
+          nullable: true
+          description: SELL only. Directions, narrow roads, timing.
         pickup_latitude:
           type: number
           nullable: true

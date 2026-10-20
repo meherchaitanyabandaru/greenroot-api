@@ -1062,6 +1062,21 @@ def journey_market():
     expect("…cannot open it", "GET", f"/market/ads/{live['id']}", rival.token, status=404)
     expect("…cannot chat on it", "POST", f"/market/ads/{live['id']}/enquiries", rival.token, {"message": "hi"}, status=404)
 
+    # Photos (max 3) and pickup access, for plants you have only.
+    expect("four photos are refused", "POST", "/market/ads", owner.token, dict(ad, photos=["https://cdn.example/p.jpg"] * 4), status=400)
+    expect("a truck with no road is refused", "POST", "/market/ads", owner.token, dict(ad, road_accessible=False, truck_accessible=True, pickup_landmark="Gate"), status=400)
+    expect("no road and no pickup point is refused", "POST", "/market/ads", owner.token, dict(ad, road_accessible=False, truck_accessible=False), status=400)
+    acc = expect("road yes, truck no, with a pickup point and notes", "POST", "/market/ads", owner.token,
+                 dict(ad, photos=["https://cdn.example/p.jpg"] * 3, road_accessible=True, truck_accessible=False,
+                      pickup_landmark="Banyan tree on the village road", access_instructions="Narrow lane, tractors only"), status=201)["ad"]
+    check("…stored as sent", acc["road_accessible"] is True and acc["truck_accessible"] is False
+          and acc["pickup_landmark"] == "Banyan tree on the village road" and acc["access_instructions"] == "Narrow lane, tractors only", acc)
+    expect("…switching road off keeps the pickup point, so it is allowed", "PATCH", f"/market/ads/{acc['id']}", owner.token, {"road_accessible": False})
+    expect("…clearing the pickup point with no road is refused", "PATCH", f"/market/ads/{acc['id']}", owner.token, {"pickup_landmark": ""}, status=400)
+    neem = expect("look up neem", "GET", "/plants/lookup?q=Azadirachta", owner.token)["results"][0]["plant"]
+    expect("a wanted post cannot carry road or truck access", "POST", "/market/ads", owner.token,
+           {"ad_type": "WANT", "plant_id": neem["id"], "plant_name": "Neem", "title": "Neem", "road_accessible": True}, status=400)
+
     # Sort and server-side paging.
     out = expect("browse sorted by plant name", "GET", "/market/ads?sort=name&per_page=50", rival.token)
     names = [x["plant_name"].lower() for x in out["ads"]]

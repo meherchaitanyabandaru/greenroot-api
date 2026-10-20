@@ -152,20 +152,20 @@ func (r *PostgresRepository) CreateAd(ctx context.Context, nurseryID, userID int
 		    title, description, quantity, size_description, price_per_unit, price_unit, photos,
 		    pickup_address, pickup_landmark, pickup_latitude, pickup_longitude, pickup_location,
 		    pickup_gps_accuracy_meters, pickup_location_source, pickup_confirmed_by_user_id, pickup_confirmed_at,
-		    ad_type, needed_by)
+		    ad_type, needed_by, is_road_accessible, is_truck_accessible, access_instructions)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
 		    CASE WHEN $15::numeric IS NOT NULL AND $16::numeric IS NOT NULL
 		      THEN ST_SetSRID(ST_MakePoint($16::double precision, $15::double precision), 4326)::geography
 		      ELSE NULL
 		    END,
-		    $17,$18,$19,$20,$21,$22::date)
+		    $17,$18,$19,$20,$21,$22::date,$23,$24,$25)
 		 RETURNING ad_id`,
 		nurseryID, userID, req.PlantID, req.PlantName, req.CategoryName,
 		req.Title, req.Description, req.Quantity, req.SizeDescription,
 		req.PricePerUnit, req.PriceUnit, photos,
 		req.PickupAddress, req.PickupLandmark, req.PickupLatitude, req.PickupLongitude,
 		req.PickupGPSAccuracyM, req.PickupLocationSource, req.PickupConfirmedBy, req.PickupConfirmedAt,
-		req.AdType, req.NeededBy,
+		req.AdType, req.NeededBy, req.RoadAccessible, req.TruckAccessible, req.AccessInstructions,
 	).Scan(&id)
 	if err != nil {
 		return Ad{}, err
@@ -183,6 +183,7 @@ func (r *PostgresRepository) GetAd(ctx context.Context, id int64) (Ad, error) {
 		       ma.pickup_address, ma.pickup_landmark, ma.pickup_latitude, ma.pickup_longitude,
 		       ma.pickup_gps_accuracy_meters, ma.pickup_location_source,
 		       ma.pickup_confirmed_by_user_id, ma.pickup_confirmed_at,
+		       ma.is_road_accessible, ma.is_truck_accessible, ma.access_instructions,
 		       ma.status, ma.view_count, ma.save_count, ma.enquiry_count,
 		       ma.expires_at, ma.published_at,
 		       ma.paused_at, ma.expired_at, ma.archived_at, ma.moderation_note,
@@ -295,6 +296,7 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, p
 		       ma.pickup_address, ma.pickup_landmark, ma.pickup_latitude, ma.pickup_longitude,
 		       ma.pickup_gps_accuracy_meters, ma.pickup_location_source,
 		       ma.pickup_confirmed_by_user_id, ma.pickup_confirmed_at,
+		       ma.is_road_accessible, ma.is_truck_accessible, ma.access_instructions,
 		       ma.status, ma.view_count, ma.save_count, ma.enquiry_count,
 		       ma.expires_at, ma.published_at,
 		       ma.paused_at, ma.expired_at, ma.archived_at, ma.moderation_note,
@@ -382,6 +384,15 @@ func (r *PostgresRepository) UpdateAd(ctx context.Context, id, userID int64, req
 	}
 	if req.PickupLandmark != nil {
 		add("pickup_landmark", *req.PickupLandmark)
+	}
+	if req.RoadAccessible != nil {
+		add("is_road_accessible", *req.RoadAccessible)
+	}
+	if req.TruckAccessible != nil {
+		add("is_truck_accessible", *req.TruckAccessible)
+	}
+	if req.AccessInstructions != nil {
+		add("access_instructions", *req.AccessInstructions)
 	}
 	if req.PickupLatitude != nil && req.PickupLongitude != nil {
 		addExpr("pickup_latitude = $1, pickup_longitude = $2, pickup_location = ST_SetSRID(ST_MakePoint($2::double precision, $1::double precision), 4326)::geography", *req.PickupLatitude, *req.PickupLongitude)
@@ -1009,6 +1020,7 @@ func scanAdRow(row rowScanner) (Ad, error) {
 		&pricePerUnit, &priceUnit, &photosRaw,
 		&pickupAddress, &pickupLandmark, &pickupLat, &pickupLon,
 		&pickupAccuracy, &pickupSource, &pickupConfirmedBy, &pickupConfirmedAt,
+		&a.RoadAccessible, &a.TruckAccessible, &a.AccessInstructions,
 		&a.Status, &a.ViewCount, &a.SaveCount, &a.EnquiryCount,
 		&expiresAt, &publishedAt, &pausedAt, &expiredAt, &archivedAt, &a.ModerationNote,
 		&a.PostedByName, &a.PostedByPhoto,

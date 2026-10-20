@@ -59,6 +59,9 @@ type Ad struct {
 	Photos               []string                    `json:"photos"`
 	PickupAddress        *string                     `json:"pickup_address,omitempty"`
 	PickupLandmark       *string                     `json:"pickup_landmark,omitempty"`
+	RoadAccessible       *bool                       `json:"road_accessible,omitempty"`
+	TruckAccessible      *bool                       `json:"truck_accessible,omitempty"`
+	AccessInstructions   *string                     `json:"access_instructions,omitempty"`
 	PickupLatitude       *float64                    `json:"pickup_latitude,omitempty"`
 	PickupLongitude      *float64                    `json:"pickup_longitude,omitempty"`
 	PickupGPSAccuracyM   *float64                    `json:"pickup_gps_accuracy_meters,omitempty"`
@@ -251,6 +254,9 @@ type CreateAdRequest struct {
 	PickupLocationSource *string    `json:"pickup_location_source"`
 	PickupConfirmedBy    *int64     `json:"pickup_confirmed_by,omitempty"`
 	PickupConfirmedAt    *time.Time `json:"pickup_confirmed_at,omitempty"`
+	RoadAccessible       *bool      `json:"road_accessible"`     // SELL only
+	TruckAccessible      *bool      `json:"truck_accessible"`    // SELL only; separate from road
+	AccessInstructions   *string    `json:"access_instructions"` // SELL only
 }
 
 type UpdateAdRequest struct {
@@ -273,6 +279,9 @@ type UpdateAdRequest struct {
 	PickupLocationSource *string    `json:"pickup_location_source"`
 	PickupConfirmedBy    *int64     `json:"pickup_confirmed_by,omitempty"`
 	PickupConfirmedAt    *time.Time `json:"pickup_confirmed_at,omitempty"`
+	RoadAccessible       *bool      `json:"road_accessible"`     // SELL only
+	TruckAccessible      *bool      `json:"truck_accessible"`    // SELL only; separate from road
+	AccessInstructions   *string    `json:"access_instructions"` // SELL only
 }
 
 type CreateEnquiryRequest struct {
