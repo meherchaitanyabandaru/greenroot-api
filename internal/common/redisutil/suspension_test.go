@@ -193,3 +193,25 @@ func TestSuspensionFunctions_RedisOutageIsSilent(t *testing.T) {
 	ClearNurserySuspension(ctx, client, nil, 7)
 	seedSuspensions(ctx, client, nil, []int64{10}, []int64{5})
 }
+
+// Subscription changes mark a nursery's tokens stale until the marker expires.
+func TestNurseryClaimsStale_MarkAndExpire(t *testing.T) {
+	ctx := context.Background()
+	srv, client := newTestRedis(t)
+
+	if got := NurseryClaimsStaleSince(ctx, client, 7); got != 0 {
+		t.Fatalf("unmarked nursery: want 0, got %d", got)
+	}
+	before := time.Now().Unix()
+	MarkNurseryClaimsStale(ctx, client, nil, 7, time.Hour)
+	if got := NurseryClaimsStaleSince(ctx, client, 7); got < before {
+		t.Fatalf("marked nursery: want >= %d, got %d", before, got)
+	}
+	if got := NurseryClaimsStaleSince(ctx, client, 8); got != 0 {
+		t.Fatalf("other nursery must be unaffected, got %d", got)
+	}
+	srv.FastForward(time.Hour + time.Second)
+	if got := NurseryClaimsStaleSince(ctx, client, 7); got != 0 {
+		t.Fatalf("marker should expire after its TTL, got %d", got)
+	}
+}

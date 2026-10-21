@@ -22,6 +22,7 @@ var (
 	ErrForbidden    = apperrs.ErrForbidden
 	ErrInvalidInput = apperrs.ErrInvalidInput
 	ErrConflict     = errors.New("conflict")
+	ErrPaused       = errors.New("subscription paused by admin")
 )
 
 type Service struct {
@@ -147,7 +148,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateSu
 	if err != nil {
 		return UserSubscription{}, err
 	}
-	if !plan.IsActive {
+	if !plan.IsActive || (isFreePlan(plan.Code) && !actor.HasRole("ADMIN")) {
 		return UserSubscription{}, ErrInvalidInput
 	}
 	startDate, err := parseStartDate(input.StartDate)
@@ -180,8 +181,24 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateSu
 		_ = s.repository.IncrementPromoUsed(ctx, promoID)
 	}
 	s.scheduleSubscriptionExpiry(ctx, subscription)
+	s.claimsChanged(ctx, userID)
 	s.audit(ctx, actor, subscription.ID, actionInsert, map[string]any{"plan_id": input.PlanID, "user_id": userID, "billing_cycle": input.BillingCycle, "promo_code": input.PromoCode})
 	return enrichSubscription(actor, *subscription), nil
+}
+
+// claimsChanged makes the owner's (and their managers') access tokens refresh
+// so the subscription gate sees this change now, not after the token expires.
+func (s *Service) claimsChanged(ctx context.Context, ownerUserID int64) {
+	if s.redis == nil {
+		return
+	}
+	nurseryID, err := s.repository.OwnedNurseryID(ctx, ownerUserID)
+	if err != nil {
+		slog.Warn("owned nursery lookup failed", "user_id", ownerUserID, "error", err)
+		return
+	}
+	// Longer than any access token, so every pre-change token is caught.
+	redisutil.MarkNurseryClaimsStale(ctx, s.redis, slog.Default(), nurseryID, time.Hour)
 }
 
 func (s *Service) Me(ctx context.Context, actor ActorContext) ([]UserSubscription, Pagination, error) {
@@ -210,6 +227,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, subscrip
 	if err != nil {
 		return UserSubscription{}, err
 	}
+	s.claimsChanged(ctx, subscription.UserID)
 	s.audit(ctx, actor, subscription.ID, actionUpdate, map[string]any{"subscription_status": status})
 	return enrichSubscription(actor, *subscription), nil
 }
@@ -228,9 +246,22 @@ func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID 
 	if err := s.canAccess(actor, *current); err != nil {
 		return UserSubscription{}, err
 	}
-	plan, err := s.repository.FindPlan(ctx, current.PlanID)
+	// A pause is an admin decision; paying must not silently lift it.
+	if current.Status == statusPaused && !actor.HasRole("ADMIN") {
+		return UserSubscription{}, ErrPaused
+	}
+	planID := current.PlanID
+	if input.PlanID != nil && *input.PlanID > 0 {
+		planID = *input.PlanID
+	}
+	plan, err := s.repository.FindPlan(ctx, planID)
 	if err != nil {
 		return UserSubscription{}, err
+	}
+	// Free plans come only from nursery approval (or an admin extending one):
+	// an owner renewing must move to a paid plan, or the trial never ends.
+	if !plan.IsActive || (isFreePlan(plan.Code) && !actor.HasRole("ADMIN")) {
+		return UserSubscription{}, ErrInvalidInput
 	}
 	startDate := time.Now().Truncate(24 * time.Hour)
 	if current.EndDate != nil && current.EndDate.After(startDate) {
@@ -241,11 +272,12 @@ func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID 
 	if err != nil {
 		return UserSubscription{}, ErrInvalidInput
 	}
-	finalAmount, promoID, err := s.applyPromoDiscount(ctx, input.PromoCode, current.PlanCode, cycle, amount)
+	finalAmount, promoID, err := s.applyPromoDiscount(ctx, input.PromoCode, plan.Code, cycle, amount)
 	if err != nil {
 		return UserSubscription{}, ErrInvalidInput
 	}
 	subscription, err := s.repository.Renew(ctx, subscriptionID, RenewSubscriptionInput{
+		PlanID:    planID,
 		StartDate: startDate,
 		EndDate:   endDate,
 		AutoRenew: current.AutoRenew,
@@ -260,6 +292,7 @@ func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID 
 		_ = s.repository.IncrementPromoUsed(ctx, promoID)
 	}
 	s.scheduleSubscriptionExpiry(ctx, subscription)
+	s.claimsChanged(ctx, current.UserID)
 	s.audit(ctx, actor, subscription.ID, actionUpdate, map[string]any{"renewed_until": endDate.Format(time.DateOnly), "billing_cycle": input.BillingCycle, "promo_code": input.PromoCode})
 	return enrichSubscription(actor, *subscription), nil
 }
@@ -294,6 +327,7 @@ func (s *Service) Cancel(ctx context.Context, actor ActorContext, subscriptionID
 	if err != nil {
 		return UserSubscription{}, err
 	}
+	s.claimsChanged(ctx, current.UserID)
 	s.audit(ctx, actor, subscription.ID, actionUpdate, map[string]any{"subscription_status": statusCancelled, "reason": stringOrEmpty(input.Reason), "cancel_immediately": input.CancelImmediately})
 	return enrichSubscription(actor, *subscription), nil
 }
@@ -717,6 +751,11 @@ func (s *Service) UpdatePlan(ctx context.Context, actor ActorContext, planID int
 	}
 	s.invalidatePlanCache(ctx)
 	return *plan, nil
+}
+
+// isFreePlan: plans an owner may not choose themselves.
+func isFreePlan(code string) bool {
+	return code == "TRIAL" || code == "FREE"
 }
 
 func isAllowedStatus(value string) bool {

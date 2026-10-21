@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -72,4 +73,31 @@ func IsNurserySuspended(ctx context.Context, rdb redis.Cmdable, nurseryID int64)
 	key := fmt.Sprintf("%s%d", KeySuspendedNursery, nurseryID)
 	n, err := rdb.Exists(ctx, key).Result()
 	return err == nil && n > 0
+}
+
+// MarkNurseryClaimsStale records that the subscription data baked into access
+// tokens for nurseryID changed now. Tokens issued before this moment are
+// refused with 401 so the client refreshes and gets current claims. The key
+// outlives the longest access token (ttl) and then expires on its own.
+func MarkNurseryClaimsStale(ctx context.Context, rdb redis.Cmdable, log *slog.Logger, nurseryID int64, ttl time.Duration) {
+	if rdb == nil || nurseryID <= 0 {
+		return
+	}
+	key := fmt.Sprintf("%s%d", KeyNurseryClaimsStale, nurseryID)
+	if err := rdb.Set(ctx, key, time.Now().Unix(), ttl).Err(); err != nil {
+		logger(log).Warn("redis claims-stale write failed", "nursery_id", nurseryID, "error", err)
+	}
+}
+
+// NurseryClaimsStaleSince returns the Unix second set by MarkNurseryClaimsStale,
+// or 0 when nothing changed recently (or Redis is unavailable).
+func NurseryClaimsStaleSince(ctx context.Context, rdb redis.Cmdable, nurseryID int64) int64 {
+	if rdb == nil || nurseryID <= 0 {
+		return 0
+	}
+	v, err := rdb.Get(ctx, fmt.Sprintf("%s%d", KeyNurseryClaimsStale, nurseryID)).Int64()
+	if err != nil {
+		return 0
+	}
+	return v
 }

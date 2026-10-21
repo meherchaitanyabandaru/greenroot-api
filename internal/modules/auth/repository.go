@@ -391,14 +391,22 @@ func (r *PostgresRepository) GetTokenContext(ctx context.Context, userID int64) 
 		&tc.NurseryID, &tc.NurseryStatus, &ownerUserID,
 	); err == nil && tc.NurseryID > 0 {
 		// Subscription belongs to the nursery owner (covers both owner and manager tokens).
+		// An EXPIRED row ends no later than the day it was marked expired:
+		// an admin expiring a subscription early must not leave it live until
+		// its original end_date. The grace window then runs from that day.
+		// Rows long past their end are kept so the gate says "expired — renew"
+		// rather than "no subscription".
 		const subQuery = `
-			SELECT sp.plan_code, us.end_date
-			FROM public.user_subscriptions us
-			JOIN public.subscription_plans sp ON sp.plan_id = us.plan_id
-			WHERE us.user_id = $1
-			  AND us.status IN ('ACTIVE', 'TRIAL', 'EXPIRED')
-			  AND (us.end_date IS NULL OR us.end_date >= CURRENT_DATE - INTERVAL '7 days')
-			ORDER BY us.end_date DESC NULLS FIRST
+			SELECT plan_code, eff_end FROM (
+				SELECT sp.plan_code,
+					CASE WHEN us.status = 'EXPIRED' THEN LEAST(us.end_date, (us.updated_at - INTERVAL '1 day')::date)
+					     ELSE us.end_date END AS eff_end
+				FROM public.user_subscriptions us
+				JOIN public.subscription_plans sp ON sp.plan_id = us.plan_id
+				WHERE us.user_id = $1
+				  AND us.status IN ('ACTIVE', 'TRIAL', 'EXPIRED')
+			) s
+			ORDER BY eff_end DESC NULLS FIRST
 			LIMIT 1
 		`
 		var endDate sql.NullTime

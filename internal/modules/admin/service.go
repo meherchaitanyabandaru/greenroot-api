@@ -73,8 +73,12 @@ func (s *Service) UpdateUserStatus(ctx context.Context, a ActorContext, userID i
 		revocation.Revoke(userID, 20*time.Minute)
 		redisutil.SuspendUser(ctx, s.redis, slog.Default(), userID)
 	case "ACTIVE":
-		revocation.Remove(userID)
-		redisutil.ClearUserSuspension(ctx, s.redis, slog.Default(), userID)
+		// An owner of a suspended nursery stays blocked until the nursery is
+		// reactivated (UpdateNurseryStatus lifts it then).
+		if owns, err := s.repository.OwnsSuspendedNursery(ctx, userID); err != nil || !owns {
+			revocation.Remove(userID)
+			redisutil.ClearUserSuspension(ctx, s.redis, slog.Default(), userID)
+		}
 	}
 	redisutil.InvalidateWorkspaces(ctx, s.redis, slog.Default(), userID)
 	return nil
@@ -109,9 +113,13 @@ func (s *Service) UpdateNurseryStatus(ctx context.Context, a ActorContext, nurse
 		}
 	case "ACTIVE":
 		redisutil.ClearNurserySuspension(ctx, s.redis, slog.Default(), nurseryID)
+		// Lift only the block the nursery suspension put on the owner: an owner
+		// whose own account is suspended stays blocked.
 		if ownerID > 0 {
-			revocation.Remove(ownerID)
-			redisutil.ClearUserSuspension(ctx, s.redis, slog.Default(), ownerID)
+			if st, err := s.repository.UserStatus(ctx, ownerID); err == nil && st == "ACTIVE" {
+				revocation.Remove(ownerID)
+				redisutil.ClearUserSuspension(ctx, s.redis, slog.Default(), ownerID)
+			}
 		}
 	}
 

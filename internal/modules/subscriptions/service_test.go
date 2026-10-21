@@ -142,6 +142,8 @@ func (m *mockRepo) FindByID(_ context.Context, id int64) (*UserSubscription, err
 	return s, nil
 }
 
+func (m *mockRepo) OwnedNurseryID(context.Context, int64) (int64, error) { return 0, nil }
+
 func (m *mockRepo) FindActiveByUser(_ context.Context, userID int64) (*UserSubscription, error) {
 	s, ok := m.activeByUser[userID]
 	if !ok {
@@ -183,6 +185,7 @@ func (m *mockRepo) Renew(_ context.Context, id int64, input RenewSubscriptionInp
 	}
 	s.StartDate = input.StartDate
 	s.EndDate = &input.EndDate
+	s.PlanID = input.PlanID
 	return s, nil
 }
 
@@ -1019,5 +1022,65 @@ func TestComputeDiscount_FlatExceedsBase(t *testing.T) {
 	savings := computeDiscount(100, "FLAT", 500, nil) // cannot exceed base
 	if savings != 100 {
 		t.Errorf("want 100 (clamped to base), got %.2f", savings)
+	}
+}
+
+// An owner can't keep renewing the free trial: renewal must move to a paid plan.
+func TestRenew_OwnerCannotRenewTrial(t *testing.T) {
+	repo := newMock()
+	trial := repo.seedPlan("TRIAL", 0, 0)
+	repo.seedSub(1, 10, trial.ID, "ACTIVE")
+	_, err := svc(repo).Renew(context.Background(), ownerActor(10), 1, RenewSubscriptionRequest{BillingCycle: "SIX_MONTH"})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("want ErrInvalidInput renewing TRIAL as owner, got %v", err)
+	}
+}
+
+func TestRenew_OwnerUpgradesTrialToPaidPlan(t *testing.T) {
+	repo := newMock()
+	trial := repo.seedPlan("TRIAL", 0, 0)
+	growth := repo.seedPlan("GROWTH", 2499, 3999)
+	repo.seedSub(1, 10, trial.ID, "ACTIVE")
+	sub, err := svc(repo).Renew(context.Background(), ownerActor(10), 1, RenewSubscriptionRequest{
+		PlanID: ptr(growth.ID), BillingCycle: "YEARLY", PaymentMethod: ptr("UPI"),
+	})
+	if err != nil {
+		t.Fatalf("upgrade should succeed: %v", err)
+	}
+	if sub.PlanID != growth.ID {
+		t.Errorf("renewal must switch to GROWTH (%d), got plan %d", growth.ID, sub.PlanID)
+	}
+}
+
+func TestRenew_AdminMayExtendTrial(t *testing.T) {
+	repo := newMock()
+	trial := repo.seedPlan("TRIAL", 0, 0)
+	repo.seedSub(1, 10, trial.ID, "ACTIVE")
+	if _, err := svc(repo).Renew(context.Background(), adminActor(1), 1, RenewSubscriptionRequest{BillingCycle: "SIX_MONTH"}); err != nil {
+		t.Errorf("admin extending a trial should work: %v", err)
+	}
+}
+
+func TestCreate_OwnerCannotPickFreePlan(t *testing.T) {
+	repo := newMock()
+	for _, code := range []string{"TRIAL", "FREE"} {
+		p := repo.seedPlan(code, 0, 0)
+		_, err := svc(repo).Create(context.Background(), ownerActor(10), CreateSubscriptionRequest{PlanID: p.ID, BillingCycle: "SIX_MONTH"})
+		if !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("%s: want ErrInvalidInput for owner, got %v", code, err)
+		}
+	}
+}
+
+func TestRenew_OwnerCannotLiftAdminPause(t *testing.T) {
+	repo := newMock()
+	growth := repo.seedPlan("GROWTH", 2499, 3999)
+	repo.seedSub(1, 10, growth.ID, "PAUSED")
+	_, err := svc(repo).Renew(context.Background(), ownerActor(10), 1, RenewSubscriptionRequest{BillingCycle: "YEARLY"})
+	if !errors.Is(err, ErrPaused) {
+		t.Errorf("want ErrPaused, got %v", err)
+	}
+	if _, err := svc(repo).Renew(context.Background(), adminActor(1), 1, RenewSubscriptionRequest{BillingCycle: "YEARLY"}); err != nil {
+		t.Errorf("admin may renew a paused subscription: %v", err)
 	}
 }

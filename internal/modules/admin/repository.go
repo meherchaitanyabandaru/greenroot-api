@@ -14,6 +14,8 @@ type Repository interface {
 	UpdateNurseryStatus(ctx context.Context, actorID int64, nurseryID int64, status string, reason string) error
 	WorkspaceUserIDs(ctx context.Context, nurseryID int64) ([]int64, error)
 	NurseryOwnerID(ctx context.Context, nurseryID int64) (int64, error)
+	UserStatus(ctx context.Context, userID int64) (string, error)
+	OwnsSuspendedNursery(ctx context.Context, userID int64) (bool, error)
 }
 type PostgresRepository struct{ db *sql.DB }
 
@@ -276,6 +278,17 @@ func (r *PostgresRepository) UpdateUserStatus(ctx context.Context, actorID int64
 			UPDATE public.users SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1`,
 			userID, status)
 	}
+	if err != nil {
+		return err
+	}
+	if status == "SUSPENDED" || status == "DELETED" {
+		// Sign the user out everywhere: reactivation must mean signing in
+		// again, not old devices silently resuming.
+		_, err = r.db.ExecContext(ctx, `
+			UPDATE public.user_sessions
+			SET status = 'LOGGED_OUT', session_token = NULL, last_activity_at = CURRENT_TIMESTAMP
+			WHERE user_id = $1 AND status = 'ACTIVE'`, userID)
+	}
 	return err
 }
 
@@ -367,4 +380,21 @@ func splitCSV(value sql.NullString) []string {
 		}
 	}
 	return out
+}
+
+// UserStatus returns the account status (ACTIVE, SUSPENDED, DELETED).
+func (r *PostgresRepository) UserStatus(ctx context.Context, userID int64) (string, error) {
+	var status string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COALESCE(status, 'ACTIVE') FROM public.users WHERE user_id = $1`, userID).Scan(&status)
+	return status, err
+}
+
+// OwnsSuspendedNursery reports whether userID owns a nursery that is suspended.
+func (r *PostgresRepository) OwnsSuspendedNursery(ctx context.Context, userID int64) (bool, error) {
+	var ok bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM public.nurseries WHERE owner_user_id = $1 AND UPPER(COALESCE(status::text, '')) = 'SUSPENDED')`,
+		userID).Scan(&ok)
+	return ok, err
 }

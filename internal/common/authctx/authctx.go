@@ -212,6 +212,17 @@ func EnrichActorMiddleware(jwt *jwtplatform.Service, redisClients ...redis.Cmdab
 
 			actor := actorFromClaims(claims, clientip.From(r), r.UserAgent())
 
+			// Subscription claims changed after this token was issued (renewed,
+			// paused, cancelled...): make the client refresh instead of acting on
+			// the old state for up to the token lifetime.
+			if actor.NurseryID > 0 && claims.IssuedAt != nil {
+				if since := redisutil.NurseryClaimsStaleSince(r.Context(), rdb, actor.NurseryID); since > 0 && claims.IssuedAt.Unix() < since {
+					response.Error(w, http.StatusUnauthorized, "token_stale",
+						"your subscription changed — refresh your session")
+					return
+				}
+			}
+
 			// Redis nursery suspension — patches actor status so handlers see current state
 			// even when the JWT still carries the pre-suspension NurseryStatus.
 			if actor.NurseryID > 0 && actor.NurseryStatus != "SUSPENDED" {

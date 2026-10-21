@@ -24,7 +24,7 @@ func BuildCapabilities(actor ActorContext, sub UserSubscription) SubscriptionCap
 	}
 
 	return SubscriptionCapabilities{
-		CanRenew:        isOwner || isAdmin,
+		CanRenew:        isAdmin || (isOwner && status != statusPaused), // a pause is lifted by an admin
 		CanCancel:       (isOwner || isAdmin) && (status == statusActive || status == statusPaused),
 		CanPause:        isAdmin && status == statusActive,
 		CanResume:       isAdmin && status == statusPaused,

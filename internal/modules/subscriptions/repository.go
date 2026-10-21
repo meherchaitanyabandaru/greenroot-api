@@ -23,6 +23,7 @@ type Repository interface {
 	List(ctx context.Context, input ListSubscriptionsRequest) ([]UserSubscription, int64, error)
 	FindByID(ctx context.Context, subscriptionID int64) (*UserSubscription, error)
 	FindActiveByUser(ctx context.Context, userID int64) (*UserSubscription, error)
+	OwnedNurseryID(ctx context.Context, ownerUserID int64) (int64, error)
 	Create(ctx context.Context, input CreateSubscriptionInput) (*UserSubscription, error)
 	UpdateStatus(ctx context.Context, subscriptionID int64, status string) (*UserSubscription, error)
 	Renew(ctx context.Context, subscriptionID int64, input RenewSubscriptionInput) (*UserSubscription, error)
@@ -95,6 +96,7 @@ type CreateSubscriptionInput struct {
 }
 
 type RenewSubscriptionInput struct {
+	PlanID    int64
 	StartDate time.Time
 	EndDate   time.Time
 	AutoRenew bool
@@ -217,6 +219,18 @@ func (r *PostgresRepository) FindByID(ctx context.Context, subscriptionID int64)
 	return &subscription, err
 }
 
+// OwnedNurseryID returns the nursery owned by ownerUserID, or 0 if none.
+func (r *PostgresRepository) OwnedNurseryID(ctx context.Context, ownerUserID int64) (int64, error) {
+	var id int64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT nursery_id FROM public.nurseries WHERE owner_user_id = $1 AND deleted_at IS NULL ORDER BY nursery_id LIMIT 1`,
+		ownerUserID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
+}
+
 func (r *PostgresRepository) FindActiveByUser(ctx context.Context, userID int64) (*UserSubscription, error) {
 	subscription, err := scanSubscription(r.db.QueryRowContext(ctx, baseSubscriptionSelect()+`
 		WHERE us.user_id = $1
@@ -278,10 +292,11 @@ func (r *PostgresRepository) Renew(ctx context.Context, subscriptionID int64, in
 			end_date = $3,
 			status = 'ACTIVE',
 			is_auto_renew = $4,
+			plan_id = $5,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE user_subscription_id = $1
 	`
-	result, err := r.db.ExecContext(ctx, query, subscriptionID, input.StartDate, input.EndDate, input.AutoRenew)
+	result, err := r.db.ExecContext(ctx, query, subscriptionID, input.StartDate, input.EndDate, input.AutoRenew, input.PlanID)
 	if err != nil {
 		return nil, err
 	}

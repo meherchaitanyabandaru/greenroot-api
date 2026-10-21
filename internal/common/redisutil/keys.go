@@ -15,6 +15,9 @@ const (
 	KeySubscriptionExpiry = "expiry:subscriptions"
 	KeySuspendedUser      = "suspension:user:"
 	KeySuspendedNursery   = "suspension:nursery:"
+	// Unix second after which access tokens for a nursery carry stale
+	// subscription claims and must be refreshed (see MarkNurseryClaimsStale).
+	KeyNurseryClaimsStale = "claims:stale:nursery:"
 
 	// Global Search cache-aside layer (see searchcache.go). PostgreSQL stays
 	// authoritative; these are performance-only and safe to flush entirely.

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/revocation"
 )
 
 // ─── mock repository ─────────────────────────────────────────────────────────
@@ -13,6 +15,7 @@ type mockRepo struct {
 	users        []User
 	userStatuses map[int64]string
 	nursStatuses map[int64]string
+	ownerID      int64
 }
 
 func newMock() *mockRepo {
@@ -45,7 +48,18 @@ func (m *mockRepo) WorkspaceUserIDs(_ context.Context, nurseryID int64) ([]int64
 }
 
 func (m *mockRepo) NurseryOwnerID(_ context.Context, _ int64) (int64, error) {
-	return 0, nil
+	return m.ownerID, nil
+}
+
+func (m *mockRepo) OwnsSuspendedNursery(_ context.Context, userID int64) (bool, error) {
+	return userID == m.ownerID && m.nursStatuses[5] == "SUSPENDED", nil
+}
+
+func (m *mockRepo) UserStatus(_ context.Context, userID int64) (string, error) {
+	if st, ok := m.userStatuses[userID]; ok {
+		return st, nil
+	}
+	return "ACTIVE", nil
 }
 
 // ─── actors ──────────────────────────────────────────────────────────────────
@@ -196,5 +210,54 @@ func TestUpdateNurseryStatus_BuyerForbidden(t *testing.T) {
 	err := svc(newMock()).UpdateNurseryStatus(context.Background(), buyerActor(1), 5, UpdateNurseryStatusRequest{Status: "ACTIVE"})
 	if !errors.Is(err, ErrForbidden) {
 		t.Errorf("want ErrForbidden for buyer, got %v", err)
+	}
+}
+
+// Reactivating a nursery must not lift a separate suspension of its owner.
+func TestUpdateNurseryStatus_ReactivateKeepsSuspendedOwnerBlocked(t *testing.T) {
+	repo := newMock()
+	repo.ownerID = 77
+	s := svc(repo)
+	ctx := context.Background()
+	if err := s.UpdateNurseryStatus(ctx, adminActor(1), 5, UpdateNurseryStatusRequest{Status: "SUSPENDED", Reason: "audit"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateUserStatus(ctx, adminActor(1), 77, UpdateUserStatusRequest{Status: "SUSPENDED", Reason: "fraud"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateNurseryStatus(ctx, adminActor(1), 5, UpdateNurseryStatusRequest{Status: "ACTIVE"}); err != nil {
+		t.Fatal(err)
+	}
+	if !revocation.IsRevoked(77) {
+		t.Error("owner suspended in their own right must stay revoked after nursery reactivation")
+	}
+	if err := s.UpdateUserStatus(ctx, adminActor(1), 77, UpdateUserStatusRequest{Status: "ACTIVE"}); err != nil {
+		t.Fatal(err)
+	}
+	if revocation.IsRevoked(77) {
+		t.Error("reactivating the owner account should lift the block")
+	}
+}
+
+// Reactivating the owner's account must not lift the block of a still-suspended nursery.
+func TestUpdateUserStatus_ReactivatedOwnerOfSuspendedNurseryStaysBlocked(t *testing.T) {
+	repo := newMock()
+	repo.ownerID = 78
+	s := svc(repo)
+	ctx := context.Background()
+	if err := s.UpdateNurseryStatus(ctx, adminActor(1), 5, UpdateNurseryStatusRequest{Status: "SUSPENDED", Reason: "audit"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateUserStatus(ctx, adminActor(1), 78, UpdateUserStatusRequest{Status: "ACTIVE"}); err != nil {
+		t.Fatal(err)
+	}
+	if !revocation.IsRevoked(78) {
+		t.Error("owner of a suspended nursery must stay blocked")
+	}
+	if err := s.UpdateNurseryStatus(ctx, adminActor(1), 5, UpdateNurseryStatusRequest{Status: "ACTIVE"}); err != nil {
+		t.Fatal(err)
+	}
+	if revocation.IsRevoked(78) {
+		t.Error("nursery reactivation should lift the owner block")
 	}
 }

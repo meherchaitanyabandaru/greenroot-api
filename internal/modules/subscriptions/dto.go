@@ -25,6 +25,8 @@ type UpdateStatusRequest struct {
 }
 
 type RenewSubscriptionRequest struct {
+	// PlanID switches plan on renewal (e.g. TRIAL -> GROWTH); empty keeps the current plan.
+	PlanID        *int64  `json:"plan_id"`
 	BillingCycle  string  `json:"billing_cycle"`
 	PaymentMethod *string `json:"payment_method"`
 	Provider      *string `json:"provider"`

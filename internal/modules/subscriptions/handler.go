@@ -356,6 +356,8 @@ func writeSubscriptionsError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusNotFound, "not_found", "subscription resource not found")
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid subscription input")
+	case errors.Is(err, ErrPaused):
+		response.Error(w, http.StatusConflict, "subscription_paused", "this subscription is paused by GreenRoot — contact support")
 	case errors.Is(err, ErrConflict):
 		response.Error(w, http.StatusConflict, "active_subscription_exists", "user already has an active subscription")
 	case errors.Is(err, redisutil.ErrLockBusy):
