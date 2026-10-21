@@ -19,6 +19,7 @@ var (
 	ErrInvalidInput        = apperrs.ErrInvalidInput
 	ErrDuplicate           = errors.New("duplicate driver")
 	ErrOwnerCannotBeDriver = errors.New("nursery owners cannot register as a driver")
+	ErrActiveTrip          = errors.New("finish or hand over the active trip first")
 )
 
 type Service struct {
@@ -111,10 +112,35 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, driverID int64
 	if !actor.HasRole("ADMIN") {
 		return ErrForbidden
 	}
-	if err := s.repository.Delete(ctx, driverID); err != nil {
+	driver, err := s.repository.FindByID(ctx, driverID)
+	if err != nil {
 		return err
 	}
+	if driver.UserID == nil {
+		return s.repository.Delete(ctx, driverID) // admin-created profile with no account
+	}
+	// Same effect as the driver stopping: a deactivated driver must not keep
+	// the DRIVER role, which would block every other role for good.
+	if err := s.repository.Retire(ctx, *driver.UserID, actor.UserID); err != nil {
+		return err
+	}
+	redisutil.InvalidateWorkspaces(ctx, s.redis, slog.Default(), *driver.UserID)
 	s.audit(ctx, actor, driverID, actionDelete, map[string]any{"status": "INACTIVE"})
+	return nil
+}
+
+// StopDriving lets a driver leave driving on the same account (like a manager
+// leaving a nursery); they are a buyer again and may take any role later.
+func (s *Service) StopDriving(ctx context.Context, actor ActorContext) error {
+	driver, err := s.repository.FindByUserID(ctx, actor.UserID)
+	if err != nil {
+		return err
+	}
+	if err := s.repository.Retire(ctx, actor.UserID, actor.UserID); err != nil {
+		return err
+	}
+	redisutil.InvalidateWorkspaces(ctx, s.redis, slog.Default(), actor.UserID)
+	s.audit(ctx, actor, driver.ID, actionDelete, map[string]any{"status": "INACTIVE", "self": true})
 	return nil
 }
 

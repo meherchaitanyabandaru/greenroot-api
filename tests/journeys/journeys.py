@@ -1402,6 +1402,111 @@ def journey_top_items():
     check("…20", out.get("top_items", out.get("dashboard", {}).get("top_items", {})).get("total") == 20, out)
 
 
+def journey_roles():
+    """Role changes on one account: managers leave or are removed (work goes back to the owner), drivers stop driving, owners close their nursery; each can take another role later."""
+    boss = admin()
+    owner = approved_owner(boss, "Roles Owner")
+    other = approved_owner(boss, "Roles Other")
+    _, plants = call("GET", "/plants?per_page=1")
+    plant = (plants.get("plants") or plants.get("data") or [{}])[0].get("id", 1)
+
+    # Manager leaves: their assigned quotation goes back to the owner.
+    mgr = User(first="Leaver", activity="MANAGER")
+    expect("manager accepts invite", "POST", f"/invites/{invite(owner, 'MANAGER_INVITE', mgr)}/accept", mgr.token, {})
+    mgr.refresh()
+    q = expect("owner drafts a quotation", "POST", "/quotations", owner.token, {"quotation_type": "INTERNAL", "nursery_id": owner.nursery_id,
+               "items": [{"plant_id": plant, "quantity": 1, "unit_price": 10, "total_price": 10}]}, status=201)["quotation"]
+    expect("owner assigns it to the manager", "POST", f"/quotations/{q['id']}/assign-manager", owner.token, {"manager_user_id": mgr.id})
+    expect("manager leaves", "DELETE", "/nurseries/me/leave", mgr.token)
+    expect("owner can edit again after the assigned manager left", "PUT", f"/quotations/{q['id']}", owner.token,
+           {"quotation_type": "INTERNAL", "nursery_id": owner.nursery_id, "notes": "back to owner",
+            "items": [{"plant_id": plant, "quantity": 2, "unit_price": 10, "total_price": 20}]})
+    mgr.login()
+    check("ex-manager is a buyer again", mgr.roles() == {"BUYER"}, mgr.roles())
+    expect("ex-manager can't open the old nursery's quotation", "GET", f"/quotations/{q['id']}", mgr.token, status=(403, 404))
+    expect("ex-manager joins another nursery", "POST", f"/invites/{invite(other, 'MANAGER_INVITE', mgr)}/accept", mgr.token, {})
+
+    # Driver stops driving, then can own a nursery; re-applying means review again.
+    drv = approved_driver(boss, owner)
+    expect("driver can't register a nursery", "POST", "/nurseries", drv.token, {"name": "Drv Farm", "mobile": drv.mobile, "address_line1": "x", "city": "Hyderabad"}, status=409)
+    expect("driver stops driving", "DELETE", "/drivers/me", drv.token)
+    drv.login()
+    check("ex-driver is a buyer again", drv.roles() == {"BUYER"}, drv.roles())
+    expect("ex-driver applies again", "POST", "/drivers/apply", drv.token, {"licence_number": "TS09" + drv.mobile, "vehicle_number": "TS09" + drv.mobile[-4:], "vehicle_type": "VAN"}, status=(200, 201))
+    out = expect("…back to review", "GET", "/drivers/me", drv.token)
+    check("…approval PENDING", out.get("driver", {}).get("approval_status") == "PENDING", out)
+    expect("stopping again (pending profile)", "DELETE", "/drivers/me", drv.token)
+    drv.login()
+    expect("…and can register a nursery", "POST", "/nurseries", drv.token, {"name": f"Ex Driver {drv.mobile[-4:]}", "mobile": drv.mobile, "address_line1": "x", "city": "Hyderabad"}, status=201)
+
+    # Owner closes the nursery: blocked while work is open, then everyone is released.
+    closer = approved_owner(boss, "Closer")
+    staff = User(first="Staff", activity="MANAGER")
+    expect("staff joins", "POST", f"/invites/{invite(closer, 'MANAGER_INVITE', staff)}/accept", staff.token, {})
+    o = expect("open order", "POST", "/orders", closer.token, {"seller_nursery_id": closer.nursery_id, "buyer_mobile": new_mobile(),
+               "delivery": {"contact_name": "B", "address_line1": "x", "city": "Hyderabad"},
+               "items": [{"plant_id": plant, "quantity": 1, "unit_price": 10, "total_price": 10}]}, status=201)["order"]
+    expect("closing with an open order is refused", "DELETE", f"/nurseries/{closer.nursery_id}", closer.token, status=409)
+    expect("cancel it", "POST", f"/orders/{o['id']}/cancel", closer.token, {"reason": "closing"})
+    expect("owner closes the nursery", "DELETE", f"/nurseries/{closer.nursery_id}", closer.token)
+    closer.login()
+    staff.login()
+    check("ex-owner is a buyer", closer.roles() == {"BUYER"}, closer.roles())
+    check("its manager is a buyer", staff.roles() == {"BUYER"}, staff.roles())
+    expect("ex-owner becomes a manager elsewhere", "POST", f"/invites/{invite(other, 'MANAGER_INVITE', closer)}/accept", closer.token, {})
+    closer.refresh()
+    check("…holding only MANAGER", closer.roles() == {"MANAGER"}, closer.roles())
+
+
+def journey_access():
+    """Subscription and suspension changes reach signed-in owners and managers at once; pause is admin-only; owners can't loop the free trial; suspensions say why."""
+    boss = admin()
+    owner = approved_owner(boss, "Access Owner")
+    mgr = User(first="Access", activity="MANAGER")
+    expect("manager joins", "POST", f"/invites/{invite(owner, 'MANAGER_INVITE', mgr)}/accept", mgr.token, {})
+    mgr.refresh()
+    _, plans = call("GET", "/subscription-plans")
+    plan_ids = {p.get("plan_code"): p.get("id") for p in plans.get("plans", plans if isinstance(plans, list) else [])}
+    sub = expect("owner's trial", "GET", "/subscriptions/me", owner.token)["subscriptions"][0]
+    q = {"quotation_type": "INTERNAL", "nursery_id": owner.nursery_id, "items": [{"plant_id": 1, "quantity": 1, "unit_price": 10, "total_price": 10}]}
+    time.sleep(1.1)  # tokens issued in an earlier second than the change
+
+    expect("admin pauses the subscription", "PUT", f"/subscriptions/{sub['id']}/status", boss.token, {"subscription_status": "PAUSED"})
+    expect("owner's existing token must refresh", "POST", "/quotations", owner.token, q, status=401)
+    expect("manager's existing token must refresh", "GET", "/quotations", mgr.token, status=401)
+    owner.refresh(); mgr.refresh()
+    expect("paused: owner can't create", "POST", "/quotations", owner.token, q, status=402)
+    expect("paused: manager can't create", "POST", "/quotations", mgr.token, q, status=402)
+    expect("owner can't pay past an admin pause", "POST", f"/subscriptions/{sub['id']}/renew", owner.token,
+           {"plan_id": plan_ids.get("GROWTH"), "billing_cycle": "YEARLY", "payment_method": "UPI"}, status=409)
+    expect("admin resumes", "PUT", f"/subscriptions/{sub['id']}/status", boss.token, {"subscription_status": "ACTIVE"})
+    time.sleep(1.1)
+    expect("owner renewing the free trial is refused", "POST", f"/subscriptions/{sub['id']}/renew", owner.refresh() and owner.token,
+           {"billing_cycle": "SIX_MONTH", "payment_method": "UPI"}, status=400)
+    out = expect("owner upgrades to GROWTH", "POST", f"/subscriptions/{sub['id']}/renew", owner.token,
+                 {"plan_id": plan_ids.get("GROWTH"), "billing_cycle": "YEARLY", "payment_method": "UPI"})
+    check("…plan switched", out.get("subscription", {}).get("plan_code") == "GROWTH", out)
+    owner.refresh()
+    expect("upgraded owner creates", "POST", "/quotations", owner.token, q, status=201)
+
+    # Suspensions carry the reason and say whether it's the account or the nursery.
+    time.sleep(1.1)
+    expect("admin suspends the nursery", "PUT", f"/admin/nurseries/{owner.nursery_id}/status", boss.token, {"status": "SUSPENDED", "reason": "GST pending"})
+    code, out = call("GET", "/quotations", mgr.token)
+    err = out.get("error", {}) if isinstance(out, dict) else {}
+    check("manager is told the nursery is suspended, with the reason", code == 403 and err.get("code") == "NURSERY_SUSPENDED" and err.get("reason") == "GST pending", out)
+    expect("admin reactivates", "PUT", f"/admin/nurseries/{owner.nursery_id}/status", boss.token, {"status": "ACTIVE"})
+    mgr.refresh()  # as the app does after the 401 (claims changed during the test)
+    expect("manager works again", "GET", "/quotations", mgr.token)
+    buyer = User(first="Suspendee", activity="CUSTOMER")
+    expect("admin suspends a user", "PUT", f"/admin/users/{buyer.id}/status", boss.token, {"status": "SUSPENDED", "reason": "fake orders"})
+    code, out = call("GET", "/orders", buyer.token)
+    check("…told why", code == 403 and out.get("error", {}).get("reason") == "fake orders", out)
+    expect("admin reactivates the user", "PUT", f"/admin/users/{buyer.id}/status", boss.token, {"status": "ACTIVE"})
+    code, _ = call("POST", "/auth/refresh-token", body={"refresh_token": buyer.refresh_token})
+    check("…old sessions were signed out (must sign in again)", code == 401, code)
+
+
 JOURNEYS = [
     ("auth", journey_auth),
     ("accounts", journey_accounts),
@@ -1416,6 +1521,8 @@ JOURNEYS = [
     ("moderation", journey_moderation),
     ("admin", journey_admin),
     ("redis", journey_redis),
+    ("roles", journey_roles),
+    ("access", journey_access),
 ]
 
 

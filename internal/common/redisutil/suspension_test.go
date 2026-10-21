@@ -215,3 +215,27 @@ func TestNurseryClaimsStale_MarkAndExpire(t *testing.T) {
 		t.Fatalf("marker should expire after its TTL, got %d", got)
 	}
 }
+
+// The flag carries what the middleware tells the client; old "1" flags still block.
+func TestUserSuspension_DetailsAndLegacyFlag(t *testing.T) {
+	ctx := context.Background()
+	_, client := newTestRedis(t)
+
+	if _, ok := UserSuspension(ctx, client, 5); ok {
+		t.Fatal("not suspended yet")
+	}
+	at := time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)
+	SuspendUserFor(ctx, client, nil, 5, Suspension{Code: "NURSERY_SUSPENDED", Reason: "KYC pending", SuspendedAt: at})
+	s, ok := UserSuspension(ctx, client, 5)
+	if !ok || s.Code != "NURSERY_SUSPENDED" || s.Reason != "KYC pending" || !s.SuspendedAt.Equal(at) {
+		t.Fatalf("details not kept: %+v ok=%v", s, ok)
+	}
+	if !IsUserSuspended(ctx, client, 5) {
+		t.Error("IsUserSuspended must see the detailed flag too")
+	}
+
+	SuspendUser(ctx, client, nil, 6) // legacy value "1"
+	if s, ok := UserSuspension(ctx, client, 6); !ok || s.Code != "USER_SUSPENDED" {
+		t.Errorf("legacy flag should read as USER_SUSPENDED, got %+v ok=%v", s, ok)
+	}
+}

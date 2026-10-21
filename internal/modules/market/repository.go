@@ -69,6 +69,7 @@ type Repository interface {
 	UnreadTotal(ctx context.Context, viewerNurseryID int64) (int, error)
 	// NurseryPickup is the nursery's primary address, the default pickup for its ads.
 	NurseryPickup(ctx context.Context, nurseryID int64) (address *string, lat, lon *float64, err error)
+	SetAdPickupLocation(ctx context.Context, adID int64, lat, lon float64, source string) error
 }
 
 type PostgresRepository struct{ db *sql.DB }
@@ -981,6 +982,17 @@ func (r *PostgresRepository) NurseryPickup(ctx context.Context, nurseryID int64)
 		return nil, nil, nil, nil
 	}
 	return addr, lat, lon, err
+}
+
+// SetAdPickupLocation fills an ad's pickup coordinates (and its geography).
+func (r *PostgresRepository) SetAdPickupLocation(ctx context.Context, adID int64, lat, lon float64, source string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE public.market_ads
+		SET pickup_latitude = $2::double precision, pickup_longitude = $3::double precision, pickup_location_source = $4,
+		    pickup_location = ST_SetSRID(ST_MakePoint($3::double precision, $2::double precision), 4326)::geography,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE ad_id = $1`, adID, lat, lon, source)
+	return err
 }
 
 func (r *PostgresRepository) EnquiryIDFor(ctx context.Context, adID, nurseryID int64) (int64, error) {

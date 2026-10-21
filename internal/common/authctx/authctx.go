@@ -185,17 +185,16 @@ func EnrichActorMiddleware(jwt *jwtplatform.Service, redisClients ...redis.Cmdab
 				return
 			}
 
-			// In-memory revocation — catches immediate suspend within this process.
-			if revocation.IsRevoked(userID) {
-				response.Error(w, http.StatusForbidden, "USER_SUSPENDED",
-					"your account has been suspended — contact support")
+			// Redis-backed suspension — survives API restarts and carries the
+			// reason and whether it was the account or the owner's nursery.
+			if s, ok := redisutil.UserSuspension(r.Context(), rdb, userID); ok {
+				writeSuspended(w, s)
 				return
 			}
 
-			// Redis-backed suspension — survives API restarts.
-			if redisutil.IsUserSuspended(r.Context(), rdb, userID) {
-				response.Error(w, http.StatusForbidden, "USER_SUSPENDED",
-					"your account has been suspended — contact support")
+			// In-memory revocation — catches immediate suspend within this process.
+			if revocation.IsRevoked(userID) {
+				writeSuspended(w, redisutil.Suspension{Code: "USER_SUSPENDED"})
 				return
 			}
 
@@ -234,4 +233,19 @@ func EnrichActorMiddleware(jwt *jwtplatform.Service, redisClients ...redis.Cmdab
 			next.ServeHTTP(w, r.WithContext(StoreActor(r.Context(), actor)))
 		})
 	}
+}
+
+func writeSuspended(w http.ResponseWriter, s redisutil.Suspension) {
+	msg := "your account has been suspended — contact support"
+	if s.Code == "NURSERY_SUSPENDED" {
+		msg = "your nursery has been suspended — contact support"
+	}
+	body := map[string]any{"code": s.Code, "message": msg}
+	if s.Reason != "" {
+		body["reason"] = s.Reason
+	}
+	if !s.SuspendedAt.IsZero() {
+		body["suspended_at"] = s.SuspendedAt
+	}
+	response.JSON(w, http.StatusForbidden, map[string]any{"error": body})
 }

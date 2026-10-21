@@ -491,6 +491,7 @@ func (r *PostgresRepository) GetWorkspaces(ctx context.Context, userID int64) ([
 		LEFT JOIN public.nursery_drivers nd
 		    ON nd.driver_user_id = d.user_id AND nd.status IN ('APPROVED', 'CONNECTED', 'ACTIVE')
 		WHERE d.user_id = $1 AND d.approval_status = 'APPROVED'
+		  AND COALESCE(d.status::text, 'ACTIVE') <> 'INACTIVE' -- stopped driving
 		LIMIT 1
 	`
 	var driverUserID int64

@@ -137,6 +137,19 @@ func (h *Handler) GetMine(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, DriverResponse{Driver: driver})
 }
 
+// StopDriving ends the caller's driving (DELETE /drivers/me).
+func (h *Handler) StopDriving(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	if err := h.service.StopDriving(r.Context(), actor); err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, MessageResponse{Message: "You have stopped driving"})
+}
+
 // ApproveDriver approves a driver profile (admin only).
 func (h *Handler) ApproveDriver(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
@@ -229,6 +242,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid driver input")
 	case errors.Is(err, ErrDuplicate):
 		response.Error(w, http.StatusConflict, "duplicate_driver", "driver already exists for this user or license number")
+	case errors.Is(err, ErrActiveTrip):
+		response.Error(w, http.StatusConflict, "active_trip", "finish or hand over your active trip before you stop driving")
 	case errors.Is(err, ErrOwnerCannotBeDriver):
 		response.Error(w, http.StatusConflict, "owner_conflict", "nursery owners cannot register as a driver")
 	default:

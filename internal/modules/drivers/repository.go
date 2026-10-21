@@ -22,6 +22,7 @@ type Repository interface {
 	Create(ctx context.Context, input DriverInput) (*Driver, error)
 	Update(ctx context.Context, driverID int64, input DriverInput) (*Driver, error)
 	Delete(ctx context.Context, driverID int64) error
+	Retire(ctx context.Context, userID int64, actorID int64) error
 	Upsert(ctx context.Context, userID int64, req ApplyDriverRequest) (*Driver, error)
 	UserOwnsANursery(ctx context.Context, userID int64) (bool, error)
 	Approve(ctx context.Context, driverUserID int64, approvedByUserID int64) (*Driver, error)
@@ -149,6 +150,57 @@ func (r *PostgresRepository) Delete(ctx context.Context, driverID int64) error {
 	return nil
 }
 
+// Retire ends a user's driving: profile INACTIVE, nursery connections
+// DISCONNECTED, DRIVER role removed and BUYER restored, sessions signed out --
+// the driver counterpart of a manager leaving. Refused during an active trip.
+func (r *PostgresRepository) Retire(ctx context.Context, userID int64, actorID int64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var onTrip bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM public.dispatches
+		WHERE driver_user_id = $1 AND status IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT'))`, userID).Scan(&onTrip); err != nil {
+		return err
+	}
+	if onTrip {
+		return ErrActiveTrip
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE public.drivers SET status = 'INACTIVE', updated_at = CURRENT_TIMESTAMP
+		WHERE user_id = $1 AND COALESCE(status::text, '') <> 'INACTIVE'`, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE public.nursery_drivers
+		SET status = 'DISCONNECTED', disconnected_at = CURRENT_TIMESTAMP, disconnected_by_user_id = $2, updated_at = CURRENT_TIMESTAMP
+		WHERE driver_user_id = $1 AND status IN ('REQUESTED', 'CONNECTED', 'APPROVED')`, userID, actorID); err != nil {
+		return err
+	}
+	for _, q := range []string{
+		`DELETE FROM public.user_roles
+		 WHERE user_id = $1 AND role_id = (SELECT role_id FROM public.roles WHERE role_code = 'DRIVER')`,
+		`INSERT INTO public.user_roles (user_id, role_id)
+		 SELECT $1, role_id FROM public.roles WHERE role_code = 'BUYER'
+		   AND NOT EXISTS (SELECT 1 FROM public.user_roles ur JOIN public.roles x ON x.role_id = ur.role_id
+		                   WHERE ur.user_id = $1 AND x.role_code = 'MANAGER')
+		 ON CONFLICT DO NOTHING`,
+		`UPDATE public.user_sessions SET status = 'LOGGED_OUT', session_token = NULL, last_activity_at = CURRENT_TIMESTAMP
+		 WHERE user_id = $1 AND status = 'ACTIVE'`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, userID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (r *PostgresRepository) FindByUserID(ctx context.Context, userID int64) (*Driver, error) {
 	driver, err := scanDriver(r.db.QueryRowContext(ctx, baseSelect()+" WHERE d.user_id = $1 AND COALESCE(d.status::text,'') <> 'DELETED' LIMIT 1", userID))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -186,6 +238,9 @@ func (r *PostgresRepository) Upsert(ctx context.Context, userID int64, req Apply
 			vehicle_number = EXCLUDED.vehicle_number,
 			vehicle_type = EXCLUDED.vehicle_type,
 			profile_status = 'COMPLETE',
+			-- a driver who stopped and applies again is reviewed again
+			approval_status = CASE WHEN drivers.status = 'INACTIVE' THEN 'PENDING' ELSE drivers.approval_status END,
+			status = 'ACTIVE',
 			updated_at = CURRENT_TIMESTAMP
 		RETURNING driver_id, COALESCE(approval_status, 'PENDING')
 	`

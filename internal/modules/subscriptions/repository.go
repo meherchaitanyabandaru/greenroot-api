@@ -502,7 +502,7 @@ func scanSubscription(row interface{ Scan(dest ...any) error }) (UserSubscriptio
 	}
 	if endDate.Valid {
 		subscription.EndDate = &endDate.Time
-		days := int(time.Until(endDate.Time).Hours() / 24)
+		days := calendarDaysLeft(endDate.Time, time.Now())
 		if days < 0 {
 			days = 0
 		}

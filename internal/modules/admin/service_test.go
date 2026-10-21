@@ -55,6 +55,8 @@ func (m *mockRepo) OwnsSuspendedNursery(_ context.Context, userID int64) (bool, 
 	return userID == m.ownerID && m.nursStatuses[5] == "SUSPENDED", nil
 }
 
+func (m *mockRepo) ActiveManagerIDs(context.Context, int64) ([]int64, error) { return nil, nil }
+
 func (m *mockRepo) UserStatus(_ context.Context, userID int64) (string, error) {
 	if st, ok := m.userStatuses[userID]; ok {
 		return st, nil

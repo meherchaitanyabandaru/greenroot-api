@@ -16,6 +16,7 @@ type Repository interface {
 	NurseryOwnerID(ctx context.Context, nurseryID int64) (int64, error)
 	UserStatus(ctx context.Context, userID int64) (string, error)
 	OwnsSuspendedNursery(ctx context.Context, userID int64) (bool, error)
+	ActiveManagerIDs(ctx context.Context, nurseryID int64) ([]int64, error)
 }
 type PostgresRepository struct{ db *sql.DB }
 
@@ -397,4 +398,23 @@ func (r *PostgresRepository) OwnsSuspendedNursery(ctx context.Context, userID in
 		`SELECT EXISTS (SELECT 1 FROM public.nurseries WHERE owner_user_id = $1 AND UPPER(COALESCE(status::text, '')) = 'SUSPENDED')`,
 		userID).Scan(&ok)
 	return ok, err
+}
+
+// ActiveManagerIDs lists the nursery's current managers.
+func (r *PostgresRepository) ActiveManagerIDs(ctx context.Context, nurseryID int64) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT user_id FROM public.nursery_users WHERE nursery_id = $1 AND status = 'ACTIVE'`, nurseryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }

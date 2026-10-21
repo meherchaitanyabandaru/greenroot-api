@@ -485,6 +485,8 @@ func writeNurseriesError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusConflict, "manager_conflict", "managers cannot register a nursery; remove your manager role first")
 	case errors.Is(err, ErrDriverCannotOwnNursery):
 		response.Error(w, http.StatusConflict, "driver_conflict", "approved drivers cannot register a nursery")
+	case errors.Is(err, ErrNurseryHasOpenWork):
+		response.Error(w, http.StatusConflict, "nursery_has_active_records", "finish or cancel open orders, trips and sent quotations before closing the nursery")
 	case errors.Is(err, ErrNotFound):
 		response.Error(w, http.StatusNotFound, "not_found", "nursery resource not found")
 	case errors.Is(err, ErrInvalidAddress):

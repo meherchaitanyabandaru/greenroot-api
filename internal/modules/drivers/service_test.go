@@ -13,6 +13,8 @@ type mockRepo struct {
 	byUserID   map[int64]*Driver // userID → Driver
 	owners     map[int64]bool    // userID → owns a nursery
 	duplicates map[string]bool   // licenseNumber → exists
+	onTrip     map[int64]bool    // userID → has an active trip
+	retired    []int64
 	nextID     int64
 }
 
@@ -22,6 +24,7 @@ func newMock() *mockRepo {
 		byUserID:   make(map[int64]*Driver),
 		owners:     make(map[int64]bool),
 		duplicates: make(map[string]bool),
+		onTrip:     make(map[int64]bool),
 		nextID:     100,
 	}
 }
@@ -92,6 +95,19 @@ func (m *mockRepo) Delete(_ context.Context, driverID int64) error {
 		return ErrNotFound
 	}
 	delete(m.drivers, driverID)
+	return nil
+}
+
+func (m *mockRepo) Retire(_ context.Context, userID int64, _ int64) error {
+	if m.onTrip[userID] {
+		return ErrActiveTrip
+	}
+	d, ok := m.byUserID[userID]
+	if !ok {
+		return ErrNotFound
+	}
+	d.Status = "INACTIVE"
+	m.retired = append(m.retired, userID)
 	return nil
 }
 
@@ -460,5 +476,50 @@ func TestIsAllowedStatus(t *testing.T) {
 		if isAllowedStatus(s) {
 			t.Errorf("status %q should NOT be allowed", s)
 		}
+	}
+}
+
+// ─── Stop driving ────────────────────────────────────────────────────────────
+
+func TestStopDriving_Success(t *testing.T) {
+	repo := newMock()
+	uid := int64(20)
+	repo.seedDriver(1, &uid, "ACTIVE")
+	if err := svc(repo).StopDriving(context.Background(), ActorContext{UserID: 20, Roles: []string{"DRIVER"}}); err != nil {
+		t.Fatalf("stop driving: %v", err)
+	}
+	if len(repo.retired) != 1 || repo.retired[0] != 20 {
+		t.Errorf("driver 20 should be retired, got %v", repo.retired)
+	}
+}
+
+func TestStopDriving_RefusedDuringTrip(t *testing.T) {
+	repo := newMock()
+	uid := int64(21)
+	repo.seedDriver(2, &uid, "ACTIVE")
+	repo.onTrip[21] = true
+	err := svc(repo).StopDriving(context.Background(), ActorContext{UserID: 21, Roles: []string{"DRIVER"}})
+	if !errors.Is(err, ErrActiveTrip) {
+		t.Errorf("want ErrActiveTrip, got %v", err)
+	}
+}
+
+func TestStopDriving_NotADriver(t *testing.T) {
+	err := svc(newMock()).StopDriving(context.Background(), buyerActor(22))
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("want ErrNotFound for a non-driver, got %v", err)
+	}
+}
+
+// Admin deactivation removes the role the same way (it used to leave DRIVER behind).
+func TestDelete_AdminRetiresDriverAccount(t *testing.T) {
+	repo := newMock()
+	uid := int64(23)
+	repo.seedDriver(3, &uid, "ACTIVE")
+	if err := svc(repo).Delete(context.Background(), adminActor(1), 3); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.retired) != 1 || repo.retired[0] != 23 {
+		t.Errorf("admin delete should retire user 23, got %v", repo.retired)
 	}
 }

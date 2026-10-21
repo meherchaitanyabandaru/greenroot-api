@@ -1084,3 +1084,20 @@ func TestRenew_OwnerCannotLiftAdminPause(t *testing.T) {
 		t.Errorf("admin may renew a paused subscription: %v", err)
 	}
 }
+
+func TestCalendarDaysLeft(t *testing.T) {
+	end := time.Date(2026, 10, 31, 0, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		now  time.Time
+		want int
+	}{
+		{time.Date(2026, 10, 21, 13, 30, 0, 0, time.UTC), 10}, // evening: old math said 9
+		{time.Date(2026, 10, 30, 23, 0, 0, 0, time.UTC), 1},
+		{time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC), 0},
+		{time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC), -2},
+	} {
+		if got := calendarDaysLeft(end, c.now); got != c.want {
+			t.Errorf("now %v: want %d, got %d", c.now, c.want, got)
+		}
+	}
+}

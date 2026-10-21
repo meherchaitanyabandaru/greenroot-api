@@ -2134,6 +2134,29 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+    delete:
+      tags:
+        - Drivers
+      summary: Stop driving
+      description: Ends the caller's driving on the same account (profile INACTIVE, nursery connections DISCONNECTED, DRIVER role removed, BUYER restored, sessions signed out). 409 active_trip while a trip is in progress.
+      operationId: deleteDriversMe
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DriversMessageResponse'
+          description: OK
+        "401":
+          $ref: '#/components/responses/Error'
+        "404":
+          $ref: '#/components/responses/Error'
+        "409":
+          $ref: '#/components/responses/Error'
+        "500":
+          $ref: '#/components/responses/Error'
   /api/v1/drivers/{id}/approve:
     post:
       tags:
@@ -9042,6 +9065,11 @@ components:
           type: boolean
         can_update_location:
           type: boolean
+    DriversMessageResponse:
+      type: object
+      properties:
+        message:
+          type: string
     DriversDriverResponse:
       type: object
       properties:

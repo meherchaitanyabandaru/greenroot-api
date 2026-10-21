@@ -71,7 +71,8 @@ func (s *Service) UpdateUserStatus(ctx context.Context, a ActorContext, userID i
 	switch status {
 	case "SUSPENDED", "DELETED":
 		revocation.Revoke(userID, 20*time.Minute)
-		redisutil.SuspendUser(ctx, s.redis, slog.Default(), userID)
+		redisutil.SuspendUserFor(ctx, s.redis, slog.Default(), userID, redisutil.Suspension{
+			Code: "USER_SUSPENDED", Reason: strings.TrimSpace(req.Reason), SuspendedAt: time.Now()})
 	case "ACTIVE":
 		// An owner of a suspended nursery stays blocked until the nursery is
 		// reactivated (UpdateNurseryStatus lifts it then).
@@ -104,15 +105,31 @@ func (s *Service) UpdateNurseryStatus(ctx context.Context, a ActorContext, nurse
 	if err != nil {
 		slog.Warn("nursery owner lookup failed", "nursery_id", nurseryID, "error", err)
 	}
+	// Managers get the same "nursery suspended" block as the owner; without it
+	// they silently lost the workspace and were shown the customer app.
+	managerIDs, err := s.repository.ActiveManagerIDs(ctx, nurseryID)
+	if err != nil {
+		slog.Warn("nursery manager lookup failed", "nursery_id", nurseryID, "error", err)
+	}
 	switch status {
 	case "SUSPENDED":
 		redisutil.SuspendNursery(ctx, s.redis, slog.Default(), nurseryID)
+		for _, id := range managerIDs {
+			redisutil.SuspendUserFor(ctx, s.redis, slog.Default(), id, redisutil.Suspension{
+				Code: "NURSERY_SUSPENDED", Reason: strings.TrimSpace(req.Reason), SuspendedAt: time.Now()})
+		}
 		if ownerID > 0 {
 			revocation.Revoke(ownerID, 20*time.Minute)
-			redisutil.SuspendUser(ctx, s.redis, slog.Default(), ownerID)
+			redisutil.SuspendUserFor(ctx, s.redis, slog.Default(), ownerID, redisutil.Suspension{
+				Code: "NURSERY_SUSPENDED", Reason: strings.TrimSpace(req.Reason), SuspendedAt: time.Now()})
 		}
 	case "ACTIVE":
 		redisutil.ClearNurserySuspension(ctx, s.redis, slog.Default(), nurseryID)
+		for _, id := range managerIDs {
+			if st, err := s.repository.UserStatus(ctx, id); err == nil && st == "ACTIVE" {
+				redisutil.ClearUserSuspension(ctx, s.redis, slog.Default(), id)
+			}
+		}
 		// Lift only the block the nursery suspension put on the owner: an owner
 		// whose own account is suspended stays blocked.
 		if ownerID > 0 {

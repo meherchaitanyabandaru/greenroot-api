@@ -33,6 +33,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		// V1 self-service endpoints (must be before /{id} to avoid route conflicts)
 		r.Post("/apply", m.handler.Apply)
 		r.Get("/me", m.handler.GetMine)
+		r.Delete("/me", m.handler.StopDriving)
 
 		// Admin endpoints
 		r.Get("/", m.handler.List)

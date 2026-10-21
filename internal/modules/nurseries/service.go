@@ -354,6 +354,9 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, nurseryID int6
 		return err
 	}
 	old, _ := s.repository.FindByID(ctx, nurseryID)
+	// Collect members first: Delete deactivates them, and the lookup only
+	// returns active ones.
+	members, _ := s.repository.WorkspaceUserIDs(ctx, nurseryID)
 	if err := s.repository.Delete(ctx, actor.UserID, nurseryID); err != nil {
 		return err
 	}
@@ -363,7 +366,10 @@ func (s *Service) Delete(ctx context.Context, actor ActorContext, nurseryID int6
 	}
 	s.audit(ctx, actor, auditlog.EntityNursery, nurseryID, auditlog.ActionDelete,
 		fmt.Sprintf("Nursery %q deleted", name), old, map[string]any{"status": "DELETED"})
-	s.invalidateNurseryWorkspaceUsers(ctx, nurseryID, actor.UserID)
+	s.invalidateWorkspaceUsers(ctx, append(members, actor.UserID)...)
+	// Tokens still carry this nursery: make them refresh now (and fail, since
+	// the sessions were signed out) instead of working for up to 15 minutes.
+	redisutil.MarkNurseryClaimsStale(ctx, s.redis, slog.Default(), nurseryID, time.Hour)
 	return nil
 }
 
@@ -632,6 +638,7 @@ var (
 	ErrInvalidBrandIconKey = errors.New("brand_icon_key is not a valid preset icon")
 	ErrInvalidLogoURL      = errors.New("logo_url must be a valid URL pointing to the nursery-logos bucket")
 	ErrBrandingConflict    = errors.New("logo_url and brand_icon_key cannot both be set")
+	ErrNurseryHasOpenWork  = errors.New("nursery has open orders, trips or quotations")
 )
 
 func validateBranding(input UpdateNurseryRequest) error {

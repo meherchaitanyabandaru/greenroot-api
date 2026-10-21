@@ -2,6 +2,7 @@ package redisutil
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -19,6 +20,42 @@ func SuspendUser(ctx context.Context, rdb redis.Cmdable, log *slog.Logger, userI
 	if err := rdb.Set(ctx, key, "1", 0).Err(); err != nil {
 		logger(log).Warn("redis user suspension write failed", "user_id", userID, "error", err)
 	}
+}
+
+// Suspension describes why a user is blocked, so the client can say so.
+type Suspension struct {
+	Code        string    `json:"code"` // USER_SUSPENDED | NURSERY_SUSPENDED
+	Reason      string    `json:"reason,omitempty"`
+	SuspendedAt time.Time `json:"suspended_at"`
+}
+
+// SuspendUserFor is SuspendUser with the details the API returns to clients.
+func SuspendUserFor(ctx context.Context, rdb redis.Cmdable, log *slog.Logger, userID int64, s Suspension) {
+	if rdb == nil {
+		return
+	}
+	data, _ := json.Marshal(s)
+	key := fmt.Sprintf("%s%d", KeySuspendedUser, userID)
+	if err := rdb.Set(ctx, key, data, 0).Err(); err != nil {
+		logger(log).Warn("redis user suspension write failed", "user_id", userID, "error", err)
+	}
+}
+
+// UserSuspension reads the flag written by SuspendUser/SuspendUserFor. ok is
+// false when the user is not suspended (or Redis is unavailable).
+func UserSuspension(ctx context.Context, rdb redis.Cmdable, userID int64) (Suspension, bool) {
+	if rdb == nil {
+		return Suspension{}, false
+	}
+	raw, err := rdb.Get(ctx, fmt.Sprintf("%s%d", KeySuspendedUser, userID)).Bytes()
+	if err != nil {
+		return Suspension{}, false
+	}
+	var s Suspension
+	if json.Unmarshal(raw, &s) != nil || s.Code == "" {
+		s = Suspension{Code: "USER_SUSPENDED"} // legacy "1" flag
+	}
+	return s, true
 }
 
 // ClearUserSuspension removes the Redis suspension flag for userID.

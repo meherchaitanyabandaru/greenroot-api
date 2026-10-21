@@ -378,10 +378,7 @@ func enrichSubscription(actor ActorContext, subscription UserSubscription) UserS
 
 	daysRemaining := subscription.DaysRemaining
 	if daysRemaining == nil && subscription.EndDate != nil {
-		days := int(subscription.EndDate.Sub(time.Now()).Hours() / 24)
-		if subscription.EndDate.After(time.Now()) && days == 0 {
-			days = 1
-		}
+		days := calendarDaysLeft(*subscription.EndDate, time.Now())
 		daysRemaining = &days
 		subscription.DaysRemaining = daysRemaining
 	}
@@ -788,4 +785,15 @@ func float64OrZero(value *float64) float64 {
 		return 0
 	}
 	return *value
+}
+
+// calendarDaysLeft counts whole days from today to endDate (a DATE, valid
+// through its last day): ends tomorrow -> 1, ends today -> 0. Dividing the
+// remaining hours by 24 under-counted by one for most of the day.
+func calendarDaysLeft(endDate, now time.Time) int {
+	day := func(t time.Time) time.Time {
+		t = t.UTC()
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	}
+	return int(day(endDate).Sub(day(now)).Hours() / 24)
 }

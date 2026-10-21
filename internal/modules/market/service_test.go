@@ -204,6 +204,13 @@ func (m *mockRepo) ChatSummaries(_ context.Context, _ []Enquiry, _ int64) error 
 func (m *mockRepo) UnreadTotal(_ context.Context, _ int64) (int, error) { return 0, nil }
 
 // NurseryPickup: every mock nursery sits in Hyderabad unless listed in noCoords.
+func (m *mockRepo) SetAdPickupLocation(_ context.Context, adID int64, lat, lon float64, _ string) error {
+	ad := m.ads[adID]
+	ad.PickupLatitude, ad.PickupLongitude = &lat, &lon
+	m.ads[adID] = ad
+	return nil
+}
+
 func (m *mockRepo) NurseryPickup(_ context.Context, nurseryID int64) (*string, *float64, *float64, error) {
 	if m.noCoords[nurseryID] {
 		return nil, nil, nil, nil
@@ -1160,10 +1167,29 @@ func TestNearbyArea(t *testing.T) {
 func TestPublishAd_NeedsLocation(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, true, 10)
+	repo.noCoords[1] = true // neither the ad nor the nursery has a location
 	ad := repo.seedAd(1, 1, StatusDraft)
 	ad.PickupLatitude, ad.PickupLongitude = nil, nil
 	repo.ads[1] = ad
 	if _, err := svc(repo).PublishAd(context.Background(), ownerActor(10), 1); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("want ErrInvalidInput for an ad with no location, got %v", err)
 	}
+}
+
+// A draft saved without a location publishes once the nursery has one.
+func TestPublishAd_FallsBackToNurseryLocation(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, true, 10)
+	ad := repo.seedAd(1, 1, StatusDraft)
+	ad.PickupLatitude, ad.PickupLongitude = nil, nil
+	repo.ads[1] = ad
+	repo.members[mk(1, 10)] = true
+
+	if _, err := svc(repo).PublishAd(context.Background(), ownerActor(10), 1); err != nil {
+		t.Fatalf("publish should use the nursery location: %v", err)
+	}
+	if repo.ads[1].PickupLatitude == nil {
+		t.Error("ad should now carry the nursery coordinates")
+	}
+
 }

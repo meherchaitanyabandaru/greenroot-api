@@ -154,6 +154,7 @@ func (r *PostgresRepository) UserIsApprovedDriver(ctx context.Context, userID in
 		`SELECT EXISTS (
 			SELECT 1 FROM public.drivers
 			WHERE user_id = $1 AND approval_status = 'APPROVED'
+			  AND COALESCE(status::text, 'ACTIVE') <> 'INACTIVE' -- stopped driving
 		)`,
 		userID,
 	).Scan(&exists)
@@ -336,19 +337,89 @@ func (r *PostgresRepository) GrantOwnerRole(ctx context.Context, ownerUserID int
 	return err
 }
 
+// Delete closes a nursery and releases everyone attached to it, so the owner
+// and managers can take other roles later on the same account. Refused while
+// orders, trips or customer quotations are still open.
 func (r *PostgresRepository) Delete(ctx context.Context, actorID int64, nurseryID int64) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE public.nurseries SET status = 'DELETED', updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $2 WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'`, nurseryID, actorID)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
+	defer func() { _ = tx.Rollback() }()
+	var open bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM public.orders WHERE seller_nursery_id = $1
+		               AND status NOT IN ('COMPLETED', 'CANCELLED', 'PARTIALLY_FULFILLED'))
+		    OR EXISTS (SELECT 1 FROM public.dispatches d JOIN public.orders o ON o.order_id = d.order_id
+		               WHERE o.seller_nursery_id = $1 AND d.status NOT IN ('DELIVERED', 'CANCELLED'))
+		    OR EXISTS (SELECT 1 FROM public.quotations WHERE nursery_id = $1 AND deleted_at IS NULL
+		               AND status IN ('CUSTOMER_SENT', 'CUSTOMER_ACCEPTED'))`, nurseryID).Scan(&open); err != nil {
 		return err
 	}
-	if affected == 0 {
+	if open {
+		return ErrNurseryHasOpenWork
+	}
+	var ownerID sql.NullInt64
+	err = tx.QueryRowContext(ctx, `
+		UPDATE public.nurseries SET status = 'DELETED', updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $2
+		WHERE nursery_id = $1 AND COALESCE(status::text, '') <> 'DELETED'
+		RETURNING owner_user_id`, nurseryID, actorID).Scan(&ownerID)
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	var managerIDs []int64
+	rows, err := tx.QueryContext(ctx, `
+		UPDATE public.nursery_users SET is_active = false, status = 'INACTIVE', updated_at = CURRENT_TIMESTAMP
+		WHERE nursery_id = $1 AND status = 'ACTIVE' RETURNING user_id`, nurseryID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		managerIDs = append(managerIDs, id)
+	}
+	rows.Close()
+	steps := []struct {
+		q    string
+		args []any
+	}{
+		{`UPDATE public.nursery_drivers SET status = 'DISCONNECTED', disconnected_at = CURRENT_TIMESTAMP,
+		    disconnected_by_user_id = $2, updated_at = CURRENT_TIMESTAMP
+		  WHERE nursery_id = $1 AND status IN ('REQUESTED', 'CONNECTED', 'APPROVED')`, []any{nurseryID, actorID}},
+		// Managers with no other active membership go back to BUYER.
+		{`DELETE FROM public.user_roles WHERE user_id = ANY($1)
+		  AND role_id = (SELECT role_id FROM public.roles WHERE role_code = 'MANAGER')
+		  AND NOT EXISTS (SELECT 1 FROM public.nursery_users nu WHERE nu.user_id = user_roles.user_id AND nu.status = 'ACTIVE')`, []any{managerIDs}},
+		{`INSERT INTO public.user_roles (user_id, role_id)
+		  SELECT u, r.role_id FROM unnest($1::bigint[]) u, public.roles r WHERE r.role_code = 'BUYER'
+		    AND NOT EXISTS (SELECT 1 FROM public.user_roles ur JOIN public.roles x ON x.role_id = ur.role_id
+		                    WHERE ur.user_id = u AND x.role_code IN ('MANAGER', 'DRIVER'))
+		  ON CONFLICT DO NOTHING`, []any{managerIDs}},
+		// The owner stops being an owner (one nursery per owner) and stops paying.
+		{`DELETE FROM public.user_roles WHERE user_id = $1
+		  AND role_id = (SELECT role_id FROM public.roles WHERE role_code = 'NURSERY_OWNER')
+		  AND NOT EXISTS (SELECT 1 FROM public.nurseries WHERE owner_user_id = $1 AND COALESCE(status::text, '') <> 'DELETED')`, []any{ownerID}},
+		{`UPDATE public.user_subscriptions SET status = 'CANCELLED', is_auto_renew = false, updated_at = CURRENT_TIMESTAMP
+		  WHERE user_id = $1 AND status IN ('ACTIVE', 'TRIAL', 'PAUSED')
+		    AND NOT EXISTS (SELECT 1 FROM public.nurseries WHERE owner_user_id = $1 AND COALESCE(status::text, '') <> 'DELETED')`, []any{ownerID}},
+		// Managers lose this workspace: sign them out (like a removal). The
+		// owner keeps their session; stale claims make their token refresh.
+		{`UPDATE public.user_sessions SET status = 'LOGGED_OUT', session_token = NULL, last_activity_at = CURRENT_TIMESTAMP
+		  WHERE status = 'ACTIVE' AND user_id = ANY($1)`, []any{managerIDs}},
+	}
+	for _, st := range steps {
+		if _, err := tx.ExecContext(ctx, st.q, st.args...); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (r *PostgresRepository) ListAddresses(ctx context.Context, nurseryID int64) ([]Address, error) {
@@ -693,6 +764,19 @@ func (r *PostgresRepository) RemoveUser(ctx context.Context, nurseryID int64, us
 	}
 	if affected == 0 {
 		return ErrNotFound
+	}
+	// Their assigned work goes back to the owner: an assignment to someone who
+	// left would lock the owner out (assigned-editor rule) and keep the
+	// ex-manager's access to those records.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE public.quotations SET assigned_manager_user_id = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE nursery_id = $1 AND assigned_manager_user_id = $2`, nurseryID, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE public.orders SET assigned_manager_user_id = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE seller_nursery_id = $1 AND assigned_manager_user_id = $2`, nurseryID, userID); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM public.user_roles

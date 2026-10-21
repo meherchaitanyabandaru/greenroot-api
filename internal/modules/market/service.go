@@ -558,6 +558,16 @@ func (s *Service) adTransition(ctx context.Context, actor ActorContext, id int64
 			return Ad{}, err
 		}
 		// Browsing is by distance: an ad with no location could never be found.
+		// Like creation, fall back to the nursery's location -- the error tells
+		// owners to add it, so a draft made before must pick it up now.
+		if ad.PickupLatitude == nil || ad.PickupLongitude == nil {
+			if _, lat, lon, err := s.repo.NurseryPickup(ctx, ad.NurseryID); err == nil && lat != nil && lon != nil {
+				if err := s.repo.SetAdPickupLocation(ctx, ad.ID, *lat, *lon, "nursery_default"); err != nil {
+					return Ad{}, err
+				}
+				ad.PickupLatitude, ad.PickupLongitude = lat, lon
+			}
+		}
 		if ad.PickupLatitude == nil || ad.PickupLongitude == nil {
 			return Ad{}, fmt.Errorf("%w: this ad has no location; turn on location while posting, or add your nursery's location, so nearby nurseries can find it", ErrInvalidInput)
 		}
