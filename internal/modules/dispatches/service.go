@@ -577,7 +577,8 @@ func enrichDispatches(actor ActorContext, dispatches []Dispatch) {
 func withLifecycle(actor ActorContext, dispatch Dispatch) Dispatch {
 	lc := lifecycle.Dispatch(dispatch.Status)
 	dispatch.Lifecycle = &lc
-	caps := BuildCapabilities(actor, dispatch.Status)
+	buyerSide := dispatch.CustomerUserID != nil && *dispatch.CustomerUserID == actor.UserID
+	caps := BuildCapabilities(actor, dispatch.Status, buyerSide)
 	dispatch.Capabilities = &caps
 	return dispatch
 }

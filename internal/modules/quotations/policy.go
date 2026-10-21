@@ -36,9 +36,15 @@ func IsTerminal(status string) bool {
 func BuildCapabilities(actor ActorContext, q Quotation) *QuotationCapabilities {
 	status := q.Status
 	isAdmin := actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
-	isSeller := isAdmin || actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER")
-	isOwnerRole := isAdmin || actor.HasRole("NURSERY_OWNER")
-	isCustomer := isAdmin || (q.CustomerUserID != nil && *q.CustomerUserID == actor.UserID)
+	// The quotation's own customer gets customer actions only, even when they
+	// also own or manage a nursery.
+	// Matched by user or, like canBuyerAct, by the recipient mobile when the
+	// quotation was sent to a number rather than a linked customer.
+	isRecipient := (q.CustomerUserID != nil && *q.CustomerUserID == actor.UserID) ||
+		(q.CustomerUserID == nil && q.RecipientMobile != nil && actor.Mobile != "" && *q.RecipientMobile == actor.Mobile)
+	isSeller := isAdmin || ((actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER")) && !isRecipient)
+	isOwnerRole := isAdmin || (actor.HasRole("NURSERY_OWNER") && !isRecipient)
+	isCustomer := isAdmin || isRecipient
 	editable := IsEditable(status) && q.ConvertedOrderID == nil
 	isCustomerSent := status == "CUSTOMER_SENT" && !isExpiredTime(q.ValidUntil)
 

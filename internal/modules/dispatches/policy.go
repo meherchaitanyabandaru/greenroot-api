@@ -85,9 +85,11 @@ type DispatchCapabilities struct {
 
 // BuildCapabilities computes the capability set for the given actor and dispatch status.
 // No database access — status string and actor roles are the only inputs.
-func BuildCapabilities(actor ActorContext, status string) DispatchCapabilities {
+// buyerSide is true when the actor is this trip's customer: they get no
+// operator actions even if they also own or manage a nursery.
+func BuildCapabilities(actor ActorContext, status string, buyerSide bool) DispatchCapabilities {
 	isDriver := actor.HasRole("DRIVER")
-	isOperator := actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER")
+	isOperator := (actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER")) && !buyerSide
 	isAdmin := actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
 	terminal := IsTerminal(status)
 

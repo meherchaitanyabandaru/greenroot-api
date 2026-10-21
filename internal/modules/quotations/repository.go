@@ -677,6 +677,32 @@ func (r *PostgresRepository) CreateOrderAndConvert(ctx context.Context, q *Quota
 		}
 	}
 
+	// Accepting requires a delivery address, so carry the buyer's address onto
+	// the order -- same snapshot rule as orders created directly.
+	if buyerUserID.Valid {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO public.order_delivery_snapshots (
+				order_id, contact_name, contact_mobile, address_line1, address_line2,
+				city, state, country, postal_code, landmark, latitude, longitude,
+				location, gps_accuracy_meters, location_source, confirmed_by_user_id, confirmed_at
+			)
+			SELECT $1, ua.contact_name, ua.contact_mobile, ua.address_line1, ua.address_line2,
+				ua.city, ua.state, ua.country, ua.postal_code, ua.landmark, ua.latitude, ua.longitude,
+				CASE WHEN ua.latitude IS NOT NULL AND ua.longitude IS NOT NULL
+					THEN ST_SetSRID(ST_MakePoint(ua.longitude::double precision, ua.latitude::double precision), 4326)::geography
+					ELSE NULL
+				END,
+				ua.gps_accuracy_meters, COALESCE(ua.location_source, 'address_search'), $2, CURRENT_TIMESTAMP
+			FROM public.user_addresses ua
+			WHERE ua.user_id = $3
+			ORDER BY ua.is_default DESC, ua.address_id DESC
+			LIMIT 1
+			ON CONFLICT (order_id) DO NOTHING
+		`, orderID, byUserID, buyerUserID.Int64); err != nil {
+			return 0, err
+		}
+	}
+
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE public.orders
 		SET total_amount = COALESCE((SELECT SUM(total_price) FROM public.order_items WHERE order_id = $1), 0),

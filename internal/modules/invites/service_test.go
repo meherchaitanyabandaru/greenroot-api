@@ -9,11 +9,12 @@ import (
 // ─── mock repository ─────────────────────────────────────────────────────────
 
 type mockRepo struct {
-	invites        map[string]*Invite // uuid → invite
-	nurseryOwners  map[int64]bool     // userID → owns nursery
-	nurseryOwnersN map[string]bool    // "nurseryID:userID" → is owner
-	managers       map[int64]bool     // userID → is manager
-	nextID         int64
+	invites         map[string]*Invite // uuid → invite
+	nurseryOwners   map[int64]bool     // userID → owns nursery
+	nurseryOwnersN  map[string]bool    // "nurseryID:userID" → is owner
+	managers        map[int64]bool     // userID → is manager
+	nextID          int64
+	connectedDriver [2]int64 // nurseryID, driverUserID from ConnectDriver
 }
 
 func newMock() *mockRepo {
@@ -104,6 +105,11 @@ func nurseryMemberKey(nurseryID, userID int64) string {
 
 func (m *mockRepo) UserIsManager(_ context.Context, userID int64) (bool, error) {
 	return m.managers[userID], nil
+}
+
+func (m *mockRepo) ConnectDriver(_ context.Context, nurseryID, driverUserID, _ int64) error {
+	m.connectedDriver = [2]int64{nurseryID, driverUserID}
+	return nil
 }
 
 func (m *mockRepo) AddNurseryMember(_ context.Context, nurseryID, userID int64, role string, invitedByUserID int64) error {
@@ -228,14 +234,18 @@ func TestCreate_EmailContactAccepted(t *testing.T) {
 
 func TestAccept_Success(t *testing.T) {
 	repo := newMock()
-	repo.seedInvite("uuid-1", "DRIVER_INVITE", 1)
+	repo.seedInvite("uuid-1", "DRIVER_INVITE", 1).NurseryID = ptr(int64(5))
 
+	// Docs flow: the invite may be accepted before the driver applies/is approved.
 	inv, err := svc(repo).Accept(context.Background(), buyerActor(20), "uuid-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if inv.Status != "ACCEPTED" {
 		t.Errorf("want ACCEPTED, got %s", inv.Status)
+	}
+	if repo.connectedDriver != [2]int64{5, 20} {
+		t.Errorf("driver invite must connect the driver to the nursery, got %v", repo.connectedDriver)
 	}
 }
 

@@ -185,6 +185,13 @@ func (s *Service) Accept(ctx context.Context, actor ActorContext, uuid string) (
 				return Invite{}, ErrAlreadyMember
 			}
 		}
+	case "DRIVER_INVITE":
+		if invite.NurseryID != nil {
+			if err := s.repository.ConnectDriver(ctx, *invite.NurseryID, actor.UserID, invite.InvitedByUserID); err != nil {
+				_, _ = s.repository.Cancel(ctx, uuid, actor.UserID)
+				return Invite{}, err
+			}
+		}
 	case "NURSERY_ONBOARDING_INVITE":
 		_ = s.repository.GrantNurseryOwnerRole(ctx, actor.UserID)
 	}

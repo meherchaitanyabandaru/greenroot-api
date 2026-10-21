@@ -72,7 +72,7 @@ func TestBuildCapabilities(t *testing.T) {
 	mgr := ActorContext{UserID: 3, Roles: []string{"MANAGER"}}
 
 	t.Run("driver_pending", func(t *testing.T) {
-		caps := BuildCapabilities(driver, "PENDING")
+		caps := BuildCapabilities(driver, "PENDING", false)
 		if !caps.CanAccept {
 			t.Error("driver should CanAccept at PENDING")
 		}
@@ -82,7 +82,7 @@ func TestBuildCapabilities(t *testing.T) {
 	})
 
 	t.Run("driver_dispatched", func(t *testing.T) {
-		caps := BuildCapabilities(driver, "DISPATCHED")
+		caps := BuildCapabilities(driver, "DISPATCHED", false)
 		if !caps.CanStartTrip {
 			t.Error("driver should CanStartTrip at DISPATCHED")
 		}
@@ -92,14 +92,14 @@ func TestBuildCapabilities(t *testing.T) {
 	})
 
 	t.Run("driver_in_transit", func(t *testing.T) {
-		caps := BuildCapabilities(driver, "IN_TRANSIT")
+		caps := BuildCapabilities(driver, "IN_TRANSIT", false)
 		if !caps.CanMarkDelivered {
 			t.Error("driver should CanMarkDelivered at IN_TRANSIT")
 		}
 	})
 
 	t.Run("owner_pending", func(t *testing.T) {
-		caps := BuildCapabilities(owner, "PENDING")
+		caps := BuildCapabilities(owner, "PENDING", false)
 		if !caps.CanMarkDispatched {
 			t.Error("owner should CanMarkDispatched at PENDING")
 		}
@@ -112,23 +112,32 @@ func TestBuildCapabilities(t *testing.T) {
 	})
 
 	t.Run("owner_delivered_terminal", func(t *testing.T) {
-		caps := BuildCapabilities(owner, "DELIVERED")
+		caps := BuildCapabilities(owner, "DELIVERED", false)
 		if caps.CanMarkDispatched || caps.CanCancel || caps.CanAddItems {
 			t.Error("no action caps should be set at terminal DELIVERED")
 		}
 	})
 
 	t.Run("manager_accepted", func(t *testing.T) {
-		caps := BuildCapabilities(mgr, "ACCEPTED")
+		caps := BuildCapabilities(mgr, "ACCEPTED", false)
 		if !caps.CanMarkDispatched {
 			t.Error("manager should CanMarkDispatched at ACCEPTED")
 		}
 	})
 
 	t.Run("operator_in_transit", func(t *testing.T) {
-		caps := BuildCapabilities(owner, "IN_TRANSIT")
+		caps := BuildCapabilities(owner, "IN_TRANSIT", false)
 		if !caps.CanMarkDelivered {
 			t.Error("operator should CanMarkDelivered at IN_TRANSIT")
+		}
+	})
+
+	t.Run("owner_as_customer_gets_no_operator_caps", func(t *testing.T) {
+		for _, st := range []string{"PENDING", "ACCEPTED", "IN_TRANSIT"} {
+			caps := BuildCapabilities(owner, st, true)
+			if caps.CanMarkDispatched || caps.CanMarkDelivered || caps.CanCancel || caps.CanAddItems || caps.CanShareCode {
+				t.Errorf("%s: buyer-side owner got operator caps: %+v", st, caps)
+			}
 		}
 	})
 }

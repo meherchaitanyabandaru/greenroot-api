@@ -791,7 +791,10 @@ func baseSelect() string {
 			o.status::text, COALESCE(o.total_amount, 0), o.notes, o.ordered_at,
 			o.created_at, o.updated_at,
 			o.created_by_user_id, o.updated_by_user_id,
-			o.quotation_id, o.customer_user_id, o.customer_name, o.customer_mobile,
+			o.quotation_id, o.customer_user_id,
+			-- customer_* are never written today; fall back to the buyer's account
+			COALESCE(o.customer_name, NULLIF(TRIM(CONCAT_WS(' ', bu.first_name, bu.last_name)), '')),
+			COALESCE(o.customer_mobile, bu.mobile),
 			o.assigned_manager_user_id, o.created_by_user_id,
 			o.cancelled_by_user_id, o.cancelled_at, o.cancel_reason,
 			o.loading_started_at, o.loading_completed_at, o.loading_completed_by_user_id,

@@ -175,4 +175,20 @@ func TestOrderBuildCapabilities(t *testing.T) {
 			t.Error("CanCancel must be false for a BUYER-role actor who isn't this order's buyer")
 		}
 	})
+
+	// An owner who bought from another nursery is the buyer on that order and
+	// must not get seller actions (edit, delete, loading) just for the role.
+	t.Run("owner_as_buyer_gets_buyer_caps_only", func(t *testing.T) {
+		ownerBuyer := ActorContext{UserID: 3, Roles: []string{"NURSERY_OWNER", "BUYER"}}
+		for _, st := range []string{"PENDING", "CONFIRMED", "LOADING"} {
+			caps := BuildCapabilities(ownerBuyer, withAddress(st))
+			if caps.CanEdit || caps.CanDelete || caps.CanConfirm || caps.CanStartLoading ||
+				caps.CanCompleteLoading || caps.CanAddItems {
+				t.Errorf("%s: buyer-side owner got seller caps: %+v", st, caps)
+			}
+			if caps.CanCancel != (st == "PENDING") {
+				t.Errorf("%s: buyer-side cancel should follow the buyer rule, got %v", st, caps.CanCancel)
+			}
+		}
+	})
 }

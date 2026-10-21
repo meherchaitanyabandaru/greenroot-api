@@ -96,4 +96,27 @@ func TestQuotationBuildCapabilities(t *testing.T) {
 			t.Error("converted quotation should block edit/delete/convert")
 		}
 	})
+
+	t.Run("owner_as_recipient_by_mobile_gets_no_seller_caps", func(t *testing.T) {
+		mobile := "9100000000"
+		ownerCustomer := ActorContext{UserID: 9, Mobile: mobile, Roles: []string{"NURSERY_OWNER"}}
+		q := Quotation{Status: "CUSTOMER_SENT", QuotationType: "CUSTOMER", RecipientMobile: &mobile}
+		caps := BuildCapabilities(ownerCustomer, q)
+		if !caps.CanAccept || caps.CanEdit || caps.CanRecall || caps.CanDelete {
+			t.Errorf("mobile recipient should get customer caps only: %+v", caps)
+		}
+	})
+
+	t.Run("owner_as_recipient_gets_customer_caps_only", func(t *testing.T) {
+		ownerCustomer := ActorContext{UserID: 5, Roles: []string{"NURSERY_OWNER", "BUYER"}}
+		q := Quotation{Status: "CUSTOMER_SENT", QuotationType: "CUSTOMER", CustomerUserID: &customerID}
+		caps := BuildCapabilities(ownerCustomer, q)
+		if !caps.CanAccept || !caps.CanReject {
+			t.Error("recipient should accept/reject")
+		}
+		if caps.CanEdit || caps.CanDelete || caps.CanRecall || caps.CanSend || caps.CanAssignManager ||
+			caps.CanUpdateCustomer || caps.CanGenerateDocument || caps.CanManageVerifyToken {
+			t.Errorf("recipient owner got seller caps: %+v", caps)
+		}
+	})
 }

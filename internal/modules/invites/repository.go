@@ -20,6 +20,7 @@ type Repository interface {
 	IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	UserIsManager(ctx context.Context, userID int64) (bool, error)
 	AddNurseryMember(ctx context.Context, nurseryID int64, userID int64, role string, invitedByUserID int64) error
+	ConnectDriver(ctx context.Context, nurseryID int64, driverUserID int64, invitedByUserID int64) error
 	GrantNurseryOwnerRole(ctx context.Context, userID int64) error
 }
 
@@ -229,6 +230,20 @@ func int64OrNil(v *int64) any {
 		return nil
 	}
 	return *v
+}
+
+// ConnectDriver links an accepted driver to the nursery, approved by the
+// inviter -- the same APPROVED state nurseries.ApproveDriverConnection writes.
+func (r *PostgresRepository) ConnectDriver(ctx context.Context, nurseryID int64, driverUserID int64, invitedByUserID int64) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO public.nursery_drivers (nursery_id, driver_user_id, invited_by_user_id, approved_by_user_id,
+			status, connected_at, disconnected_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $3, 'APPROVED', CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT (nursery_id, driver_user_id) DO UPDATE
+		SET status = 'APPROVED', invited_by_user_id = $3, approved_by_user_id = $3,
+			connected_at = CURRENT_TIMESTAMP, disconnected_at = NULL, updated_at = CURRENT_TIMESTAMP
+	`, nurseryID, driverUserID, invitedByUserID)
+	return err
 }
 
 func (r *PostgresRepository) AddNurseryMember(ctx context.Context, nurseryID int64, userID int64, role string, invitedByUserID int64) error {
