@@ -28,6 +28,10 @@ type Repository interface {
 	UpdateStatus(ctx context.Context, subscriptionID int64, status string) (*UserSubscription, error)
 	Renew(ctx context.Context, subscriptionID int64, input RenewSubscriptionInput) (*UserSubscription, error)
 	CreatePayment(ctx context.Context, input CreatePaymentInput) error
+	// GatewayPaymentUsed: this order or payment already paid for something (replay guard).
+	GatewayPaymentUsed(ctx context.Context, provider, orderID, paymentID string) (bool, error)
+	// ApplyRefund marks the payment REFUNDED and shortens the subscription, in one transaction.
+	ApplyRefund(ctx context.Context, input ApplyRefundInput) error
 	ListPaymentsBySubscription(ctx context.Context, subscriptionID int64) ([]Payment, error)
 	// Promos
 	ListPromos(ctx context.Context, activeOnly bool) ([]SubscriptionPromo, error)
@@ -110,7 +114,10 @@ type CreatePaymentInput struct {
 	Status          string
 	Provider        *string
 	ProviderOrderID *string
-	Notes           string
+	// Set for verified gateway payments.
+	ProviderPaymentID *string
+	ProviderSignature *string
+	Notes             string
 }
 
 type PostgresRepository struct {
@@ -320,14 +327,59 @@ func (r *PostgresRepository) CreatePayment(ctx context.Context, input CreatePaym
 	const query = `
 		INSERT INTO public.payments (
 			payment_code, payment_for, user_subscription_id, payer_user_id, amount, payment_method, status,
-			paid_at, notes, provider, provider_order_id, created_at, updated_at
+			paid_at, notes, provider, provider_order_id, provider_payment_id, provider_signature, created_at, updated_at
 		)
 		VALUES ($1, 'SUBSCRIPTION', $2, $3, $4, $5, $6::text,
 			CASE WHEN $6::text = 'SUCCESS' THEN $10::timestamptz ELSE NULL::timestamptz END,
-			NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), $10, $10)
+			NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($11, ''), NULLIF($12, ''), $10, $10)
 	`
-	_, err = r.db.ExecContext(ctx, query, paymentCode, input.SubscriptionID, input.PayerUserID, input.Amount, input.Method, input.Status, input.Notes, stringOrEmpty(input.Provider), stringOrEmpty(input.ProviderOrderID), now)
+	_, err = r.db.ExecContext(ctx, query, paymentCode, input.SubscriptionID, input.PayerUserID, input.Amount, input.Method, input.Status, input.Notes, stringOrEmpty(input.Provider), stringOrEmpty(input.ProviderOrderID), now, stringOrEmpty(input.ProviderPaymentID), stringOrEmpty(input.ProviderSignature))
 	return err
+}
+
+func (r *PostgresRepository) ApplyRefund(ctx context.Context, input ApplyRefundInput) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	// status = 'SUCCESS' guards a double refund racing past the service checks.
+	result, err := tx.ExecContext(ctx, `
+		UPDATE public.payments
+		SET status = 'REFUNDED',
+			notes = CASE WHEN notes IS NULL OR notes = '' THEN $3 ELSE notes || ' | ' || $3 END,
+			raw_response = $4::jsonb,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE payment_id = $1 AND user_subscription_id = $2 AND status = 'SUCCESS'
+	`, input.PaymentID, input.SubscriptionID, input.Note, string(input.Raw))
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE public.user_subscriptions
+		SET start_date = $4, end_date = $2, status = $3, updated_at = CURRENT_TIMESTAMP
+		WHERE user_subscription_id = $1
+	`, input.SubscriptionID, input.EndDate, input.Status, input.StartDate); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *PostgresRepository) GatewayPaymentUsed(ctx context.Context, provider, orderID, paymentID string) (bool, error) {
+	const query = `
+		SELECT EXISTS (
+			SELECT 1 FROM public.payments
+			WHERE provider = $1 AND (provider_order_id = $2 OR provider_payment_id = $3)
+		)
+	`
+	var used bool
+	err := r.db.QueryRowContext(ctx, query, provider, orderID, paymentID).Scan(&used)
+	return used, err
 }
 
 func (r *PostgresRepository) ListPaymentsBySubscription(ctx context.Context, subscriptionID int64) ([]Payment, error) {

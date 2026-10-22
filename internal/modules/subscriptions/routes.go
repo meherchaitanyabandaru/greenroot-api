@@ -51,10 +51,12 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Get("/", m.handler.List)
 		r.Post("/", m.handler.Create)
 		r.Get("/me", m.handler.Me)
+		r.Post("/payment-order", m.handler.CreatePaymentOrder)
 		r.Get("/{id}", m.handler.Get)
 		r.Put("/{id}/status", m.handler.UpdateStatus)
 		r.Post("/{id}/renew", m.handler.Renew)
 		r.Post("/{id}/cancel", m.handler.Cancel)
 		r.Get("/{id}/payments", m.handler.ListPayments)
+		r.Post("/{id}/payments/{paymentID}/refund", m.handler.RefundPayment)
 	})
 }

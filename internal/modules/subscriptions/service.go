@@ -29,6 +29,7 @@ type Service struct {
 	repository Repository
 	auditSvc   *auditlog.Service
 	redis      redis.Cmdable
+	gateway    PaymentGateway // nil = mock payments
 }
 
 func NewService(repository Repository, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
@@ -164,6 +165,10 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateSu
 	if err != nil {
 		return UserSubscription{}, ErrInvalidInput
 	}
+	paid, err := s.checkPayment(ctx, actor, userID, "new", input.PlanID, cycle, finalAmount, input.Provider, input.ProviderRef, input.ProviderPaymentID, input.ProviderSignature)
+	if err != nil {
+		return UserSubscription{}, err
+	}
 	subscription, err := s.repository.Create(ctx, CreateSubscriptionInput{
 		UserID:    userID,
 		PlanID:    input.PlanID,
@@ -174,7 +179,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateSu
 	if err != nil {
 		return UserSubscription{}, err
 	}
-	if err := s.createSubscriptionPayment(ctx, subscription.ID, userID, finalAmount, input.PaymentMethod, input.Provider, input.ProviderRef, "Subscription created"); err != nil {
+	if err := s.createSubscriptionPayment(ctx, subscription.ID, userID, finalAmount, input.PaymentMethod, input.Provider, input.ProviderRef, paid, "Subscription created"); err != nil {
 		return UserSubscription{}, err
 	}
 	if promoID > 0 {
@@ -276,6 +281,10 @@ func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID 
 	if err != nil {
 		return UserSubscription{}, ErrInvalidInput
 	}
+	paid, err := s.checkPayment(ctx, actor, current.UserID, strconv.FormatInt(subscriptionID, 10), planID, cycle, finalAmount, input.Provider, input.ProviderRef, input.ProviderPaymentID, input.ProviderSignature)
+	if err != nil {
+		return UserSubscription{}, err
+	}
 	subscription, err := s.repository.Renew(ctx, subscriptionID, RenewSubscriptionInput{
 		PlanID:    planID,
 		StartDate: startDate,
@@ -285,7 +294,7 @@ func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID 
 	if err != nil {
 		return UserSubscription{}, err
 	}
-	if err := s.createSubscriptionPayment(ctx, subscription.ID, current.UserID, finalAmount, input.PaymentMethod, input.Provider, input.ProviderRef, "Subscription renewed"); err != nil {
+	if err := s.createSubscriptionPayment(ctx, subscription.ID, current.UserID, finalAmount, input.PaymentMethod, input.Provider, input.ProviderRef, paid, "Subscription renewed"); err != nil {
 		return UserSubscription{}, err
 	}
 	if promoID > 0 {
@@ -414,7 +423,7 @@ func (s *Service) canAccess(actor ActorContext, subscription UserSubscription) e
 	return ErrForbidden
 }
 
-func (s *Service) createSubscriptionPayment(ctx context.Context, subscriptionID int64, userID int64, amount float64, method *string, provider *string, providerRef *string, notes string) error {
+func (s *Service) createSubscriptionPayment(ctx context.Context, subscriptionID int64, userID int64, amount float64, method *string, provider *string, providerRef *string, paid *verifiedPayment, notes string) error {
 	if amount <= 0 {
 		return nil
 	}
@@ -429,7 +438,7 @@ func (s *Service) createSubscriptionPayment(ctx context.Context, subscriptionID 
 	if strings.TrimSpace(stringOrEmpty(provider)) == "" && normalizedMethod != "CARD" {
 		status = "SUCCESS"
 	}
-	return s.repository.CreatePayment(ctx, CreatePaymentInput{
+	input := CreatePaymentInput{
 		SubscriptionID:  subscriptionID,
 		PayerUserID:     userID,
 		Amount:          amount,
@@ -438,7 +447,13 @@ func (s *Service) createSubscriptionPayment(ctx context.Context, subscriptionID 
 		Provider:        provider,
 		ProviderOrderID: providerRef,
 		Notes:           notes,
-	})
+	}
+	if paid != nil {
+		gateway := providerRazorpay
+		input.Status, input.Provider = "SUCCESS", &gateway
+		input.ProviderOrderID, input.ProviderPaymentID, input.ProviderSignature = &paid.OrderID, &paid.PaymentID, &paid.Signature
+	}
+	return s.repository.CreatePayment(ctx, input)
 }
 
 func (s *Service) audit(ctx context.Context, actor ActorContext, entityID int64, action auditlog.Action, newValue any) {

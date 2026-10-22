@@ -18,6 +18,7 @@ type Config struct {
 	Redis    RedisConfig
 	SMS      SMSConfig
 	Email    EmailConfig
+	Razorpay RazorpayConfig
 	Client   ClientAppConfig
 }
 
@@ -106,6 +107,13 @@ type EmailConfig struct {
 	Provider string // "mock" (default) never sends
 }
 
+// RazorpayConfig: both keys set = real Razorpay checkout for subscriptions;
+// either empty = mock payments (local dev, journeys).
+type RazorpayConfig struct {
+	KeyID     string
+	KeySecret string
+}
+
 type RedisConfig struct {
 	Addr     string
 	Password string
@@ -191,6 +199,10 @@ func Load() Config {
 		},
 		Email: EmailConfig{
 			Provider: getString("EMAIL_PROVIDER", "mock"),
+		},
+		Razorpay: RazorpayConfig{
+			KeyID:     getString("RAZORPAY_KEY_ID", ""),
+			KeySecret: getString("RAZORPAY_KEY_SECRET", ""),
 		},
 	}
 }

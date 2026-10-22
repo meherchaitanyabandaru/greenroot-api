@@ -21,6 +21,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/notifications"
 	platformemail "github.com/meherchaitanyabandaru/greenroot-api/platform/email"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
+	"github.com/meherchaitanyabandaru/greenroot-api/platform/razorpay"
 	platformsms "github.com/meherchaitanyabandaru/greenroot-api/platform/sms"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
@@ -141,6 +142,10 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		Redis:      connectRedis(ctx, cfg.Redis, logManager.Logger()),
 		SMS:        smsProvider,
 		Email:      emailProvider,
+		Razorpay:   razorpay.New(cfg.Razorpay.KeyID, cfg.Razorpay.KeySecret),
+	}
+	if deps.Razorpay == nil && cfg.IsProduction() {
+		deps.Logger.Warn("RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET not set: subscription payments are mock")
 	}
 
 	// Sync suspension state into Redis before accepting any traffic.

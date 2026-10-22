@@ -231,7 +231,7 @@ All module routes below are mounted under `/api/v1` unless noted.
 |---|---|
 | FCM (Push notifications) | Mock — real credentials needed |
 | S3 File Storage | Mock — pre-signed URL logic pending |
-| Razorpay/PayU Payments | Mock — gateway capture pending |
+| Razorpay Payments (subscriptions) | **Live when `RAZORPAY_KEY_ID` + `RAZORPAY_KEY_SECRET` are set** (Standard Checkout: `POST /subscriptions/payment-order` → app checkout → create/renew verifies signature + order before extending); mock otherwise. Admin refunds: `POST /subscriptions/{id}/payments/{paymentID}/refund`. Webhook not built. See `greenroot-infra/docs/subscriptions.md` §3 |
 | Email Provider | Mock (`EMAIL_PROVIDER=mock`): verification code `123456`, emails logged as MOCKED. Live path built (random hashed code, verified sender/domain required) — **Amazon SES built, off until enabled** (`EMAIL_PROVIDER=ses` + `AWS_REGION`). See `greenroot-infra/docs/messaging.md` |
 | SMS / OTP Provider | Mock (`SMS_PROVIDER=mock`): `123456` OTP, SMS logged as MOCKED. Live path built (random hashed OTP, per-number throttle, DLT-approved templates only) — **AWS End User Messaging SMS built, off until enabled** (`SMS_PROVIDER=aws` + `AWS_REGION`, after DLT). See `greenroot-infra/docs/sms.md` |
 

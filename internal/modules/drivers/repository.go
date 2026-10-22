@@ -266,7 +266,7 @@ func (r *PostgresRepository) Upsert(ctx context.Context, userID int64, req Apply
 	return r.FindByID(ctx, driverID)
 }
 
-func (r *PostgresRepository) Approve(ctx context.Context, driverUserID int64, approvedByUserID int64) (*Driver, error) {
+func (r *PostgresRepository) Approve(ctx context.Context, driverID int64, approvedByUserID int64) (*Driver, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -279,10 +279,10 @@ func (r *PostgresRepository) Approve(ctx context.Context, driverUserID int64, ap
 		WHERE driver_id = $1 AND COALESCE(status::text, '') <> 'DELETED'
 		RETURNING driver_id, user_id, vehicle_number, vehicle_type
 	`
-	var driverID int64
+	var approvedID int64
 	var userID sql.NullInt64
 	var vehicleNumber, vehicleType sql.NullString
-	if err := tx.QueryRowContext(ctx, query, driverUserID, approvedByUserID).Scan(&driverID, &userID, &vehicleNumber, &vehicleType); err != nil {
+	if err := tx.QueryRowContext(ctx, query, driverID, approvedByUserID).Scan(&approvedID, &userID, &vehicleNumber, &vehicleType); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -311,7 +311,7 @@ func (r *PostgresRepository) Approve(ctx context.Context, driverUserID int64, ap
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	return r.FindByID(ctx, driverID)
+	return r.FindByID(ctx, approvedID)
 }
 
 func syncDriverVehicleTx(ctx context.Context, tx *sql.Tx, userID int64, vehicleNumber string, vehicleType string, status string) error {
@@ -388,6 +388,10 @@ func buildWhere(input ListDriversRequest) (string, []any) {
 		args = append(args, input.Status)
 		clauses = append(clauses, fmt.Sprintf("d.status::text = ANY(string_to_array($%d::text, ','))", len(args)))
 	}
+	if input.ApprovalStatus != "" {
+		args = append(args, input.ApprovalStatus)
+		clauses = append(clauses, fmt.Sprintf("COALESCE(d.approval_status, 'PENDING') = ANY(string_to_array($%d::text, ','))", len(args)))
+	}
 	if input.Search != "" {
 		args = append(args, "%"+input.Search+"%")
 		clauses = append(clauses, fmt.Sprintf("(d.driver_code ILIKE $%d OR u.first_name ILIKE $%d OR u.mobile ILIKE $%d OR d.license_number ILIKE $%d)", len(args), len(args), len(args), len(args)))
@@ -404,6 +408,8 @@ func sortClause(input ListDriversRequest) string {
 	switch strings.ToLower(strings.TrimSpace(input.SortBy)) {
 	case "id":
 		return "d.driver_id " + direction
+	case "approval_status":
+		return "d.approval_status " + direction + " NULLS FIRST, d.driver_id DESC"
 	case "driver_code":
 		return "d.driver_code " + direction + " NULLS LAST, d.driver_id DESC"
 	case "driver_name":

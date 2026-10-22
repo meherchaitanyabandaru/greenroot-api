@@ -17,7 +17,10 @@ type CreateSubscriptionRequest struct {
 	PaymentMethod *string `json:"payment_method"`
 	Provider      *string `json:"provider"`
 	ProviderRef   *string `json:"provider_order_id"`
-	PromoCode     *string `json:"promo_code"`
+	// Razorpay checkout result, required when provider is "razorpay".
+	ProviderPaymentID *string `json:"provider_payment_id"`
+	ProviderSignature *string `json:"provider_signature"`
+	PromoCode         *string `json:"promo_code"`
 }
 
 type UpdateStatusRequest struct {
@@ -31,7 +34,31 @@ type RenewSubscriptionRequest struct {
 	PaymentMethod *string `json:"payment_method"`
 	Provider      *string `json:"provider"`
 	ProviderRef   *string `json:"provider_order_id"`
-	PromoCode     *string `json:"promo_code"`
+	// Razorpay checkout result, required when provider is "razorpay".
+	ProviderPaymentID *string `json:"provider_payment_id"`
+	ProviderSignature *string `json:"provider_signature"`
+	PromoCode         *string `json:"promo_code"`
+}
+
+// PaymentOrderRequest asks for a Razorpay order: renewing SubscriptionID, or a
+// new subscription when it is empty. PlanID switches plan (empty = keep).
+type PaymentOrderRequest struct {
+	SubscriptionID *int64  `json:"subscription_id"`
+	PlanID         *int64  `json:"plan_id"`
+	BillingCycle   string  `json:"billing_cycle"`
+	PromoCode      *string `json:"promo_code"`
+}
+
+// PaymentOrder is everything the app needs to open Razorpay checkout.
+type PaymentOrder struct {
+	OrderID  string `json:"order_id"`
+	Amount   int64  `json:"amount"` // paise
+	Currency string `json:"currency"`
+	KeyID    string `json:"key_id"`
+}
+
+type PaymentOrderResponse struct {
+	PaymentOrder PaymentOrder `json:"payment_order"`
 }
 
 type CreatePromoRequest struct {

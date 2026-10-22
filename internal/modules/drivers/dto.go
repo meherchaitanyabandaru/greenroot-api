@@ -1,12 +1,15 @@
 package drivers
 
 type ListDriversRequest struct {
-	Page      int
-	PerPage   int
-	Status    string
-	Search    string
-	SortBy    string
-	SortOrder string
+	Page    int
+	PerPage int
+	Status  string
+	// ApprovalStatus filters PENDING / APPROVED / REJECTED (comma list) so
+	// admins can find applications waiting for review.
+	ApprovalStatus string
+	Search         string
+	SortBy         string
+	SortOrder      string
 }
 
 type DriverRequest struct {

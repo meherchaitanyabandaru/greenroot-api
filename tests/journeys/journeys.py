@@ -1426,6 +1426,17 @@ def journey_roles():
     expect("ex-manager can't open the old nursery's quotation", "GET", f"/quotations/{q['id']}", mgr.token, status=(403, 404))
     expect("ex-manager joins another nursery", "POST", f"/invites/{invite(other, 'MANAGER_INVITE', mgr)}/accept", mgr.token, {})
 
+    # Approval reaches a signed-in applicant at once, and admins can find pending applications.
+    applicant = User(first="Applicant", activity="DRIVER")
+    app_ = expect("applicant applies", "POST", "/drivers/apply", applicant.token,
+                  {"licence_number": "TS09" + applicant.mobile, "vehicle_number": "TS09" + applicant.mobile[-4:], "vehicle_type": "VAN"}, status=(200, 201))["driver"]
+    expect("app loads (and caches) workspaces before approval", "GET", "/me/workspaces", applicant.token)
+    pending = expect("admin lists pending applications", "GET", "/drivers?approval_status=PENDING&per_page=100", boss.token)
+    check("…only pending, including the applicant", all(d.get("approval_status") == "PENDING" for d in pending.get("drivers", [])) and any(d["id"] == app_["id"] for d in pending.get("drivers", [])), pending.get("pagination"))
+    expect("admin approves", "POST", f"/drivers/{app_['id']}/approve", boss.token, {})
+    ws = expect("workspaces right after approval", "GET", "/me/workspaces", applicant.token)
+    check("…include DRIVER (cache cleared for the right user)", any(w.get("type") == "DRIVER" for w in (ws if isinstance(ws, list) else ws.get("workspaces", []))), ws)
+
     # Driver stops driving, then can own a nursery; re-applying means review again.
     drv = approved_driver(boss, owner)
     expect("driver can't register a nursery", "POST", "/nurseries", drv.token, {"name": "Drv Farm", "mobile": drv.mobile, "address_line1": "x", "city": "Hyderabad"}, status=409)
@@ -1483,6 +1494,11 @@ def journey_access():
     time.sleep(1.1)
     expect("owner renewing the free trial is refused", "POST", f"/subscriptions/{sub['id']}/renew", owner.refresh() and owner.token,
            {"billing_cycle": "SIX_MONTH", "payment_method": "UPI"}, status=400)
+    # Razorpay off (no keys): the app falls back to mock payments on 503.
+    expect("no Razorpay keys: payment order says payments unavailable", "POST", "/subscriptions/payment-order", owner.token,
+           {"subscription_id": sub["id"], "plan_id": plan_ids.get("GROWTH"), "billing_cycle": "YEARLY"}, status=503)
+    expect("only admins refund", "POST", f"/subscriptions/{sub['id']}/payments/1/refund", owner.token,
+           {"reason": "please refund"}, status=403)
     out = expect("owner upgrades to GROWTH", "POST", f"/subscriptions/{sub['id']}/renew", owner.token,
                  {"plan_id": plan_ids.get("GROWTH"), "billing_cycle": "YEARLY", "payment_method": "UPI"})
     check("…plan switched", out.get("subscription", {}).get("plan_code") == "GROWTH", out)

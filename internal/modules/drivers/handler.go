@@ -156,11 +156,11 @@ func (h *Handler) ApproveDriver(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	driverUserID, ok := pathID(w, r, "id")
+	driverID, ok := pathID(w, r, "id")
 	if !ok {
 		return
 	}
-	driver, err := h.service.Approve(r.Context(), actor, driverUserID)
+	driver, err := h.service.Approve(r.Context(), actor, driverID)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -200,12 +200,13 @@ func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, b
 func listRequest(r *http.Request) ListDriversRequest {
 	query := r.URL.Query()
 	return ListDriversRequest{
-		Page:      intQuery(query.Get("page")),
-		PerPage:   intQuery(query.Get("per_page")),
-		Status:    query.Get("status"),
-		Search:    query.Get("search"),
-		SortBy:    query.Get("sort_by"),
-		SortOrder: query.Get("sort_order"),
+		Page:           intQuery(query.Get("page")),
+		PerPage:        intQuery(query.Get("per_page")),
+		Status:         query.Get("status"),
+		ApprovalStatus: query.Get("approval_status"),
+		Search:         query.Get("search"),
+		SortBy:         query.Get("sort_by"),
+		SortOrder:      query.Get("sort_order"),
 	}
 }
 

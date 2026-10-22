@@ -105,6 +105,9 @@ func NewRouter(deps Dependencies) chi.Router {
 		invites.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...).RegisterRoutes(r)
 		notifications.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		subModule := subscriptions.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...)
+		if deps.Razorpay != nil {
+			subModule.Service().SetGateway(deps.Razorpay)
+		}
 		nurseries.NewModuleWithTrial(deps.DB, deps.JWT, deps.Audit, subModule.Service(), redisClients...).RegisterRoutes(r)
 		orders.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, redisClients...).RegisterRoutes(r)
 		quotations.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, redisClients...).RegisterRoutes(r)

@@ -174,15 +174,21 @@ func (s *Service) GetMine(ctx context.Context, actor ActorContext) (Driver, erro
 }
 
 // Approve approves a driver profile (admin only).
-func (s *Service) Approve(ctx context.Context, actor ActorContext, driverUserID int64) (Driver, error) {
+// Approve approves the driver profile with ID driverID (the route's {id}).
+func (s *Service) Approve(ctx context.Context, actor ActorContext, driverID int64) (Driver, error) {
 	if !actor.HasRole("ADMIN") && !actor.HasRole("SUPER_ADMIN") {
 		return Driver{}, ErrForbidden
 	}
-	driver, err := s.repository.Approve(ctx, driverUserID, actor.UserID)
+	driver, err := s.repository.Approve(ctx, driverID, actor.UserID)
 	if err != nil {
 		return Driver{}, err
 	}
-	redisutil.InvalidateWorkspaces(ctx, s.redis, slog.Default(), driverUserID)
+	// Clear the *user's* cached workspaces (the route ID is the driver ID; using
+	// it here cleared some other user's cache, so the approved driver kept
+	// seeing the customer app for up to 5 minutes).
+	if driver.UserID != nil {
+		redisutil.InvalidateWorkspaces(ctx, s.redis, slog.Default(), *driver.UserID)
+	}
 	s.audit(ctx, actor, driver.ID, actionUpdate, map[string]any{"approval_status": "APPROVED"})
 	return enrichDriver(actor, *driver), nil
 }

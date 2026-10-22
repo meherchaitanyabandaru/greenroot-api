@@ -23,6 +23,9 @@ type mockRepo struct {
 	payments       map[int64][]Payment // subscriptionID → payments
 	notifications  int
 	listPlansCalls int
+	gatewayUsed    bool
+	lastPayment    *CreatePaymentInput
+	lastRefund     *ApplyRefundInput
 
 	nextPlanID  int64
 	nextSubID   int64
@@ -189,7 +192,21 @@ func (m *mockRepo) Renew(_ context.Context, id int64, input RenewSubscriptionInp
 	return s, nil
 }
 
-func (m *mockRepo) CreatePayment(_ context.Context, _ CreatePaymentInput) error { return nil }
+func (m *mockRepo) CreatePayment(_ context.Context, in CreatePaymentInput) error {
+	m.lastPayment = &in
+	return nil
+}
+func (m *mockRepo) ApplyRefund(_ context.Context, in ApplyRefundInput) error {
+	m.lastRefund = &in
+	if sub := m.subs[in.SubscriptionID]; sub != nil {
+		sub.StartDate, sub.EndDate, sub.Status = in.StartDate, &in.EndDate, in.Status
+	}
+	return nil
+}
+
+func (m *mockRepo) GatewayPaymentUsed(_ context.Context, _, _, _ string) (bool, error) {
+	return m.gatewayUsed, nil
+}
 
 func (m *mockRepo) ListPaymentsBySubscription(_ context.Context, id int64) ([]Payment, error) {
 	return m.payments[id], nil

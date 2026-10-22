@@ -1129,6 +1129,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SubscriptionsResponse"
+  /api/v1/subscriptions/payment-order:
+    post:
+      tags: [Subscriptions]
+      summary: Create a Razorpay order for a subscription payment
+      description: >
+        Prices the plan on the server and creates a Razorpay order bound to the
+        user, subscription, plan and billing cycle. Pay it with Razorpay
+        checkout, then send the checkout result to POST /subscriptions or
+        /subscriptions/{id}/renew with provider razorpay. 503 when Razorpay
+        keys are not configured (mock payments).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscriptionPaymentOrderRequest"
+      responses:
+        "201":
+          description: Razorpay order created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionPaymentOrderResponse"
+        "502":
+          description: Razorpay unavailable or rejected the API keys
+        "503":
+          description: Online payments not configured
   /api/v1/subscriptions/{id}:
     get:
       tags: [Subscriptions]
@@ -1322,6 +1351,10 @@ paths:
           schema:
             type: string
             enum: [ACTIVE, INACTIVE, SUSPENDED, DELETED]
+        - name: approval_status
+          in: query
+          schema: { type: string }
+          description: PENDING, APPROVED or REJECTED; comma-separated for several.
         - name: sort_by
           in: query
           schema:
@@ -6849,6 +6882,58 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+  /api/v1/subscriptions/{id}/payments/{paymentID}/refund:
+    post:
+      tags:
+        - Subscriptions
+      summary: Refund a subscription payment (admin)
+      description: >
+        Full refund through Razorpay of the subscription's latest successful
+        Razorpay payment, within 7 days of payment. The paid period is removed
+        (end_date = start_date - 1 day; EXPIRED if that has passed). Cash/bank
+        payments are refunded outside the app.
+      operationId: refundSubscriptionPayment
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - in: path
+          name: paymentID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 5
+      responses:
+        "200":
+          description: Refunded; the updated subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionResponse"
+        "403":
+          description: Admins only
+        "409":
+          description: refund_not_allowed (reason in message) or payment_gateway_rejected (Razorpay's reason)
+        "502":
+          description: Razorpay unavailable
+        "503":
+          description: Online payments not configured
   /api/v1/subscriptions/{id}/payments:
     get:
       tags:
@@ -8292,10 +8377,18 @@ components:
         provider:
           type: string
           nullable: true
-          example: RAZORPAY
+          example: razorpay
         provider_order_id:
           type: string
           nullable: true
+        provider_payment_id:
+          type: string
+          nullable: true
+          description: razorpay_payment_id from checkout; required when provider is razorpay
+        provider_signature:
+          type: string
+          nullable: true
+          description: razorpay_signature from checkout; verified (HMAC-SHA256) before the subscription changes
     SubscriptionRenewRequest:
       type: object
       properties:
@@ -8313,6 +8406,52 @@ components:
         provider_order_id:
           type: string
           nullable: true
+        provider_payment_id:
+          type: string
+          nullable: true
+          description: razorpay_payment_id from checkout; required when provider is razorpay
+        provider_signature:
+          type: string
+          nullable: true
+          description: razorpay_signature from checkout; verified (HMAC-SHA256) before the subscription changes
+    SubscriptionPaymentOrderRequest:
+      type: object
+      required: [billing_cycle]
+      properties:
+        subscription_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Subscription being renewed; empty for a new subscription
+        plan_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Switch plan; empty keeps the current plan
+        billing_cycle:
+          type: string
+          enum: [SIX_MONTH, YEARLY]
+        promo_code:
+          type: string
+          nullable: true
+    SubscriptionPaymentOrderResponse:
+      type: object
+      properties:
+        payment_order:
+          type: object
+          properties:
+            order_id:
+              type: string
+            amount:
+              type: integer
+              format: int64
+              description: Paise
+            currency:
+              type: string
+              example: INR
+            key_id:
+              type: string
+              description: Razorpay public key id for checkout
     SubscriptionStatusRequest:
       type: object
       required: [subscription_status]

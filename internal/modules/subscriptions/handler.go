@@ -3,14 +3,17 @@ package subscriptions
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
+	"github.com/meherchaitanyabandaru/greenroot-api/platform/razorpay"
 )
 
 type Handler struct {
@@ -138,6 +141,24 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusCreated, SubscriptionResponse{Subscription: subscription})
 }
 
+// CreatePaymentOrder starts a Razorpay checkout for a new subscription or a renewal.
+func (h *Handler) CreatePaymentOrder(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	var req PaymentOrderRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	order, err := h.service.CreatePaymentOrder(r.Context(), actor, req)
+	if err != nil {
+		writeSubscriptionsError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusCreated, PaymentOrderResponse{PaymentOrder: order})
+}
+
 func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {
@@ -195,6 +216,32 @@ func (h *Handler) ListPayments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, PaymentsResponse{Payments: payments})
+}
+
+// RefundPayment: admin refunds a subscription payment in full (see refund.go).
+func (h *Handler) RefundPayment(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	subscriptionID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	paymentID, ok := pathID(w, r, "paymentID")
+	if !ok {
+		return
+	}
+	var req RefundRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	subscription, err := h.service.RefundPayment(r.Context(), actor, subscriptionID, paymentID, req)
+	if err != nil {
+		writeSubscriptionsError(w, err)
+		return
+	}
+	response.OK(w, SubscriptionResponse{Subscription: subscription})
 }
 
 func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
@@ -362,6 +409,25 @@ func writeSubscriptionsError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusConflict, "active_subscription_exists", "user already has an active subscription")
 	case errors.Is(err, redisutil.ErrLockBusy):
 		response.Error(w, http.StatusConflict, "resource_locked", "another update is already in progress")
+	case errors.Is(err, ErrGatewayDisabled):
+		response.Error(w, http.StatusServiceUnavailable, "payments_unavailable", "online payments are not configured")
+	case errors.Is(err, ErrPaymentRequired):
+		// 400, not 402: apps read 402 as "nursery subscription expired".
+		response.Error(w, http.StatusBadRequest, "payment_required", "pay online to continue — update the app if you don't see the payment screen")
+	case errors.Is(err, ErrPaymentInvalid):
+		response.Error(w, http.StatusBadRequest, "payment_verification_failed", "payment could not be verified")
+	case errors.Is(err, ErrPaymentUsed):
+		response.Error(w, http.StatusConflict, "payment_already_used", "this payment was already used")
+	case errors.As(err, new(RefundError)):
+		var re RefundError
+		errors.As(err, &re)
+		response.Error(w, http.StatusConflict, "refund_not_allowed", re.Reason)
+	case errors.Is(err, razorpay.ErrRejected):
+		response.Error(w, http.StatusConflict, "payment_gateway_rejected", strings.TrimPrefix(err.Error(), razorpay.ErrRejected.Error()+": "))
+	case errors.Is(err, razorpay.ErrAuth), errors.Is(err, razorpay.ErrGateway):
+		// 502, not 401: a 401 would make the app sign the user out.
+		slog.Error("razorpay request failed", "error", err)
+		response.Error(w, http.StatusBadGateway, "payment_gateway_error", "payment service is unavailable, try again")
 	default:
 		response.Error(w, http.StatusInternalServerError, "subscriptions_error", "subscription request failed")
 	}

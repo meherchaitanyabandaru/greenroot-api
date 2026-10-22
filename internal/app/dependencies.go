@@ -9,6 +9,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/logger"
 	platformemail "github.com/meherchaitanyabandaru/greenroot-api/platform/email"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
+	"github.com/meherchaitanyabandaru/greenroot-api/platform/razorpay"
 	platformsms "github.com/meherchaitanyabandaru/greenroot-api/platform/sms"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
@@ -26,4 +27,6 @@ type Dependencies struct {
 	Redis *redis.Client
 	SMS   platformsms.Provider
 	Email platformemail.Provider
+	// Razorpay is nil when RAZORPAY_KEY_ID/SECRET are not set (mock payments).
+	Razorpay *razorpay.Client
 }
