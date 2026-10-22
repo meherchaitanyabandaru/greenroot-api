@@ -1193,3 +1193,29 @@ func TestPublishAd_FallsBackToNurseryLocation(t *testing.T) {
 	}
 
 }
+
+func TestMinOffer_SeventyPercentForBuyersOnly(t *testing.T) {
+	price := 120.0
+	sell := Enquiry{AdType: AdTypeSell, AdPricePerUnit: &price, AdNurseryID: 1, EnquiringNurseryID: 2}
+	if got := minOffer(sell, 2); got != 84 {
+		t.Fatalf("buyer on a ₹120 ad: want ₹84 minimum, got %v", got)
+	}
+	if got := minOffer(sell, 1); got != 0 {
+		t.Fatalf("the seller's own counter is not limited, got %v", got)
+	}
+	want := sell
+	want.AdType = "WANT"
+	if got := minOffer(want, 2); got != 0 {
+		t.Fatalf("wanted ads have no asking price to protect, got %v", got)
+	}
+	noPrice := sell
+	noPrice.AdPricePerUnit = nil
+	if got := minOffer(noPrice, 2); got != 0 {
+		t.Fatalf("price on request: no limit, got %v", got)
+	}
+	odd := 99.0 // 69.3 rounds up to the paisa
+	sell.AdPricePerUnit = &odd
+	if got := minOffer(sell, 2); got != 69.3 {
+		t.Fatalf("₹99 ad: want ₹69.30 minimum, got %v", got)
+	}
+}

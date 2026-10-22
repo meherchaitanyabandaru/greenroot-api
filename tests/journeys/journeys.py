@@ -1017,6 +1017,7 @@ def journey_market():
     check("…a pending offer", offer["type"] == "OFFER" and offer["offer_status"] == "PENDING", offer)
     expect("an offer above the ad's quantity is refused", "POST", f"{chat}/offers", rival.token, {"price_per_unit": 100, "quantity": 201}, status=400)
     expect("a zero offer is refused", "POST", f"{chat}/offers", rival.token, {"price_per_unit": 0}, status=400)
+    expect("an offer under 70% of the asking price is refused", "POST", f"{chat}/offers", rival.token, {"price_per_unit": 83.99}, status=400)
     expect("the rival cannot accept its own offer", "POST", f"{chat}/offers/{offer['id']}/accept", rival.token, {}, status=409)
     counter = expect("the manager counters at Rs 110", "POST", f"{chat}/offers", manager.token, {"price_per_unit": 110, "quantity": 50}, status=201)["message"]
     view = expect("the rival opens the chat", "GET", chat, rival.token)["enquiry"]

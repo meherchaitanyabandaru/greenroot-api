@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -902,6 +903,18 @@ func (s *Service) ReplyToEnquiry(ctx context.Context, actor ActorContext, id int
 // MakeOffer posts a price (and optional quantity) for the other nursery to
 // accept or decline. Either side can offer, so the seller counters by making
 // an offer back; a new offer withdraws the chat's previous pending one.
+// MinOfferShare: a buyer can't offer less than this share of a for-sale ad's
+// asking price. Lowball offers annoy sellers; the seller's counters are free.
+const MinOfferShare = 0.7
+
+// minOffer is the lowest price the enquiring nursery may offer, or 0 for no limit.
+func minOffer(e Enquiry, offeringNurseryID int64) float64 {
+	if offeringNurseryID != e.EnquiringNurseryID || e.AdType != AdTypeSell || e.AdPricePerUnit == nil || *e.AdPricePerUnit <= 0 {
+		return 0
+	}
+	return math.Ceil(*e.AdPricePerUnit*MinOfferShare*100) / 100
+}
+
 func (s *Service) MakeOffer(ctx context.Context, actor ActorContext, id int64, req MakeOfferRequest) (Message, error) {
 	if req.PricePerUnit <= 0 || req.PricePerUnit > 10_000_000 {
 		return Message{}, fmt.Errorf("%w: offer price must be more than zero", ErrInvalidInput)
@@ -918,6 +931,9 @@ func (s *Service) MakeOffer(ctx context.Context, actor ActorContext, id int64, r
 	}
 	if req.Quantity != nil && e.AdQuantity != nil && *req.Quantity > *e.AdQuantity {
 		return Message{}, fmt.Errorf("%w: the ad has only %d available", ErrInvalidInput, *e.AdQuantity)
+	}
+	if low := minOffer(e, nurseryID); req.PricePerUnit < low {
+		return Message{}, fmt.Errorf("%w: offer at least ₹%s — 70%% of the asking price", ErrInvalidInput, strconv.FormatFloat(low, 'f', -1, 64))
 	}
 	msg, err := s.repo.AddOffer(ctx, id, actor.UserID, nurseryID, req, "Offered "+dealText(req.PricePerUnit, req.Quantity, e.AdPriceUnit))
 	msg.IsMine = true
