@@ -112,6 +112,8 @@ type EmailConfig struct {
 type RazorpayConfig struct {
 	KeyID     string
 	KeySecret string
+	// WebhookSecret signs Razorpay webhooks (Dashboard → Webhooks); not the key secret.
+	WebhookSecret string
 }
 
 type RedisConfig struct {
@@ -201,8 +203,9 @@ func Load() Config {
 			Provider: getString("EMAIL_PROVIDER", "mock"),
 		},
 		Razorpay: RazorpayConfig{
-			KeyID:     getString("RAZORPAY_KEY_ID", ""),
-			KeySecret: getString("RAZORPAY_KEY_SECRET", ""),
+			KeyID:         getString("RAZORPAY_KEY_ID", ""),
+			KeySecret:     getString("RAZORPAY_KEY_SECRET", ""),
+			WebhookSecret: getString("RAZORPAY_WEBHOOK_SECRET", ""),
 		},
 	}
 }

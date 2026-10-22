@@ -21,6 +21,7 @@ type CreateSubscriptionRequest struct {
 	ProviderPaymentID *string `json:"provider_payment_id"`
 	ProviderSignature *string `json:"provider_signature"`
 	PromoCode         *string `json:"promo_code"`
+	trusted           bool    // set by the verified webhook only; never from JSON
 }
 
 type UpdateStatusRequest struct {
@@ -38,6 +39,7 @@ type RenewSubscriptionRequest struct {
 	ProviderPaymentID *string `json:"provider_payment_id"`
 	ProviderSignature *string `json:"provider_signature"`
 	PromoCode         *string `json:"promo_code"`
+	trusted           bool    // set by the verified webhook only; never from JSON
 }
 
 // PaymentOrderRequest asks for a Razorpay order: renewing SubscriptionID, or a

@@ -28,8 +28,13 @@ type Repository interface {
 	UpdateStatus(ctx context.Context, subscriptionID int64, status string) (*UserSubscription, error)
 	Renew(ctx context.Context, subscriptionID int64, input RenewSubscriptionInput) (*UserSubscription, error)
 	CreatePayment(ctx context.Context, input CreatePaymentInput) error
-	// GatewayPaymentUsed: this order or payment already paid for something (replay guard).
-	GatewayPaymentUsed(ctx context.Context, provider, orderID, paymentID string) (bool, error)
+	// GatewayPaymentSubscription: the subscription this order or payment already
+	// paid for, 0 if none (replay guard, and idempotent retries/webhooks).
+	GatewayPaymentSubscription(ctx context.Context, provider, orderID, paymentID string) (int64, error)
+	// UpdateRefundStatus records Razorpay's refund status (webhook) on the refunded payment.
+	UpdateRefundStatus(ctx context.Context, providerPaymentID, refundID, status string) error
+	// InTx runs fn with a repository bound to one transaction: all or nothing.
+	InTx(ctx context.Context, fn func(Repository) error) error
 	// ApplyRefund marks the payment REFUNDED and shortens the subscription, in one transaction.
 	ApplyRefund(ctx context.Context, input ApplyRefundInput) error
 	ListPaymentsBySubscription(ctx context.Context, subscriptionID int64) ([]Payment, error)
@@ -120,12 +125,35 @@ type CreatePaymentInput struct {
 	Notes             string
 }
 
+// dbtx is what both *sql.DB and *sql.Tx provide.
+type dbtx interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 type PostgresRepository struct {
-	db *sql.DB
+	db   dbtx
+	conn *sql.DB // nil inside InTx: no nested transactions
 }
 
 func NewRepository(db *sql.DB) Repository {
-	return &PostgresRepository{db: db}
+	return &PostgresRepository{db: db, conn: db}
+}
+
+func (r *PostgresRepository) InTx(ctx context.Context, fn func(Repository) error) error {
+	if r.conn == nil {
+		return fn(r)
+	}
+	tx, err := r.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := fn(&PostgresRepository{db: tx}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *PostgresRepository) ListPlans(ctx context.Context, activeOnly bool) ([]SubscriptionPlan, error) {
@@ -338,7 +366,7 @@ func (r *PostgresRepository) CreatePayment(ctx context.Context, input CreatePaym
 }
 
 func (r *PostgresRepository) ApplyRefund(ctx context.Context, input ApplyRefundInput) error {
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -370,16 +398,24 @@ func (r *PostgresRepository) ApplyRefund(ctx context.Context, input ApplyRefundI
 	return tx.Commit()
 }
 
-func (r *PostgresRepository) GatewayPaymentUsed(ctx context.Context, provider, orderID, paymentID string) (bool, error) {
+func (r *PostgresRepository) GatewayPaymentSubscription(ctx context.Context, provider, orderID, paymentID string) (int64, error) {
 	const query = `
-		SELECT EXISTS (
-			SELECT 1 FROM public.payments
-			WHERE provider = $1 AND (provider_order_id = $2 OR provider_payment_id = $3)
-		)
+		SELECT COALESCE(MAX(user_subscription_id), 0) FROM public.payments
+		WHERE provider = $1 AND (provider_order_id = $2 OR provider_payment_id = $3)
 	`
-	var used bool
-	err := r.db.QueryRowContext(ctx, query, provider, orderID, paymentID).Scan(&used)
-	return used, err
+	var subscriptionID int64
+	err := r.db.QueryRowContext(ctx, query, provider, orderID, paymentID).Scan(&subscriptionID)
+	return subscriptionID, err
+}
+
+func (r *PostgresRepository) UpdateRefundStatus(ctx context.Context, providerPaymentID, refundID, status string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE public.payments
+		SET raw_response = jsonb_set(COALESCE(raw_response, '{}'::jsonb), '{refund,status}', to_jsonb($3::text), true),
+			updated_at = CURRENT_TIMESTAMP
+		WHERE provider = 'razorpay' AND provider_payment_id = $1 AND raw_response->'refund'->>'id' = $2
+	`, providerPaymentID, refundID, status)
+	return err
 }
 
 func (r *PostgresRepository) ListPaymentsBySubscription(ctx context.Context, subscriptionID int64) ([]Payment, error) {
@@ -733,7 +769,7 @@ func (r *PostgresRepository) BulkCreateNotifications(ctx context.Context, inputs
 	if len(inputs) == 0 {
 		return 0, nil
 	}
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}

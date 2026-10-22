@@ -40,6 +40,8 @@ type Service struct {
 	auditSvc   *auditlog.Service
 	redis      redis.Cmdable
 	gateway    PaymentGateway // nil = mock payments
+	// webhookSecret verifies Razorpay webhooks; "" = webhook refused.
+	webhookSecret string
 }
 
 func NewService(repository Repository, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
@@ -150,6 +152,19 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateSu
 	if userID <= 0 || input.PlanID <= 0 {
 		return UserSubscription{}, ErrInvalidInput
 	}
+	// One new subscription at a time per user (the app and the webhook may race).
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "subscription-create", userID)
+	if err != nil {
+		return UserSubscription{}, err
+	}
+	defer lock.Release(ctx)
+	// A retry of a payment that already created the subscription: same answer.
+	if done, err := s.appliedSubscription(ctx, userID, "new", input.Provider, input.ProviderRef, input.ProviderPaymentID); err != nil || done != nil {
+		if err != nil {
+			return UserSubscription{}, err
+		}
+		return enrichSubscription(actor, *done), nil
+	}
 	if _, err := s.repository.FindActiveByUser(ctx, userID); err == nil {
 		return UserSubscription{}, ErrConflict
 	} else if !errors.Is(err, ErrNotFound) {
@@ -175,21 +190,27 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateSu
 	if err != nil {
 		return UserSubscription{}, ErrInvalidInput
 	}
-	paid, err := s.checkPayment(ctx, actor, userID, "new", input.PlanID, cycle, finalAmount, input.Provider, input.ProviderRef, input.ProviderPaymentID, input.ProviderSignature)
+	paid, err := s.checkPayment(ctx, actor, userID, "new", input.PlanID, cycle, finalAmount, input.Provider, input.ProviderRef, input.ProviderPaymentID, input.ProviderSignature, input.trusted)
 	if err != nil {
 		return UserSubscription{}, err
 	}
-	subscription, err := s.repository.Create(ctx, CreateSubscriptionInput{
-		UserID:    userID,
-		PlanID:    input.PlanID,
-		StartDate: startDate,
-		EndDate:   endDate,
-		AutoRenew: input.AutoRenew,
+	// The subscription and its payment record: both or neither.
+	var subscription *UserSubscription
+	err = s.repository.InTx(ctx, func(repo Repository) error {
+		created, err := repo.Create(ctx, CreateSubscriptionInput{
+			UserID:    userID,
+			PlanID:    input.PlanID,
+			StartDate: startDate,
+			EndDate:   endDate,
+			AutoRenew: input.AutoRenew,
+		})
+		if err != nil {
+			return err
+		}
+		subscription = created
+		return s.createSubscriptionPayment(ctx, repo, created.ID, userID, finalAmount, input.PaymentMethod, input.Provider, input.ProviderRef, paid, "Subscription created")
 	})
 	if err != nil {
-		return UserSubscription{}, err
-	}
-	if err := s.createSubscriptionPayment(ctx, subscription.ID, userID, finalAmount, input.PaymentMethod, input.Provider, input.ProviderRef, paid, "Subscription created"); err != nil {
 		return UserSubscription{}, err
 	}
 	if promoID > 0 {
@@ -261,6 +282,14 @@ func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID 
 	if err := s.canAccess(actor, *current); err != nil {
 		return UserSubscription{}, err
 	}
+	// A retry of a payment that already renewed this subscription: same answer
+	// (before the paid-ahead check, which that renewal may now trip).
+	if done, err := s.appliedSubscription(ctx, current.UserID, strconv.FormatInt(subscriptionID, 10), input.Provider, input.ProviderRef, input.ProviderPaymentID); err != nil || done != nil {
+		if err != nil {
+			return UserSubscription{}, err
+		}
+		return enrichSubscription(actor, *done), nil
+	}
 	// A pause is an admin decision; paying must not silently lift it.
 	if current.Status == statusPaused && !actor.HasRole("ADMIN") {
 		return UserSubscription{}, ErrPaused
@@ -294,20 +323,26 @@ func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID 
 	if err != nil {
 		return UserSubscription{}, ErrInvalidInput
 	}
-	paid, err := s.checkPayment(ctx, actor, current.UserID, strconv.FormatInt(subscriptionID, 10), planID, cycle, finalAmount, input.Provider, input.ProviderRef, input.ProviderPaymentID, input.ProviderSignature)
+	paid, err := s.checkPayment(ctx, actor, current.UserID, strconv.FormatInt(subscriptionID, 10), planID, cycle, finalAmount, input.Provider, input.ProviderRef, input.ProviderPaymentID, input.ProviderSignature, input.trusted)
 	if err != nil {
 		return UserSubscription{}, err
 	}
-	subscription, err := s.repository.Renew(ctx, subscriptionID, RenewSubscriptionInput{
-		PlanID:    planID,
-		StartDate: startDate,
-		EndDate:   endDate,
-		AutoRenew: current.AutoRenew,
+	// The new period and its payment record: both or neither.
+	var subscription *UserSubscription
+	err = s.repository.InTx(ctx, func(repo Repository) error {
+		renewed, err := repo.Renew(ctx, subscriptionID, RenewSubscriptionInput{
+			PlanID:    planID,
+			StartDate: startDate,
+			EndDate:   endDate,
+			AutoRenew: current.AutoRenew,
+		})
+		if err != nil {
+			return err
+		}
+		subscription = renewed
+		return s.createSubscriptionPayment(ctx, repo, renewed.ID, current.UserID, finalAmount, input.PaymentMethod, input.Provider, input.ProviderRef, paid, "Subscription renewed")
 	})
 	if err != nil {
-		return UserSubscription{}, err
-	}
-	if err := s.createSubscriptionPayment(ctx, subscription.ID, current.UserID, finalAmount, input.PaymentMethod, input.Provider, input.ProviderRef, paid, "Subscription renewed"); err != nil {
 		return UserSubscription{}, err
 	}
 	if promoID > 0 {
@@ -436,7 +471,7 @@ func (s *Service) canAccess(actor ActorContext, subscription UserSubscription) e
 	return ErrForbidden
 }
 
-func (s *Service) createSubscriptionPayment(ctx context.Context, subscriptionID int64, userID int64, amount float64, method *string, provider *string, providerRef *string, paid *verifiedPayment, notes string) error {
+func (s *Service) createSubscriptionPayment(ctx context.Context, repo Repository, subscriptionID int64, userID int64, amount float64, method *string, provider *string, providerRef *string, paid *verifiedPayment, notes string) error {
 	if amount <= 0 {
 		return nil
 	}
@@ -464,9 +499,12 @@ func (s *Service) createSubscriptionPayment(ctx context.Context, subscriptionID 
 	if paid != nil {
 		gateway := providerRazorpay
 		input.Status, input.Provider = "SUCCESS", &gateway
+		if paid.Method != "" {
+			input.Method = paid.Method // what was actually used in checkout
+		}
 		input.ProviderOrderID, input.ProviderPaymentID, input.ProviderSignature = &paid.OrderID, &paid.PaymentID, &paid.Signature
 	}
-	return s.repository.CreatePayment(ctx, input)
+	return repo.CreatePayment(ctx, input)
 }
 
 func (s *Service) audit(ctx context.Context, actor ActorContext, entityID int64, action auditlog.Action, newValue any) {

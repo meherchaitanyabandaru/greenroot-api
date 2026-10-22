@@ -1129,6 +1129,37 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SubscriptionsResponse"
+  /api/v1/webhooks/razorpay:
+    post:
+      tags: [Subscriptions]
+      summary: Razorpay webhook (called by Razorpay)
+      description: >
+        Authenticated by the X-Razorpay-Signature header (HMAC-SHA256 of the raw
+        body with RAZORPAY_WEBHOOK_SECRET), not a user token. payment.captured /
+        order.paid apply a subscription payment the app never confirmed
+        (idempotent with the app's own confirm); refund.processed /
+        refund.failed record the refund status. 500 asks Razorpay to retry.
+      parameters:
+        - in: header
+          name: X-Razorpay-Signature
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Processed or ignored
+        "400":
+          description: Bad signature or body
+        "500":
+          description: Temporary failure; Razorpay retries
+        "503":
+          description: Razorpay not configured
   /api/v1/subscriptions/payment-order:
     post:
       tags: [Subscriptions]

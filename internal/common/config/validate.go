@@ -104,6 +104,14 @@ func (c Config) productionProblems() []error {
 		if isMock(c.Email.Provider) {
 			add("EMAIL_PROVIDER is mock: no email is delivered (set ALLOW_MOCK_PROVIDERS=true only for a closed beta)")
 		}
+		if c.Razorpay.KeyID == "" || c.Razorpay.KeySecret == "" {
+			add("RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are not set: subscription payments are mock and owners renew without paying (set ALLOW_MOCK_PROVIDERS=true only for a closed beta)")
+		} else if strings.HasPrefix(c.Razorpay.KeyID, "rzp_test_") {
+			add("RAZORPAY_KEY_ID is a test key: no real money is collected (use live keys, or ALLOW_MOCK_PROVIDERS=true for a closed beta)")
+		}
+	}
+	if c.Razorpay.KeyID != "" && c.Razorpay.WebhookSecret == "" {
+		add("RAZORPAY_WEBHOOK_SECRET is required with Razorpay keys: without the webhook a payment made while the app closed is charged but never applied")
 	}
 	return errs
 }

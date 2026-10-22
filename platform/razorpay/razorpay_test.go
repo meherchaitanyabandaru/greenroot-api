@@ -46,6 +46,10 @@ func TestOrders_AgainstFakeAPI(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/payments/pay_done/refund":
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":{"code":"BAD_REQUEST_ERROR","description":"The payment has been fully refunded already"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/payments/pay_auth":
+			_, _ = w.Write([]byte(`{"id":"pay_auth","order_id":"order_1","amount":1000,"currency":"INR","status":"authorized"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/payments/pay_auth/capture":
+			_, _ = w.Write([]byte(`{"id":"pay_auth","order_id":"order_1","amount":1000,"currency":"INR","status":"captured"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/orders/order_2":
 			_, _ = w.Write([]byte(`{"id":"order_2","amount":500,"currency":"INR","status":"paid","notes":[]}`))
 		default:
@@ -78,9 +82,28 @@ func TestOrders_AgainstFakeAPI(t *testing.T) {
 	if _, err := c.RefundPayment(ctx, "pay_done", 1000, nil); !errors.Is(err, ErrRejected) || !strings.Contains(err.Error(), "fully refunded") {
 		t.Fatalf("want ErrRejected with Razorpay's reason, got %v", err)
 	}
+	p, err := c.FetchPayment(ctx, "pay_auth")
+	if err != nil || p.Status != "authorized" || p.OrderID != "order_1" {
+		t.Fatalf("fetch payment: %+v %v", p, err)
+	}
+	if p, err = c.CapturePayment(ctx, "pay_auth", 1000); err != nil || p.Status != "captured" {
+		t.Fatalf("capture: %+v %v", p, err)
+	}
 	bad := New("rzp_test_x", "wrong")
 	bad.baseURL = srv.URL
 	if _, err := bad.CreateOrder(ctx, 1000, "r3", nil); !errors.Is(err, ErrAuth) {
 		t.Fatalf("want ErrAuth, got %v", err)
+	}
+}
+
+func TestVerifyWebhook(t *testing.T) {
+	body := []byte(`{"event":"payment.captured"}`)
+	// printf '{"event":"payment.captured"}' | openssl dgst -sha256 -hmac wh-secret
+	const good = "752711b54a95dde575484c0dbd7c1aa71a7ae434a8879f14fae0f4bcd876bd7f"
+	if !VerifyWebhook(body, good, "wh-secret") {
+		t.Fatal("valid webhook rejected")
+	}
+	if VerifyWebhook(body, good, "other") || VerifyWebhook([]byte(`{}`), good, "wh-secret") || VerifyWebhook(body, good, "") {
+		t.Fatal("forged / tampered / unconfigured webhook accepted")
 	}
 }

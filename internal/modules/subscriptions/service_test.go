@@ -23,8 +23,10 @@ type mockRepo struct {
 	payments       map[int64][]Payment // subscriptionID → payments
 	notifications  int
 	listPlansCalls int
-	gatewayUsed    bool
+	gatewayUsedSub int64 // force: this payment already paid for that subscription
 	lastPayment    *CreatePaymentInput
+	recorded       []CreatePaymentInput
+	refundStatus   map[string]string // refund id → status (webhook)
 	lastRefund     *ApplyRefundInput
 
 	nextPlanID  int64
@@ -194,6 +196,7 @@ func (m *mockRepo) Renew(_ context.Context, id int64, input RenewSubscriptionInp
 
 func (m *mockRepo) CreatePayment(_ context.Context, in CreatePaymentInput) error {
 	m.lastPayment = &in
+	m.recorded = append(m.recorded, in)
 	return nil
 }
 func (m *mockRepo) ApplyRefund(_ context.Context, in ApplyRefundInput) error {
@@ -204,9 +207,27 @@ func (m *mockRepo) ApplyRefund(_ context.Context, in ApplyRefundInput) error {
 	return nil
 }
 
-func (m *mockRepo) GatewayPaymentUsed(_ context.Context, _, _, _ string) (bool, error) {
-	return m.gatewayUsed, nil
+func (m *mockRepo) GatewayPaymentSubscription(_ context.Context, _, orderID, paymentID string) (int64, error) {
+	if m.gatewayUsedSub != 0 {
+		return m.gatewayUsedSub, nil
+	}
+	for _, p := range m.recorded {
+		if (p.ProviderOrderID != nil && *p.ProviderOrderID == orderID) || (p.ProviderPaymentID != nil && *p.ProviderPaymentID == paymentID) {
+			return p.SubscriptionID, nil
+		}
+	}
+	return 0, nil
 }
+
+func (m *mockRepo) UpdateRefundStatus(_ context.Context, _, refundID, status string) error {
+	if m.refundStatus == nil {
+		m.refundStatus = map[string]string{}
+	}
+	m.refundStatus[refundID] = status
+	return nil
+}
+
+func (m *mockRepo) InTx(_ context.Context, fn func(Repository) error) error { return fn(m) }
 
 func (m *mockRepo) ListPaymentsBySubscription(_ context.Context, id int64) ([]Payment, error) {
 	return m.payments[id], nil

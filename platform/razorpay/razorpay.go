@@ -91,6 +91,41 @@ func (c *Client) FetchOrder(ctx context.Context, orderID string) (Order, error) 
 	return order, err
 }
 
+// Payment is a Razorpay payment. Status: created | authorized | captured | refunded | failed.
+type Payment struct {
+	ID       string `json:"id"`
+	OrderID  string `json:"order_id"`
+	Amount   int64  `json:"amount"` // paise
+	Currency string `json:"currency"`
+	Status   string `json:"status"`
+	Method   string `json:"method"`
+}
+
+func (c *Client) FetchPayment(ctx context.Context, paymentID string) (Payment, error) {
+	var p Payment
+	err := c.do(ctx, http.MethodGet, "/payments/"+url.PathEscape(paymentID), nil, &p)
+	return p, err
+}
+
+// CapturePayment captures an authorized payment. Needed when the account does
+// not auto-capture: an authorized payment is refunded by Razorpay after a few days.
+func (c *Client) CapturePayment(ctx context.Context, paymentID string, amountPaise int64) (Payment, error) {
+	body, _ := json.Marshal(map[string]any{"amount": amountPaise, "currency": "INR"})
+	var p Payment
+	err := c.do(ctx, http.MethodPost, "/payments/"+url.PathEscape(paymentID)+"/capture", body, &p)
+	return p, err
+}
+
+// VerifyWebhook checks X-Razorpay-Signature: HMAC-SHA256(raw body, webhook secret).
+func VerifyWebhook(body []byte, signature, webhookSecret string) bool {
+	if webhookSecret == "" || signature == "" {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(webhookSecret))
+	mac.Write(body)
+	return hmac.Equal([]byte(hex.EncodeToString(mac.Sum(nil))), []byte(signature))
+}
+
 // Refund is a Razorpay refund. Status: pending | processed | failed.
 type Refund struct {
 	ID        string `json:"id"`

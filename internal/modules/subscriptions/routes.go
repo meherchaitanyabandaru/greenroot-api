@@ -47,6 +47,9 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Post("/{id}/blast", m.handler.BlastPromo)
 	})
 
+	// Razorpay → us; authenticated by X-Razorpay-Signature, not a user token.
+	router.Post("/webhooks/razorpay", m.handler.RazorpayWebhook)
+
 	router.Route("/subscriptions", func(r chi.Router) {
 		r.Get("/", m.handler.List)
 		r.Post("/", m.handler.Create)

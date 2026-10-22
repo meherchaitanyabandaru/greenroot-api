@@ -13,17 +13,39 @@ const testSecret = "test-secret"
 
 // fakeGateway is Razorpay in memory: orders it created, real HMAC signatures.
 type fakeGateway struct {
-	orders  map[string]razorpay.Order
-	refunds []string
+	orders    map[string]razorpay.Order
+	lastOrder string
+	payments  map[string]razorpay.Payment // explicit ones; others: captured, for the last order
+	captures  []string
+	refunds   []string
 }
 
-func newFakeGateway() *fakeGateway { return &fakeGateway{orders: map[string]razorpay.Order{}} }
+func newFakeGateway() *fakeGateway {
+	return &fakeGateway{orders: map[string]razorpay.Order{}, payments: map[string]razorpay.Payment{}}
+}
+
+func (g *fakeGateway) FetchPayment(_ context.Context, id string) (razorpay.Payment, error) {
+	if p, ok := g.payments[id]; ok {
+		return p, nil
+	}
+	o := g.orders[g.lastOrder]
+	return razorpay.Payment{ID: id, OrderID: o.ID, Amount: o.Amount, Status: "captured", Method: "upi"}, nil
+}
+
+func (g *fakeGateway) CapturePayment(_ context.Context, id string, paise int64) (razorpay.Payment, error) {
+	g.captures = append(g.captures, id)
+	p := g.payments[id]
+	p.Status = "captured"
+	g.payments[id] = p
+	return p, nil
+}
 
 func (g *fakeGateway) KeyID() string { return "rzp_test_key" }
 
 func (g *fakeGateway) CreateOrder(_ context.Context, paise int64, receipt string, notes razorpay.Notes) (razorpay.Order, error) {
 	o := razorpay.Order{ID: fmt.Sprintf("order_%d", len(g.orders)+1), Amount: paise, Currency: "INR", Receipt: receipt, Status: "created", Notes: notes}
 	g.orders[o.ID] = o
+	g.lastOrder = o.ID
 	return o, nil
 }
 
@@ -47,7 +69,7 @@ func (g *fakeGateway) RefundPayment(_ context.Context, paymentID string, paise i
 func gatewaySvc(repo *mockRepo) (*Service, *fakeGateway) {
 	g := newFakeGateway()
 	s := svc(repo)
-	s.SetGateway(g)
+	s.SetGateway(g, "wh-secret")
 	return s, g
 }
 
@@ -154,7 +176,8 @@ func TestRenew_RejectsBadPayments(t *testing.T) {
 	})
 	t.Run("replayed payment", func(t *testing.T) {
 		s, repo, orderID := setup()
-		repo.gatewayUsed = true
+		repo.seedSub(202, 11, repo.subs[101].PlanID, "ACTIVE") // another owner's
+		repo.gatewayUsedSub = 202
 		if _, err := s.Renew(ctx, ownerActor(10), 101, paidRenew(orderID, "pay_1")); !errors.Is(err, ErrPaymentUsed) {
 			t.Fatalf("want already used, got %v", err)
 		}

@@ -16,6 +16,7 @@ func safeProduction() Config {
 		Redis:    RedisConfig{Addr: "redis:6379"},
 		SMS:      SMSConfig{Provider: "msg91"},
 		Email:    EmailConfig{Provider: "ses"},
+		Razorpay: RazorpayConfig{KeyID: "rzp_live_x", KeySecret: "live-secret", WebhookSecret: "wh-secret"},
 	}
 }
 
@@ -46,6 +47,9 @@ func TestValidate_EachUnsafeSetting(t *testing.T) {
 		"minio defaults":     {func(c *Config) { c.Storage.SecretAccessKey = devStorageSecret }, "STORAGE_"},
 		"mock sms":           {func(c *Config) { c.SMS.Provider = "mock" }, "SMS_PROVIDER"},
 		"mock email":         {func(c *Config) { c.Email.Provider = "" }, "EMAIL_PROVIDER"},
+		"no razorpay keys":   {func(c *Config) { c.Razorpay = RazorpayConfig{} }, "RAZORPAY_KEY_ID"},
+		"razorpay test key":  {func(c *Config) { c.Razorpay.KeyID = "rzp_test_x" }, "test key"},
+		"no webhook secret":  {func(c *Config) { c.Razorpay.WebhookSecret = "" }, "RAZORPAY_WEBHOOK_SECRET"},
 	}
 	for name, tc := range cases {
 		cfg := safeProduction()

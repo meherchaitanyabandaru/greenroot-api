@@ -17,7 +17,11 @@ import (
 //     client amount) and creates a Razorpay order tagged with who/what it pays for.
 //  2. The app opens checkout with that order and gets payment id + signature.
 //  3. POST /subscriptions (or /{id}/renew) with provider "razorpay" and those
-//     ids: the signature and the order are verified BEFORE anything is extended.
+//     ids: signature, order (who/what/amount) and payment (captured; captured
+//     here if only authorized) are checked BEFORE anything is extended, and the
+//     change + payment record are written in one transaction.
+//  4. The webhook (payment.captured / order.paid) applies the same order if
+//     the app never got to step 3. Steps 3 and 4 are idempotent.
 
 const providerRazorpay = "razorpay"
 
@@ -34,19 +38,30 @@ type PaymentGateway interface {
 	CreateOrder(ctx context.Context, amountPaise int64, receipt string, notes razorpay.Notes) (razorpay.Order, error)
 	FetchOrder(ctx context.Context, orderID string) (razorpay.Order, error)
 	VerifySignature(orderID, paymentID, signature string) bool
+	FetchPayment(ctx context.Context, paymentID string) (razorpay.Payment, error)
+	CapturePayment(ctx context.Context, paymentID string, amountPaise int64) (razorpay.Payment, error)
 	RefundPayment(ctx context.Context, paymentID string, amountPaise int64, notes razorpay.Notes) (razorpay.Refund, error)
 }
 
 // SetGateway turns on real payments: owners must then pay through Razorpay.
-func (s *Service) SetGateway(g PaymentGateway) { s.gateway = g }
+// webhookSecret verifies Razorpay webhooks ("" = webhook refused).
+func (s *Service) SetGateway(g PaymentGateway, webhookSecret string) {
+	s.gateway, s.webhookSecret = g, webhookSecret
+}
 
-// verifiedPayment is a checkout result whose signature and order checked out.
+// verifiedPayment is a checkout result whose signature, order and capture checked out.
 type verifiedPayment struct {
 	OrderID, PaymentID, Signature string
+	Method                        string // the method actually used, from Razorpay
 }
+
+// paymentMethods maps Razorpay's method to ours (payments.payment_method).
+var paymentMethods = map[string]string{"card": "CARD", "upi": "UPI", "netbanking": "NET_BANKING", "wallet": "WALLET"}
 
 func toPaise(amount float64) int64 { return int64(math.Round(amount * 100)) }
 
+// orderNotes bind an order to what it pays for. promo_code is kept so the
+// webhook can re-price; the amount check covers it, so it is not compared.
 func orderNotes(userID int64, subscription string, planID int64, cycle string) razorpay.Notes {
 	return razorpay.Notes{
 		"user_id":       strconv.FormatInt(userID, 10),
@@ -110,16 +125,46 @@ func (s *Service) CreatePaymentOrder(ctx context.Context, actor ActorContext, re
 		return PaymentOrder{}, ErrInvalidInput
 	}
 	receipt := fmt.Sprintf("sub-%s-u%d-%d", subscription, userID, time.Now().Unix()) // ≤ 40 chars
-	order, err := s.gateway.CreateOrder(ctx, paise, receipt, orderNotes(userID, subscription, planID, cycle))
+	notes := orderNotes(userID, subscription, planID, cycle)
+	notes["promo_code"] = strings.TrimSpace(stringOrEmpty(req.PromoCode))
+	order, err := s.gateway.CreateOrder(ctx, paise, receipt, notes)
 	if err != nil {
 		return PaymentOrder{}, err
 	}
 	return PaymentOrder{OrderID: order.ID, Amount: order.Amount, Currency: order.Currency, KeyID: s.gateway.KeyID()}, nil
 }
 
+// appliedSubscription: if this exact Razorpay payment already paid for this
+// subscription (a retried request, or the webhook got there first), the
+// subscription it paid for; nil otherwise. Lets create/renew answer a retry
+// with success instead of "already used".
+func (s *Service) appliedSubscription(ctx context.Context, userID int64, subscription string, provider, orderID, paymentID *string) (*UserSubscription, error) {
+	if s.gateway == nil || !strings.EqualFold(strings.TrimSpace(stringOrEmpty(provider)), providerRazorpay) {
+		return nil, nil
+	}
+	o, p := strings.TrimSpace(stringOrEmpty(orderID)), strings.TrimSpace(stringOrEmpty(paymentID))
+	if o == "" || p == "" {
+		return nil, nil
+	}
+	subID, err := s.repository.GatewayPaymentSubscription(ctx, providerRazorpay, o, p)
+	if err != nil || subID == 0 {
+		return nil, err
+	}
+	sub, err := s.repository.FindByID(ctx, subID)
+	if err != nil {
+		return nil, err
+	}
+	same := sub.UserID == userID && (subscription == "new" || subscription == strconv.FormatInt(subID, 10))
+	if !same {
+		return nil, ErrPaymentUsed
+	}
+	return sub, nil
+}
+
 // checkPayment decides whether a create/renew may go ahead. nil, nil = no
 // gateway payment (mock mode, admin recording a manual payment, or nothing to pay).
-func (s *Service) checkPayment(ctx context.Context, actor ActorContext, userID int64, subscription string, planID int64, cycle string, amount float64, provider, orderID, paymentID, signature *string) (*verifiedPayment, error) {
+// trusted: the payment came from a verified webhook (no checkout signature).
+func (s *Service) checkPayment(ctx context.Context, actor ActorContext, userID int64, subscription string, planID int64, cycle string, amount float64, provider, orderID, paymentID, signature *string, trusted bool) (*verifiedPayment, error) {
 	if !strings.EqualFold(strings.TrimSpace(stringOrEmpty(provider)), providerRazorpay) {
 		if s.gateway != nil && amount > 0 && !actor.HasRole("ADMIN") {
 			return nil, ErrPaymentRequired
@@ -134,10 +179,10 @@ func (s *Service) checkPayment(ctx context.Context, actor ActorContext, userID i
 		PaymentID: strings.TrimSpace(stringOrEmpty(paymentID)),
 		Signature: strings.TrimSpace(stringOrEmpty(signature)),
 	}
-	if p.OrderID == "" || p.PaymentID == "" || p.Signature == "" {
+	if p.OrderID == "" || p.PaymentID == "" || (p.Signature == "" && !trusted) {
 		return nil, ErrInvalidInput
 	}
-	if !s.gateway.VerifySignature(p.OrderID, p.PaymentID, p.Signature) {
+	if !trusted && !s.gateway.VerifySignature(p.OrderID, p.PaymentID, p.Signature) {
 		return nil, ErrPaymentInvalid
 	}
 	// A valid signature proves payment for that order; the order proves what for.
@@ -145,8 +190,7 @@ func (s *Service) checkPayment(ctx context.Context, actor ActorContext, userID i
 	if err != nil {
 		return nil, err
 	}
-	want := orderNotes(userID, subscription, planID, cycle)
-	for k, v := range want {
+	for k, v := range orderNotes(userID, subscription, planID, cycle) {
 		if order.Notes[k] != v {
 			return nil, ErrPaymentInvalid
 		}
@@ -154,12 +198,82 @@ func (s *Service) checkPayment(ctx context.Context, actor ActorContext, userID i
 	if order.Amount != toPaise(amount) {
 		return nil, ErrPaymentInvalid
 	}
-	used, err := s.repository.GatewayPaymentUsed(ctx, providerRazorpay, p.OrderID, p.PaymentID)
+	used, err := s.repository.GatewayPaymentSubscription(ctx, providerRazorpay, p.OrderID, p.PaymentID)
 	if err != nil {
 		return nil, err
 	}
-	if used {
+	if used != 0 {
 		return nil, ErrPaymentUsed
 	}
+	// The signature only proves the payment was authorized. Make sure the money
+	// is captured: an authorized-only payment is refunded by Razorpay in days.
+	payment, err := s.gateway.FetchPayment(ctx, p.PaymentID)
+	if err != nil {
+		return nil, err
+	}
+	if payment.OrderID != p.OrderID || payment.Amount != order.Amount {
+		return nil, ErrPaymentInvalid
+	}
+	switch payment.Status {
+	case "captured":
+	case "authorized":
+		if payment, err = s.gateway.CapturePayment(ctx, p.PaymentID, order.Amount); err != nil {
+			return nil, err
+		}
+		if payment.Status != "captured" {
+			return nil, ErrPaymentInvalid
+		}
+	default: // created, failed, refunded
+		return nil, ErrPaymentInvalid
+	}
+	p.Method = paymentMethods[payment.Method]
 	return &p, nil
+}
+
+// ApplyGatewayPayment applies a captured Razorpay payment for an order made by
+// CreatePaymentOrder, as its owner would have (webhook path). Already applied
+// = done. ok=false means it can't be applied (logged by the caller for a
+// manual refund); err means try again later.
+func (s *Service) ApplyGatewayPayment(ctx context.Context, orderID, paymentID string) (ok bool, err error) {
+	if s.gateway == nil {
+		return false, ErrGatewayDisabled
+	}
+	order, err := s.gateway.FetchOrder(ctx, orderID)
+	if err != nil {
+		return false, err
+	}
+	userID, _ := strconv.ParseInt(order.Notes["user_id"], 10, 64)
+	planID, _ := strconv.ParseInt(order.Notes["plan_id"], 10, 64)
+	subscription := order.Notes["subscription"]
+	if userID <= 0 || planID <= 0 || subscription == "" {
+		return false, nil // not an order we created
+	}
+	var promo *string
+	if code := order.Notes["promo_code"]; code != "" {
+		promo = &code
+	}
+	actor := ActorContext{UserID: userID}
+	provider := providerRazorpay
+	if subscription == "new" {
+		_, err = s.Create(ctx, actor, CreateSubscriptionRequest{
+			PlanID: planID, BillingCycle: order.Notes["billing_cycle"], PromoCode: promo,
+			Provider: &provider, ProviderRef: &orderID, ProviderPaymentID: &paymentID, trusted: true,
+		})
+	} else {
+		subID, _ := strconv.ParseInt(subscription, 10, 64)
+		_, err = s.Renew(ctx, actor, subID, RenewSubscriptionRequest{
+			PlanID: &planID, BillingCycle: order.Notes["billing_cycle"], PromoCode: promo,
+			Provider: &provider, ProviderRef: &orderID, ProviderPaymentID: &paymentID, trusted: true,
+		})
+	}
+	if err == nil {
+		return true, nil
+	}
+	for _, refusal := range []error{ErrPaused, ErrPaidAhead, ErrConflict, ErrInvalidInput, ErrForbidden,
+		ErrNotFound, ErrPaymentInvalid, ErrPaymentUsed, ErrPaymentRequired} {
+		if errors.Is(err, refusal) {
+			return false, nil // a business rule refuses it (e.g. paused since the order was made)
+		}
+	}
+	return false, err // database, Razorpay or lock trouble: let Razorpay retry
 }
