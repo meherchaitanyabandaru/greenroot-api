@@ -23,7 +23,17 @@ var (
 	ErrInvalidInput = apperrs.ErrInvalidInput
 	ErrConflict     = errors.New("conflict")
 	ErrPaused       = errors.New("subscription paused by admin")
+	// ErrPaidAhead: the subscription already runs past MaxPaidAhead; renewing
+	// again would only stack more time (e.g. a renew button pressed 3 times).
+	ErrPaidAhead = errors.New("subscription already paid far ahead")
 )
+
+// MaxPaidAhead: renewals are refused while the current period ends later than this.
+const MaxPaidAhead = 365 * 24 * time.Hour
+
+func paidTooFarAhead(current UserSubscription) bool {
+	return current.EndDate != nil && time.Until(*current.EndDate) > MaxPaidAhead
+}
 
 type Service struct {
 	repository Repository
@@ -254,6 +264,9 @@ func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID 
 	// A pause is an admin decision; paying must not silently lift it.
 	if current.Status == statusPaused && !actor.HasRole("ADMIN") {
 		return UserSubscription{}, ErrPaused
+	}
+	if paidTooFarAhead(*current) {
+		return UserSubscription{}, ErrPaidAhead
 	}
 	planID := current.PlanID
 	if input.PlanID != nil && *input.PlanID > 0 {

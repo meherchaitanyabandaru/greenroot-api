@@ -1502,6 +1502,8 @@ def journey_access():
     out = expect("owner upgrades to GROWTH", "POST", f"/subscriptions/{sub['id']}/renew", owner.token,
                  {"plan_id": plan_ids.get("GROWTH"), "billing_cycle": "YEARLY", "payment_method": "UPI"})
     check("…plan switched", out.get("subscription", {}).get("plan_code") == "GROWTH", out)
+    expect("renewing again while paid > 1 year ahead is refused", "POST", f"/subscriptions/{sub['id']}/renew", owner.token,
+           {"plan_id": plan_ids.get("GROWTH"), "billing_cycle": "YEARLY", "payment_method": "UPI"}, status=409)
     owner.refresh()
     expect("upgraded owner creates", "POST", "/quotations", owner.token, q, status=201)
 

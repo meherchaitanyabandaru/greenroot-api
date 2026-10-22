@@ -110,3 +110,30 @@ func TestRefund_Conditions(t *testing.T) {
 		}
 	})
 }
+
+func TestRenew_RefusedWhenPaidMoreThanAYearAhead(t *testing.T) {
+	repo := newMock()
+	p := repo.seedPlan("GROWTH", 2499, 3999)
+	sub := repo.seedSub(101, 10, p.ID, "ACTIVE")
+	end := time.Now().AddDate(1, 2, 0) // 14 months left
+	sub.EndDate = &end
+	req := RenewSubscriptionRequest{BillingCycle: "YEARLY", PaymentMethod: ptr("CASH")}
+	for _, actor := range []ActorContext{ownerActor(10), adminActor(1)} {
+		if _, err := svc(repo).Renew(context.Background(), actor, 101, req); !errors.Is(err, ErrPaidAhead) {
+			t.Fatalf("%v: want ErrPaidAhead, got %v", actor.Roles, err)
+		}
+	}
+	if repo.lastPayment != nil {
+		t.Fatal("nothing may be recorded")
+	}
+	s, _ := gatewaySvc(repo)
+	if _, err := s.CreatePaymentOrder(context.Background(), ownerActor(10), PaymentOrderRequest{SubscriptionID: ptr(int64(101)), BillingCycle: "YEARLY"}); !errors.Is(err, ErrPaidAhead) {
+		t.Fatalf("no money may be taken for a refused renewal, got %v", err)
+	}
+
+	// 11 months left: renewing is fine.
+	end = time.Now().AddDate(0, 11, 0)
+	if _, err := svc(repo).Renew(context.Background(), ownerActor(10), 101, req); err != nil {
+		t.Fatalf("renewal within a year should work: %v", err)
+	}
+}

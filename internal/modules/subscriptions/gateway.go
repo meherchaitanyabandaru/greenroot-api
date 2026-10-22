@@ -74,6 +74,9 @@ func (s *Service) CreatePaymentOrder(ctx context.Context, actor ActorContext, re
 		if current.Status == statusPaused && !actor.HasRole("ADMIN") {
 			return PaymentOrder{}, ErrPaused
 		}
+		if paidTooFarAhead(*current) {
+			return PaymentOrder{}, ErrPaidAhead
+		}
 		userID, subscription, planID = current.UserID, strconv.FormatInt(current.ID, 10), current.PlanID
 	} else if _, err := s.repository.FindActiveByUser(ctx, userID); err == nil {
 		return PaymentOrder{}, ErrConflict // don't take money for a subscription Create will refuse
