@@ -879,6 +879,7 @@ def journey_dispatch():
     expect("an owner cannot accept a trip", "POST", f"/dispatches/{did}/accept", owner.token, {}, status=403)
     out = expect("driver accepts", "POST", f"/dispatches/{did}/accept", driver.token, {})
     check("…ACCEPTED by this driver", out["dispatch"]["dispatch_status"] == "ACCEPTED" and out["dispatch"].get("driver_user_id") == driver.id, out["dispatch"])
+    check("…the driver sees which nursery to pick up from", bool(out["dispatch"].get("seller_nursery_name")), out["dispatch"])
     expect("accepting again is idempotent", "POST", f"/dispatches/{did}/accept", driver.token, {})
     expect("another driver cannot take an accepted trip", "POST", f"/dispatches/{did}/accept", second_driver.token, {}, status=(403, 409))
     expect("another driver cannot look it up any more", "GET", f"/dispatches/code/{code}", second_driver.token, status=403)
@@ -996,8 +997,9 @@ def journey_market():
     me = expect("the owner deletes the selfie", "DELETE", "/users/me/avatar", shy.token)
     check("…photo gone", not me.get("user", me).get("profile_image_url"), me)
 
-    tamarind = expect("look up a catalog plant", "GET", "/plants/lookup?q=Tamarindus", owner.token)["results"][0]["plant"]
-    ad = {"plant_id": tamarind["id"], "plant_name": "Imli", "title": "Sweet grafts", "description": "2 ft grafts", "quantity": 200, "price_per_unit": 120, "price_unit": "PER_PLANT", "photos": []}
+    # Guava is in seed-master, so this holds on a freshly reset DB.
+    guava = expect("look up a catalog plant", "GET", "/plants/lookup?q=Psidium%20guajava", owner.token)["results"][0]["plant"]
+    ad = {"plant_id": guava["id"], "plant_name": "Peru", "title": "Sweet grafts", "description": "2 ft grafts", "quantity": 200, "price_per_unit": 120, "price_unit": "PER_PLANT", "photos": []}
     expect("a buyer cannot browse the market", "GET", "/market/ads", buyer.token, status=403)
     expect("a driver cannot browse the market", "GET", "/market/ads", driver.token, status=403)
     expect("a buyer cannot post an ad", "POST", "/market/ads", buyer.token, ad, status=403)
@@ -1009,7 +1011,7 @@ def journey_market():
     expect("owner publishes", "POST", f"/market/ads/{a['id']}/publish", owner.token, {})
     out = expect("a rival browses the market", "GET", "/market/ads", rival.token)
     check("…and sees the ad", a["id"] in [x["id"] for x in out.get("ads", [])], out)
-    out = expect("search by the catalog's botanical name", "GET", "/market/ads?q=tamarindus", rival.token)
+    out = expect("search by the catalog's botanical name", "GET", "/market/ads?q=psidium", rival.token)
     check("…finds the ad linked to that plant", a["id"] in [x["id"] for x in out.get("ads", [])], out)
     expect("a rival cannot archive it", "POST", f"/market/ads/{a['id']}/archive", rival.token, {}, status=(403, 404))
     expect("the posting nursery cannot enquire on its own ad", "POST", f"/market/ads/{a['id']}/enquiries", owner.token, {"message": "self"}, status=400)

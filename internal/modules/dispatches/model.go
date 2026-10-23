@@ -24,6 +24,7 @@ type Dispatch struct {
 	LoadingStartedAt   *time.Time `json:"loading_started_at,omitempty"`
 	LoadingCompletedAt *time.Time `json:"loading_completed_at,omitempty"`
 	SellerNurseryID    *int64     `json:"seller_nursery_id,omitempty"`
+	SellerNurseryName  *string    `json:"seller_nursery_name,omitempty"` // pickup point for the driver
 	// V1 snapshot fields
 	NurseryID              *int64     `json:"nursery_id,omitempty"`
 	AssignedManagerUserID  *int64     `json:"assigned_manager_user_id,omitempty"`

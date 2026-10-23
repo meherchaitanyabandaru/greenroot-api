@@ -597,7 +597,7 @@ func baseSelect() string {
 	return `
 		SELECT d.dispatch_id, d.dispatch_code, d.order_id, o.order_number,
 			o.status::text, o.loading_started_at, o.loading_completed_at,
-			o.seller_nursery_id, d.dispatch_number,
+			o.seller_nursery_id, sn.nursery_name, d.dispatch_number,
 			COALESCE(d.status::text, ''), d.vehicle_id, v.vehicle_number, d.driver_id,
 			u.first_name, u.mobile, d.dispatched_by_user_id, d.dispatched_at, d.delivered_at, d.destination_address,
 			ods.latitude AS delivery_latitude, ods.longitude AS delivery_longitude,
@@ -611,6 +611,7 @@ func baseSelect() string {
 			d.trip_uuid::text
 		FROM public.dispatches d
 		JOIN public.orders o ON o.order_id = d.order_id
+		LEFT JOIN public.nurseries sn ON sn.nursery_id = o.seller_nursery_id
 		LEFT JOIN public.vehicles v ON v.vehicle_id = d.vehicle_id
 		LEFT JOIN public.drivers dr ON dr.driver_id = d.driver_id
 		LEFT JOIN public.users u ON u.user_id = dr.user_id
@@ -697,7 +698,7 @@ func sortClause(input ListDispatchesRequest) string {
 
 func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 	var dispatch Dispatch
-	var orderNumber, orderStatus, dispatchNumber, vehicleNumber, driverName, driverMobile, destination, notes sql.NullString
+	var orderNumber, orderStatus, sellerNurseryName, dispatchNumber, vehicleNumber, driverName, driverMobile, destination, notes sql.NullString
 	var nurseryID, vehicleID, driverID, dispatchedBy sql.NullInt64
 	var deliveryLat, deliveryLon sql.NullFloat64
 	var requiresDriverAck sql.NullBool
@@ -712,7 +713,7 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 	if err := row.Scan(
 		&dispatch.ID, &dispatch.DispatchCode, &dispatch.OrderID, &orderNumber,
 		&orderStatus, &loadingStartedAt, &loadingCompletedAt,
-		&nurseryID, &dispatchNumber,
+		&nurseryID, &sellerNurseryName, &dispatchNumber,
 		&dispatch.Status, &vehicleID, &vehicleNumber, &driverID,
 		&driverName, &driverMobile, &dispatchedBy, &dispatchDate, &deliveryDate, &destination,
 		&deliveryLat, &deliveryLon,
@@ -735,6 +736,7 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 		dispatch.LoadingCompletedAt = &loadingCompletedAt.Time
 	}
 	dispatch.SellerNurseryID = nullableInt64(nurseryID)
+	dispatch.SellerNurseryName = nullableString(sellerNurseryName)
 	dispatch.DispatchNumber = nullableString(dispatchNumber)
 	dispatch.VehicleID = nullableInt64(vehicleID)
 	dispatch.VehicleNumber = nullableString(vehicleNumber)
