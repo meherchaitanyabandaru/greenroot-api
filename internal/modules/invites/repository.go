@@ -171,9 +171,21 @@ func baseSelect() string {
 			i.nursery_id, n.nursery_name, i.role,
 			i.target_mobile, i.target_email, i.target_name,
 			i.status, i.expires_at, i.accepted_by_user_id, i.accepted_at,
-			i.created_at, i.updated_at
+			i.created_at, i.updated_at,
+			NULLIF(TRIM(CONCAT_WS(' ', inviter.first_name, inviter.last_name)), ''),
+			NULLIF(TRIM(CONCAT_WS(' ', owner.first_name, owner.last_name)), ''),
+			owner.mobile,
+			NULLIF(CONCAT_WS(', ', NULLIF(addr.city, ''), NULLIF(addr.state, '')), '')
 		FROM public.invites i
 		LEFT JOIN public.nurseries n ON n.nursery_id = i.nursery_id
+		LEFT JOIN public.users inviter ON inviter.user_id = i.invited_by_user_id
+		LEFT JOIN public.users owner ON owner.user_id = n.owner_user_id
+		LEFT JOIN LATERAL (
+			SELECT na.city, na.state FROM public.nursery_addresses na
+			WHERE na.nursery_id = n.nursery_id
+			ORDER BY na.is_primary DESC NULLS LAST, na.nursery_address_id
+			LIMIT 1
+		) addr ON true
 	`
 }
 
@@ -185,6 +197,7 @@ func scanInvite(row interface{ Scan(dest ...any) error }) (Invite, error) {
 	var invite Invite
 	var nurseryID, acceptedByUserID sql.NullInt64
 	var nurseryName, role, targetMobile, targetEmail, targetName sql.NullString
+	var inviterName, ownerName, ownerMobile, nurseryPlace sql.NullString
 	var expiresAt, acceptedAt sql.NullTime
 	if err := row.Scan(
 		&invite.ID, &invite.InviteUUID, &invite.InviteType, &invite.InvitedByUserID,
@@ -192,8 +205,16 @@ func scanInvite(row interface{ Scan(dest ...any) error }) (Invite, error) {
 		&targetMobile, &targetEmail, &targetName,
 		&invite.Status, &expiresAt, &acceptedByUserID, &acceptedAt,
 		&invite.CreatedAt, &invite.UpdatedAt,
+		&inviterName, &ownerName, &ownerMobile, &nurseryPlace,
 	); err != nil {
 		return Invite{}, err
+	}
+	invite.InviterName = nullableString(inviterName)
+	invite.OwnerName = nullableString(ownerName)
+	invite.NurseryPlace = nullableString(nurseryPlace)
+	if m := ownerMobile.String; len(m) >= 4 {
+		hint := m[len(m)-4:]
+		invite.OwnerMobileHint = &hint
 	}
 	invite.NurseryID = nullableInt64(nurseryID)
 	invite.NurseryName = nullableString(nurseryName)
