@@ -11,6 +11,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -19,6 +20,7 @@ var (
 	ErrInvalidInput        = apperrs.ErrInvalidInput
 	ErrDuplicate           = errors.New("duplicate driver")
 	ErrOwnerCannotBeDriver = errors.New("nursery owners cannot register as a driver")
+	ErrInvalidLicencePhoto = errors.New("licence photo must be uploaded to GreenRoot storage")
 	ErrActiveTrip          = errors.New("finish or hand over the active trip first")
 )
 
@@ -26,6 +28,7 @@ type Service struct {
 	repository Repository
 	auditSvc   *auditlog.Service
 	redis      redis.Cmdable
+	files      licenceFiles // nil without object storage
 }
 
 func NewService(repository Repository, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
@@ -34,6 +37,27 @@ func NewService(repository Repository, auditSvc *auditlog.Service, redisClients 
 		rdb = redisClients[0]
 	}
 	return &Service{repository: repository, auditSvc: auditSvc, redis: rdb}
+}
+
+// licenceFiles is the part of platform storage the licence photo needs.
+type licenceFiles interface {
+	Locate(fileURL string) (bucket, key string, ok bool)
+	PresignGetURL(ctx context.Context, fileURL string, ttl time.Duration) (string, error)
+}
+
+// UseStorage enables licence photos (private "attachments" bucket).
+func (s *Service) UseStorage(files licenceFiles) { s.files = files }
+
+// withLicenceLink adds a one-hour link to the private licence photo. Callers
+// already limit drivers to admins and the driver themselves.
+func (s *Service) withLicenceLink(ctx context.Context, d Driver) Driver {
+	if s.files == nil || d.LicencePhotoURL == nil || *d.LicencePhotoURL == "" {
+		return d
+	}
+	if link, err := s.files.PresignGetURL(ctx, *d.LicencePhotoURL, time.Hour); err == nil {
+		d.LicencePhotoLink = &link
+	}
+	return d
 }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListDriversRequest) ([]Driver, Pagination, error) {
@@ -46,7 +70,7 @@ func (s *Service) List(ctx context.Context, actor ActorContext, input ListDriver
 		return nil, Pagination{}, err
 	}
 	for i := range drivers {
-		drivers[i] = enrichDriver(actor, drivers[i])
+		drivers[i] = s.withLicenceLink(ctx, enrichDriver(actor, drivers[i]))
 	}
 	return drivers, Pagination{Page: input.Page, PerPage: input.PerPage, Total: total, TotalPages: totalPages(total, input.PerPage)}, nil
 }
@@ -59,7 +83,7 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, driverID int64) (
 	if !actor.HasRole("ADMIN") && (driver.UserID == nil || *driver.UserID != actor.UserID) {
 		return Driver{}, ErrForbidden
 	}
-	return enrichDriver(actor, *driver), nil
+	return s.withLicenceLink(ctx, enrichDriver(actor, *driver)), nil
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, req DriverRequest) (Driver, error) {
@@ -82,7 +106,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, req DriverRequ
 		return Driver{}, err
 	}
 	s.audit(ctx, actor, driver.ID, actionInsert, req)
-	return enrichDriver(actor, *driver), nil
+	return s.withLicenceLink(ctx, enrichDriver(actor, *driver)), nil
 }
 
 func (s *Service) Update(ctx context.Context, actor ActorContext, driverID int64, req DriverRequest) (Driver, error) {
@@ -149,6 +173,17 @@ func (s *Service) Apply(ctx context.Context, actor ActorContext, req ApplyDriver
 	if strings.TrimSpace(req.LicenceNumber) == "" || strings.TrimSpace(req.VehicleNumber) == "" {
 		return Driver{}, ErrInvalidInput
 	}
+	// Optional. Only a file uploaded to our private bucket: never a link elsewhere.
+	if req.LicencePhotoURL != nil {
+		photo := strings.TrimSpace(*req.LicencePhotoURL)
+		if photo == "" {
+			req.LicencePhotoURL = nil
+		} else if bucket, _, ok := s.locate(photo); !ok || bucket != storage.BucketAttachments {
+			return Driver{}, ErrInvalidLicencePhoto
+		} else {
+			req.LicencePhotoURL = &photo
+		}
+	}
 	ownsNursery, err := s.repository.UserOwnsANursery(ctx, actor.UserID)
 	if err != nil {
 		return Driver{}, err
@@ -164,13 +199,20 @@ func (s *Service) Apply(ctx context.Context, actor ActorContext, req ApplyDriver
 	return enrichDriver(actor, *driver), nil
 }
 
+func (s *Service) locate(fileURL string) (string, string, bool) {
+	if s.files == nil {
+		return "", "", false
+	}
+	return s.files.Locate(fileURL)
+}
+
 // GetMine returns the driver profile for the current user.
 func (s *Service) GetMine(ctx context.Context, actor ActorContext) (Driver, error) {
 	driver, err := s.repository.FindByUserID(ctx, actor.UserID)
 	if err != nil {
 		return Driver{}, err
 	}
-	return enrichDriver(actor, *driver), nil
+	return s.withLicenceLink(ctx, enrichDriver(actor, *driver)), nil
 }
 
 // Approve approves a driver profile (admin only).

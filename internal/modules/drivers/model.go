@@ -14,26 +14,28 @@ const (
 )
 
 type Driver struct {
-	ID                int64               `json:"id"`
-	DriverCode        string              `json:"driver_code"`
-	UserID            *int64              `json:"user_id,omitempty"`
-	DriverName        *string             `json:"driver_name,omitempty"`
-	Mobile            *string             `json:"mobile,omitempty"`
-	LicenseNumber     *string             `json:"license_number,omitempty"`
-	LicenseExpiryDate *time.Time          `json:"license_expiry_date,omitempty"`
-	EmergencyContact  *string             `json:"emergency_contact,omitempty"`
-	LicencePhotoURL   *string             `json:"licence_photo_url,omitempty"`
-	VehicleNumber     *string             `json:"vehicle_number,omitempty"`
-	VehicleType       *string             `json:"vehicle_type,omitempty"`
-	ProfileStatus     string              `json:"profile_status"`
-	ApprovalStatus    string              `json:"approval_status"`
-	ApprovedByUserID  *int64              `json:"approved_by_user_id,omitempty"`
-	ApprovedAt        *time.Time          `json:"approved_at,omitempty"`
-	Status            string              `json:"status"`
-	CreatedAt         time.Time           `json:"created_at"`
-	UpdatedAt         *time.Time          `json:"updated_at,omitempty"`
-	Capabilities      *DriverCapabilities `json:"capabilities,omitempty"`
-	Summary           *DriverSummary      `json:"summary,omitempty"`
+	ID                int64      `json:"id"`
+	DriverCode        string     `json:"driver_code"`
+	UserID            *int64     `json:"user_id,omitempty"`
+	DriverName        *string    `json:"driver_name,omitempty"`
+	Mobile            *string    `json:"mobile,omitempty"`
+	LicenseNumber     *string    `json:"license_number,omitempty"`
+	LicenseExpiryDate *time.Time `json:"license_expiry_date,omitempty"`
+	EmergencyContact  *string    `json:"emergency_contact,omitempty"`
+	LicencePhotoURL   *string    `json:"licence_photo_url,omitempty"`
+	// LicencePhotoLink opens the private photo for an hour (admin and the driver only).
+	LicencePhotoLink *string             `json:"licence_photo_link,omitempty"`
+	VehicleNumber    *string             `json:"vehicle_number,omitempty"`
+	VehicleType      *string             `json:"vehicle_type,omitempty"`
+	ProfileStatus    string              `json:"profile_status"`
+	ApprovalStatus   string              `json:"approval_status"`
+	ApprovedByUserID *int64              `json:"approved_by_user_id,omitempty"`
+	ApprovedAt       *time.Time          `json:"approved_at,omitempty"`
+	Status           string              `json:"status"`
+	CreatedAt        time.Time           `json:"created_at"`
+	UpdatedAt        *time.Time          `json:"updated_at,omitempty"`
+	Capabilities     *DriverCapabilities `json:"capabilities,omitempty"`
+	Summary          *DriverSummary      `json:"summary,omitempty"`
 }
 
 type DriverCapabilities struct {

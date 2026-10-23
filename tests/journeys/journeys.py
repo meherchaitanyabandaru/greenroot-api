@@ -1455,6 +1455,32 @@ def journey_roles():
     ws = expect("workspaces right after approval", "GET", "/me/workspaces", applicant.token)
     check("…include DRIVER (cache cleared for the right user)", any(w.get("type") == "DRIVER" for w in (ws if isinstance(ws, list) else ws.get("workspaces", []))), ws)
 
+    # Optional licence photo: only a file in our private bucket; admins open it by a short-lived link.
+    lic = User(first="Licence", activity="DRIVER")
+    body = {"licence_number": "TS09" + lic.mobile, "vehicle_number": "TS09" + lic.mobile[-4:], "vehicle_type": "VAN"}
+    expect("a licence photo link from elsewhere is refused", "POST", "/drivers/apply", lic.token,
+           dict(body, licence_photo_url="https://example.com/licence.png"), status=400)
+    pre = expect("presign a licence photo upload", "POST", "/storage/presign", lic.token,
+                 {"bucket": "attachments", "file_name": "licence.png", "content_type": "image/png"})
+    put = urllib.request.Request(pre["upload_url"], data=SELFIE_PNG, method="PUT", headers={"Content-Type": "image/png"})
+    with urllib.request.urlopen(put, timeout=30) as r:
+        check("…uploaded to storage", r.status in (200, 204), r.status)
+    drv_lic = expect("apply with the licence photo", "POST", "/drivers/apply", lic.token,
+                     dict(body, licence_photo_url=pre["file_url"]), status=(200, 201))["driver"]
+    check("…stored", drv_lic.get("licence_photo_url") == pre["file_url"], drv_lic)
+    out = expect("admin opens the application", "GET", f"/drivers/{drv_lic['id']}", boss.token)
+    link = out.get("driver", {}).get("licence_photo_link")
+    check("…with a link to the photo", bool(link), out)
+    if link:
+        with urllib.request.urlopen(link, timeout=30) as r:
+            check("…the link serves the photo", r.read() == SELFIE_PNG)
+    try:
+        urllib.request.urlopen(pre["file_url"], timeout=30)
+        check("the plain file URL is not public", False)
+    except urllib.error.HTTPError as e:
+        check("the plain file URL is not public", e.code == 403, e.code)
+    expect("another user cannot see the application", "GET", f"/drivers/{drv_lic['id']}", applicant.token, status=403)
+
     # Driver stops driving, then can own a nursery; re-applying means review again.
     drv = approved_driver(boss, owner)
     expect("driver can't register a nursery", "POST", "/nurseries", drv.token, {"name": "Drv Farm", "mobile": drv.mobile, "address_line1": "x", "city": "Hyderabad"}, status=409)

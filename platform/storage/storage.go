@@ -108,15 +108,34 @@ func (c *Client) PutObject(ctx context.Context, bucket, key, contentType string,
 	return fmt.Sprintf("%s/%s/%s", c.publicURL, bucket, key), nil
 }
 
+// Locate splits a file URL this client issued into bucket and key; ok is
+// false for URLs from anywhere else.
+func (c *Client) Locate(fileURL string) (bucket, key string, ok bool) {
+	rest, ok := strings.CutPrefix(fileURL, c.publicURL+"/")
+	if !ok {
+		return "", "", false
+	}
+	bucket, key, ok = strings.Cut(rest, "/")
+	if !ok || !validBuckets[bucket] || key == "" || strings.Contains(key, "..") {
+		return "", "", false
+	}
+	return bucket, key, true
+}
+
+// PresignGetURL is PresignGet for a file URL this client issued.
+func (c *Client) PresignGetURL(ctx context.Context, fileURL string, ttl time.Duration) (string, error) {
+	bucket, key, ok := c.Locate(fileURL)
+	if !ok {
+		return "", fmt.Errorf("storage: not a platform file URL")
+	}
+	return c.PresignGet(ctx, bucket, key, ttl)
+}
+
 // RemoveByURL deletes an object this client stored, given the public URL
 // PutObject returned. URLs from elsewhere are ignored (nil error).
 func (c *Client) RemoveByURL(ctx context.Context, fileURL string) error {
-	rest, ok := strings.CutPrefix(fileURL, c.publicURL+"/")
+	bucket, key, ok := c.Locate(fileURL)
 	if !ok {
-		return nil
-	}
-	bucket, key, ok := strings.Cut(rest, "/")
-	if !ok || !validBuckets[bucket] || key == "" {
 		return nil
 	}
 	if err := c.minio.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{}); err != nil {
