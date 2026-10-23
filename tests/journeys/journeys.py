@@ -987,6 +987,21 @@ def journey_dispatch():
     out = expect("buyer confirms they received it", "POST", f"/dispatches/{d3['id']}/receipt", buyer.token, {})["dispatch"]
     check("…now confirmed in the app", out.get("delivery_confirmation") == "CUSTOMER_APP", out)
 
+    # Ratings: only the parties, only once it is done
+    stranger = User(first="Nosy", activity="CUSTOMER")
+    good = {"plant_quality_rating": 5, "communication_rating": 4, "overall_experience_rating": 5, "would_buy_again": True}
+    expect("a stranger cannot rate someone else's order", "POST", f"/ratings/order/{o['id']}", stranger.token, good, status=403)
+    expect("an order not yet completed cannot be rated", "POST", f"/ratings/order/{o2['id']}", buyer.token, good, status=409)
+    expect("scores are 1 to 5", "POST", f"/ratings/order/{o['id']}", buyer.token, dict(good, plant_quality_rating=9), status=400)
+    expect("an unknown order cannot be rated", "POST", "/ratings/order/999999999", buyer.token, good, status=404)
+    expect("the buyer rates their completed order", "POST", f"/ratings/order/{o['id']}", buyer.token, good)
+    trip = {"driver_behaviour_rating": 5, "on_time_delivery_rating": 4, "plant_condition_rating": 5}
+    expect("a rival owner cannot rate this trip", "POST", f"/ratings/trip/{did}", rival.token, trip, status=403)
+    expect("a stranger cannot rate this trip", "POST", f"/ratings/trip/{did}", stranger.token, trip, status=403)
+    expect("a cancelled trip cannot be rated", "POST", f"/ratings/trip/{d2['id']}", owner.token, trip, status=409)
+    expect("the buyer rates the delivered trip", "POST", f"/ratings/trip/{did}", buyer.token, trip)
+    expect("the seller rates the delivered trip", "POST", f"/ratings/trip/{did}", owner.token, trip)
+
     # Lists are scoped
     out = expect("driver's list", "GET", "/dispatches", driver.token)
     ids = [x["id"] for x in out.get("dispatches", [])]

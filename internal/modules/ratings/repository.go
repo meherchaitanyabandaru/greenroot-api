@@ -17,6 +17,39 @@ type Repository interface {
 	GetApp(ctx context.Context, userID int64) (*Rating, error)
 	GetTrip(ctx context.Context, userID int64, dispatchID int64) (*Rating, error)
 	GetOrder(ctx context.Context, userID int64, orderID int64) (*Rating, error)
+	// What the user may rate: their own completed order; a delivered trip of
+	// their order, or of their nursery's order. found=false: no such record.
+	OrderRatable(ctx context.Context, userID, orderID int64) (found, party, done bool, err error)
+	TripRatable(ctx context.Context, userID, dispatchID int64) (found, party, done bool, err error)
+}
+
+func (r *PostgresRepository) OrderRatable(ctx context.Context, userID, orderID int64) (found, party, done bool, err error) {
+	err = r.db.QueryRowContext(ctx, `
+		SELECT true, o.buyer_user_id IS NOT DISTINCT FROM $1, o.status::text = 'COMPLETED'
+		FROM public.orders o WHERE o.order_id = $2`, userID, orderID).Scan(&found, &party, &done)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, false, false, nil
+	}
+	return found, party, done, err
+}
+
+func (r *PostgresRepository) TripRatable(ctx context.Context, userID, dispatchID int64) (found, party, done bool, err error) {
+	err = r.db.QueryRowContext(ctx, `
+		SELECT true,
+			o.buyer_user_id IS NOT DISTINCT FROM $1 OR EXISTS (
+				SELECT 1 FROM public.nursery_users nu
+				WHERE nu.nursery_id = o.seller_nursery_id AND nu.user_id = $1 AND COALESCE(nu.is_active, true) = true
+			) OR EXISTS (
+				SELECT 1 FROM public.nurseries n
+				WHERE n.nursery_id = o.seller_nursery_id AND n.owner_user_id = $1 AND COALESCE(n.status::text, '') <> 'DELETED'
+			),
+			d.status::text = 'DELIVERED'
+		FROM public.dispatches d JOIN public.orders o ON o.order_id = d.order_id
+		WHERE d.dispatch_id = $2`, userID, dispatchID).Scan(&found, &party, &done)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, false, false, nil
+	}
+	return found, party, done, err
 }
 
 type PostgresRepository struct {

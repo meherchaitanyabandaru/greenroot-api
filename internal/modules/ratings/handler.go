@@ -162,7 +162,11 @@ func (h *Handler) writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrForbidden):
 		response.Error(w, http.StatusForbidden, "forbidden", "not allowed")
 	case errors.Is(err, ErrInvalidInput):
-		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid rating input")
+		response.Error(w, http.StatusBadRequest, "invalid_input", "Ratings are from 1 to 5.")
+	case errors.Is(err, ErrNotFound):
+		response.Error(w, http.StatusNotFound, "not_found", "not found")
+	case errors.Is(err, ErrNotDoneYet):
+		response.Error(w, http.StatusConflict, "not_completed", "You can rate it once it is delivered.")
 	default:
 		response.Error(w, http.StatusInternalServerError, "ratings_error", "ratings request failed")
 	}

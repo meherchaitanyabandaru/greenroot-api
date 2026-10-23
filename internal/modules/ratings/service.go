@@ -7,6 +7,9 @@ import (
 )
 
 var ErrForbidden = apperrs.ErrForbidden
+
+// ErrNotDoneYet: an order is rated once completed, a trip once delivered.
+var ErrNotDoneYet = errors.New("not completed yet")
 var ErrInvalidInput = apperrs.ErrInvalidInput
 
 type Service struct {
@@ -28,6 +31,13 @@ func (s *Service) SubmitTrip(ctx context.Context, actor ActorContext, dispatchID
 	if !actor.HasRole("BUYER") && !actor.HasRole("NURSERY_OWNER") && !actor.HasRole("MANAGER") {
 		return nil, ErrForbidden
 	}
+	if !scoresValid(req.DriverBehaviour, req.OnTimeDelivery, req.PlantCondition) {
+		return nil, ErrInvalidInput
+	}
+	// Only the trip's customer or the selling nursery, once it is delivered.
+	if err := allowed(s.repository.TripRatable(ctx, actor.UserID, dispatchID)); err != nil {
+		return nil, err
+	}
 	return s.repository.UpsertTrip(ctx, actor.UserID, dispatchID, req)
 }
 
@@ -36,7 +46,38 @@ func (s *Service) SubmitOrder(ctx context.Context, actor ActorContext, orderID i
 	if !actor.HasRole("BUYER") {
 		return nil, ErrForbidden
 	}
+	if !scoresValid(req.PlantQuality, req.Communication, req.OverallExperience) {
+		return nil, ErrInvalidInput
+	}
+	// Only the order's own buyer, once it is completed.
+	if err := allowed(s.repository.OrderRatable(ctx, actor.UserID, orderID)); err != nil {
+		return nil, err
+	}
 	return s.repository.UpsertOrder(ctx, actor.UserID, orderID, req)
+}
+
+func allowed(found, party, done bool, err error) error {
+	switch {
+	case err != nil:
+		return err
+	case !found:
+		return ErrNotFound
+	case !party:
+		return ErrForbidden
+	case !done:
+		return ErrNotDoneYet
+	}
+	return nil
+}
+
+// scoresValid: each given score is 1-5 (the DB check would otherwise fail as a 500).
+func scoresValid(scores ...*int) bool {
+	for _, v := range scores {
+		if v != nil && (*v < 1 || *v > 5) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) GetMyRatings(ctx context.Context, actor ActorContext) (map[string]any, error) {
