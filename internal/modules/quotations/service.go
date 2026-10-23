@@ -880,6 +880,12 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 // enrichQuotation shapes every quotation the API returns, so manager-only
 // actors never receive customer details from any endpoint.
 func enrichQuotation(actor ActorContext, q Quotation) Quotation {
+	// Notes are the nursery's internal notes; who handles it is internal too.
+	if !sellerView(actor, q) {
+		q.Notes = nil
+		q.AssignedManagerUserID = nil
+		q.AssignedManagerName = nil
+	}
 	if isManagerOnly(actor) {
 		redactCustomerContact(&q)
 	}

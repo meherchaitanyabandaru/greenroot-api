@@ -6829,7 +6829,9 @@ paths:
         `attachments` also takes pdf, doc(x), xls(x), csv, txt and octet-stream.
         Other types → 400 `invalid_content_type`, other buckets → 400
         `invalid_bucket`. The key's extension comes from the type, and the PUT must
-        send the same `Content-Type` (it is signed into `upload_url`).
+        send the same `Content-Type` (it is signed into `upload_url`). `size`
+        (bytes) is required: up to 10 MB for images, 20 MB for attachments
+        (400 `file_too_large`); the PUT must send exactly that `Content-Length`.
       operationId: postStoragePresign
       security:
         - BearerAuth: []

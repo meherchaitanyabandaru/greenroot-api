@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -37,6 +38,20 @@ var documentTypes = map[string]string{
 	"text/csv":                 ".csv",
 	"text/plain":               ".txt",
 	"application/octet-stream": ".bin", // private bucket: always downloaded, never rendered
+}
+
+// Upload size limits. Phone photos are resized before upload (≈1–2 MB);
+// attachments can be scanned documents.
+const (
+	maxImageBytes      = 10 << 20
+	maxAttachmentBytes = 20 << 20
+)
+
+func maxUploadBytes(bucket string) int64 {
+	if bucket == platformstorage.BucketAttachments {
+		return maxAttachmentBytes
+	}
+	return maxImageBytes
 }
 
 var clientUploads = map[string][]map[string]string{
@@ -109,9 +124,14 @@ func (h *Handler) Presign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if limit := maxUploadBytes(req.Bucket); req.Size <= 0 || req.Size > limit {
+		response.Error(w, 400, "file_too_large", fmt.Sprintf("files up to %d MB can be uploaded here", limit>>20))
+		return
+	}
+
 	key := uuid.NewString() + ext
-	// The upload must send this exact Content-Type (it is signed into the URL).
-	uploadURL, fileURL, err := h.storage.PresignPut(r.Context(), req.Bucket, key, req.ContentType, presignTTL)
+	// The upload must send this exact Content-Type and size (both are signed into the URL).
+	uploadURL, fileURL, err := h.storage.PresignPut(r.Context(), req.Bucket, key, req.ContentType, req.Size, presignTTL)
 	if err != nil {
 		response.Error(w, 500, "storage_error", "could not generate upload URL")
 		return

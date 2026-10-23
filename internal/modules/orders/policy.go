@@ -71,16 +71,23 @@ type OrderCapabilities struct {
 // BuildCapabilities computes the capability set for the given actor and order.
 // No database access — the order's already-loaded fields (status, buyer, delivery
 // snapshot) and actor roles are the only inputs.
-func BuildCapabilities(actor ActorContext, order Order) OrderCapabilities {
-	status := order.Status
-	isAdmin := actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
-	// The order's own buyer/customer acts as a buyer here even when they also
-	// own or manage a nursery: seller actions belong to the seller side only
-	// (canManage enforces the same by seller nursery).
+// sellerView: the seller nursery's side (or an admin). The order's own
+// buyer/customer is the buyer side even when they also own or manage a
+// nursery. Callers have already checked the actor may see the order.
+func sellerView(actor ActorContext, order Order) bool {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
+		return true
+	}
 	isBuyerSide := (order.BuyerUserID != nil && *order.BuyerUserID == actor.UserID) ||
 		(order.CustomerUserID != nil && *order.CustomerUserID == actor.UserID)
-	isOperator := (actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER")) && !isBuyerSide
-	isManage := isOperator || isAdmin
+	return (actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER")) && !isBuyerSide
+}
+
+func BuildCapabilities(actor ActorContext, order Order) OrderCapabilities {
+	status := order.Status
+	// Seller actions belong to the seller side only (canManage enforces the
+	// same by seller nursery).
+	isManage := sellerView(actor, order)
 	editable := IsEditable(status)
 	hasDeliveryAddress := hasUsableDeliverySnapshot(order.DeliverySnapshot)
 

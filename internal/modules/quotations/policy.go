@@ -33,6 +33,21 @@ func IsTerminal(status string) bool {
 
 // BuildCapabilities computes the capability set for the given actor and quotation.
 // No database access — struct fields and actor roles are the only inputs.
+// isRecipientOf: the quotation's customer, by user or (sent to a number) by mobile.
+func isRecipientOf(actor ActorContext, q Quotation) bool {
+	return (q.CustomerUserID != nil && *q.CustomerUserID == actor.UserID) ||
+		(q.CustomerUserID == nil && q.RecipientMobile != nil && actor.Mobile != "" && *q.RecipientMobile == actor.Mobile)
+}
+
+// sellerView: the nursery side (or an admin), as opposed to the customer.
+// Callers have already checked the actor may see the quotation at all.
+func sellerView(actor ActorContext, q Quotation) bool {
+	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {
+		return true
+	}
+	return (actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER")) && !isRecipientOf(actor, q)
+}
+
 func BuildCapabilities(actor ActorContext, q Quotation) *QuotationCapabilities {
 	status := q.Status
 	isAdmin := actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
@@ -40,9 +55,8 @@ func BuildCapabilities(actor ActorContext, q Quotation) *QuotationCapabilities {
 	// also own or manage a nursery.
 	// Matched by user or, like canBuyerAct, by the recipient mobile when the
 	// quotation was sent to a number rather than a linked customer.
-	isRecipient := (q.CustomerUserID != nil && *q.CustomerUserID == actor.UserID) ||
-		(q.CustomerUserID == nil && q.RecipientMobile != nil && actor.Mobile != "" && *q.RecipientMobile == actor.Mobile)
-	isSeller := isAdmin || ((actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER")) && !isRecipient)
+	isRecipient := isRecipientOf(actor, q)
+	isSeller := sellerView(actor, q)
 	isOwnerRole := isAdmin || (actor.HasRole("NURSERY_OWNER") && !isRecipient)
 	isCustomer := isAdmin || isRecipient
 	editable := IsEditable(status) && q.ConvertedOrderID == nil

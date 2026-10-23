@@ -1173,19 +1173,22 @@ func statusOrPending(value string) string {
 // GetNurseryContactExtras loads nursery email/phone/address for the order PDF header.
 func (r *PostgresRepository) GetNurseryContactExtras(ctx context.Context, nurseryID int64) (PDFNurseryExtras, error) {
 	var extras PDFNurseryExtras
-	var email, phone, line1, city, state, postal sql.NullString
+	var email, phone, line1, city, state, postal, brand sql.NullString
 	err := r.db.QueryRowContext(ctx, `
-		SELECT n.email, n.mobile, na.address_line1, na.city, na.state, na.postal_code
+		SELECT n.email, n.mobile, na.address_line1, na.city, na.state, na.postal_code, n.brand_color
 		FROM public.nurseries n
 		LEFT JOIN public.nursery_addresses na ON na.nursery_id = n.nursery_id AND na.is_primary = true
 		WHERE n.nursery_id = $1
-	`, nurseryID).Scan(&email, &phone, &line1, &city, &state, &postal)
+	`, nurseryID).Scan(&email, &phone, &line1, &city, &state, &postal, &brand)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return extras, err
 	}
 	extras.Email = email.String
 	extras.Phone = phone.String
 	extras.Address = joinAddressParts(line1.String, city.String, state.String, postal.String)
+	if brand.Valid {
+		extras.BrandColor = &brand.String
+	}
 	return extras, nil
 }
 

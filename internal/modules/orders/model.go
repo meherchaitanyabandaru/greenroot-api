@@ -12,9 +12,10 @@ type ActorContext = authctx.ActorContext
 // PDFNurseryExtras carries nursery email/address for PDF rendering only — it is
 // never serialized into the JSON API response.
 type PDFNurseryExtras struct {
-	Email   string
-	Phone   string
-	Address string
+	Email      string
+	Phone      string
+	Address    string
+	BrandColor *string // "#RRGGBB", the nursery's chosen colour
 }
 
 type OrderVerification struct {

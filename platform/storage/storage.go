@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,14 +77,15 @@ func New(cfg Config) (*Client, error) {
 // Returns (uploadURL, fileURL, error).
 // uploadURL — the client uses this to PUT the file (expires in ttl).
 // fileURL   — the permanent URL to store in the database and return to end users.
-// contentType is signed into the URL: the upload must send exactly that
-// Content-Type, so a ".jpg" cannot be stored (and served) as a web page.
-func (c *Client) PresignPut(ctx context.Context, bucket, key, contentType string, ttl time.Duration) (uploadURL string, fileURL string, err error) {
+// contentType and size are signed into the URL: the upload must send exactly
+// that Content-Type and Content-Length, so a ".jpg" cannot be stored (and
+// served) as a web page, and no upload is larger than the API allowed.
+func (c *Client) PresignPut(ctx context.Context, bucket, key, contentType string, size int64, ttl time.Duration) (uploadURL string, fileURL string, err error) {
 	if !validBuckets[bucket] {
 		return "", "", fmt.Errorf("storage: unknown bucket %q", bucket)
 	}
 	u, err := c.minio.PresignHeader(ctx, http.MethodPut, c.physical(bucket), key, ttl, nil,
-		http.Header{"Content-Type": []string{contentType}})
+		http.Header{"Content-Type": []string{contentType}, "Content-Length": []string{strconv.FormatInt(size, 10)}})
 	if err != nil {
 		return "", "", fmt.Errorf("storage: presign put %s/%s: %w", bucket, key, err)
 	}

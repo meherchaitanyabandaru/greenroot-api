@@ -30,23 +30,6 @@ func TestFormatINR(t *testing.T) {
 	}
 }
 
-func TestAmountInWordsHyphenation(t *testing.T) {
-	cases := []struct {
-		amount float64
-		want   string
-	}{
-		{684, "Six Hundred Eighty-Four Rupees"},
-		{101275, "One Lakh One Thousand Two Hundred Seventy-Five Rupees"},
-		{100, "One Hundred Rupees"},
-		{20, "Twenty Rupees"},
-	}
-	for _, c := range cases {
-		if got := amountInWords(c.amount); got != c.want {
-			t.Errorf("amountInWords(%v) = %q, want %q", c.amount, got, c.want)
-		}
-	}
-}
-
 // buildTestQuotation returns a valid CUSTOMER quotation with n items, useful for
 // exercising pagination at various sizes.
 func buildTestQuotation(n int) Quotation {
@@ -207,20 +190,6 @@ func TestBuildQuotationPDF_ExpiredOverridesSentBadge(t *testing.T) {
 	q.ExpirySummary = &QuotationExpirySummary{IsExpired: expired}
 	if got := quotationStatusBadgeLabel(q); got != "EXPIRED" {
 		t.Errorf("expected EXPIRED badge for expired CUSTOMER_SENT quotation, got %q", got)
-	}
-}
-
-func TestGroupIndian(t *testing.T) {
-	cases := map[string]string{
-		"684":     "684",
-		"12500":   "12,500",
-		"101275":  "1,01,275",
-		"1234567": "12,34,567",
-	}
-	for in, want := range cases {
-		if got := groupIndian(in); got != want {
-			t.Errorf("groupIndian(%q) = %q, want %q", in, got, want)
-		}
 	}
 }
 

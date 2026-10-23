@@ -650,6 +650,10 @@ def journey_quotation():
     # Send, recall, send, accept, convert
     out = expect("owner sends", "POST", f"/quotations/{qid}/send", owner.token, {})
     check("…CUSTOMER_SENT with valid_until", out["quotation"]["status"] == "CUSTOMER_SENT" and out["quotation"].get("valid_until"), out["quotation"])
+    bq = expect("buyer opens the sent quotation", "GET", f"/quotations/{qid}", buyer.token)["quotation"]
+    check("…internal notes and handler are not shown to the buyer", not bq.get("notes") and not bq.get("assigned_manager_name"), bq)
+    oq = expect("owner opens it", "GET", f"/quotations/{qid}", owner.token)["quotation"]
+    check("…the owner still sees the notes", oq.get("notes") == "final", oq.get("notes"))
     expect("sending twice is refused", "POST", f"/quotations/{qid}/send", owner.token, {}, status=(400, 409))
     expect("a sent quotation cannot be edited", "PUT", f"/quotations/{qid}", owner.token, quote(notes="late"), status=(400, 409))
     expect("a sent quotation cannot be converted", "POST", f"/quotations/{qid}/convert-to-order", owner.token, {}, status=(400, 409))
@@ -679,7 +683,9 @@ def journey_quotation():
     order = expect("the new order exists", "GET", f"/orders/{cq['converted_order_id']}", owner.token)
     oj = json.dumps(order)
     check("…for the buyer, 20 mangoes, 3000", str(buyer.id) in oj and "3000" in oj, order)
-    expect("buyer sees the order", "GET", f"/orders/{cq['converted_order_id']}", buyer.token)
+    bo = expect("buyer sees the order", "GET", f"/orders/{cq['converted_order_id']}", buyer.token)
+    bo = bo.get("order", bo)
+    check("…without the nursery's internal notes", not bo.get("notes") and not bo.get("assigned_manager_name"), bo.get("notes"))
 
     # Manager's own quotation, buyer rejection
     q2 = expect("manager creates a quotation", "POST", "/quotations", manager.token, quote(), status=201)["quotation"]
@@ -1461,7 +1467,7 @@ def journey_roles():
     expect("a licence photo link from elsewhere is refused", "POST", "/drivers/apply", lic.token,
            dict(body, licence_photo_url="https://example.com/licence.png"), status=400)
     pre = expect("presign a licence photo upload", "POST", "/storage/presign", lic.token,
-                 {"bucket": "attachments", "file_name": "licence.png", "content_type": "image/png"})
+                 {"bucket": "attachments", "file_name": "licence.png", "content_type": "image/png", "size": len(SELFIE_PNG)})
     put = urllib.request.Request(pre["upload_url"], data=SELFIE_PNG, method="PUT", headers={"Content-Type": "image/png"})
     with urllib.request.urlopen(put, timeout=30) as r:
         check("…uploaded to storage", r.status in (200, 204), r.status)
@@ -1622,18 +1628,26 @@ def journey_storage():
            {"bucket": "market-ads", "file_name": "a.html", "content_type": "text/html"}, status=400)
     expect("SVG in a public bucket refused", "POST", "/storage/presign", u.token,
            {"bucket": "market-ads", "file_name": "a.svg", "content_type": "image/svg+xml"}, status=400)
+    expect("an upload without its size is refused", "POST", "/storage/presign", u.token,
+           {"bucket": "market-ads", "file_name": "a.jpg", "content_type": "image/jpeg"}, status=400)
+    out = expect("a photo over 10 MB is refused", "POST", "/storage/presign", u.token,
+                 {"bucket": "market-ads", "file_name": "a.jpg", "content_type": "image/jpeg", "size": 10 * 1024 * 1024 + 1}, status=400)
+    check("…file_too_large", err_code(out) == "file_too_large", out)
+    expect("an attachment up to 20 MB is allowed", "POST", "/storage/presign", u.token,
+           {"bucket": "attachments", "file_name": "a.pdf", "content_type": "application/pdf", "size": 20 * 1024 * 1024})
     pre = expect("photo upload allowed", "POST", "/storage/presign", u.token,
-                 {"bucket": "market-ads", "file_name": "evil.html", "content_type": "image/jpeg"})
+                 {"bucket": "market-ads", "file_name": "evil.html", "content_type": "image/jpeg", "size": len(SELFIE_PNG)})
     check("…extension comes from the type, not the file name", pre["key"].endswith(".jpg"), pre["key"])
 
-    def put(content_type):
-        req = urllib.request.Request(pre["upload_url"], data=SELFIE_PNG, method="PUT", headers={"Content-Type": content_type})
+    def put(content_type, data=SELFIE_PNG):
+        req = urllib.request.Request(pre["upload_url"], data=data, method="PUT", headers={"Content-Type": content_type})
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
                 return r.status
         except urllib.error.HTTPError as e:
             return e.code
     check("uploading as a different type is refused", put("text/html") == 403)
+    check("uploading a bigger file than declared is refused", put("image/jpeg", SELFIE_PNG * 50) == 403)
     check("uploading as the signed type works", put("image/jpeg") in (200, 204))
     with urllib.request.urlopen(pre["file_url"], timeout=30) as r:
         check("…served as an image", r.headers.get("Content-Type") == "image/jpeg", r.headers.get("Content-Type"))

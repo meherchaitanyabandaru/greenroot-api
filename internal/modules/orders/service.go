@@ -114,16 +114,8 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, orderID int64) (O
 	return *order, nil
 }
 
-// RenderPDF generates the order receipt PDF on the fly (no storage persistence).
-// Content is gated by role: notes and internal handler identity are hidden from
-// buyers (see visibilityFor in pdf.go) — everything else is shown in full to any
-// role that can view the order, since managers/owners operationally need full
-// delivery details to fulfil it.
-// RenderPDF generates the order receipt PDF on the fly. Content is gated by role
-// (see visibilityFor) — but the QR verification link and the S3-archived "official"
-// copy always reflect the full, canonical document regardless of who triggered the
-// render, so history doesn't churn a new version every time a different role
-// downloads the same order.
+// RenderPDF renders the order document (the same for every viewer) and
+// archives it as the official copy when it changed.
 func (s *Service) RenderPDF(ctx context.Context, actor ActorContext, orderID int64) ([]byte, string, error) {
 	o, err := s.Get(ctx, actor, orderID)
 	if err != nil {
@@ -140,23 +132,23 @@ func (s *Service) RenderPDF(ctx context.Context, actor ActorContext, orderID int
 	// Best-effort: a token failure should never block a PDF download.
 	verifyURL := s.ensureVerifyURL(ctx, orderID)
 
-	pdfBytes := buildOrderPDF(o, nursery, visibilityFor(actor), verifyURL)
+	// One document for every viewer (internal fields never print), so the
+	// copy downloaded is the copy archived and verified.
+	pdfBytes := buildOrderPDF(o, nursery, verifyURL)
 
-	// Best-effort: persist the canonical (full-visibility) copy as the official
-	// historical record, deduped by content hash, if storage is configured.
-	s.persistDocumentIfChanged(ctx, actor, o, nursery, verifyURL, nurseryID)
+	// Best-effort: persist it as the official historical record, deduped by
+	// content hash, if storage is configured.
+	s.persistDocumentIfChanged(ctx, actor, pdfBytes, o, nurseryID)
 
 	s.audit(ctx, actor, auditlog.EntityOrder, orderID, auditlog.ActionDownload,
 		fmt.Sprintf("Order #%d PDF generated", orderID), nil, nil)
 	return pdfBytes, o.OrderCode + ".pdf", nil
 }
 
-func (s *Service) persistDocumentIfChanged(ctx context.Context, actor ActorContext, o Order, nursery PDFNurseryExtras, verifyURL string, nurseryID *int64) {
+func (s *Service) persistDocumentIfChanged(ctx context.Context, actor ActorContext, canonical []byte, o Order, nurseryID *int64) {
 	if s.storage == nil {
 		return
 	}
-	canonicalVis := orderPDFVisibility{showInternalNotes: true, showAssignedHandler: true}
-	canonical := buildOrderPDF(o, nursery, canonicalVis, verifyURL)
 	hash := sha256.Sum256(canonical)
 	hashHex := hex.EncodeToString(hash[:])
 
@@ -1113,6 +1105,12 @@ func (s *Service) enrichOrder(ctx context.Context, actor ActorContext, order *Or
 }
 
 func withLifecycle(actor ActorContext, order Order) Order {
+	// Notes are the nursery's internal remarks; who handles it is internal too.
+	if !sellerView(actor, order) {
+		order.Notes = nil
+		order.AssignedManagerUserID = nil
+		order.AssignedManagerName = nil
+	}
 	lc := lifecycle.Order(order.Status)
 	if order.ActiveDispatchStatus != nil {
 		lc = lifecycle.OrderWithDispatch(order.Status, *order.ActiveDispatchStatus)

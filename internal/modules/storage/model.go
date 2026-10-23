@@ -4,6 +4,7 @@ type PresignRequest struct {
 	Bucket      string `json:"bucket"`       // one of: profile-images, plant-images, loading-photos, delivery-photos, attachments
 	FileName    string `json:"file_name"`    // original file name, e.g. "photo.jpg"
 	ContentType string `json:"content_type"` // MIME type, e.g. "image/jpeg"
+	Size        int64  `json:"size"`         // bytes; the upload must be exactly this size
 }
 
 type PresignResponse struct {
