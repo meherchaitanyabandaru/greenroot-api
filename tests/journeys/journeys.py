@@ -98,11 +98,11 @@ def expect(label, method, path, token=None, body=None, status=200, headers=None)
 SELFIE_PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
 
 
-def upload_selfie(label, user):
+def upload_selfie(label, user, data=SELFIE_PNG, want=200):
     """POST /users/me/avatar as multipart; returns the stored photo URL."""
     boundary = "journey" + str(random.randint(10**8, 10**9))
     body = (f'--{boundary}\r\nContent-Disposition: form-data; name="avatar"; filename="selfie.png"\r\n'
-            "Content-Type: image/png\r\n\r\n").encode() + SELFIE_PNG + f"\r\n--{boundary}--\r\n".encode()
+            "Content-Type: image/png\r\n\r\n").encode() + data + f"\r\n--{boundary}--\r\n".encode()
     req = urllib.request.Request(API + "/users/me/avatar", data=body, method="POST")
     req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
     req.add_header("Authorization", "Bearer " + user.token)
@@ -112,7 +112,7 @@ def upload_selfie(label, user):
     except urllib.error.HTTPError as e:
         code, out = e.code, {"raw": e.read()[:200].decode(errors="replace")}
     url = (out.get("user") or {}).get("profile_image_url")
-    check(f"{label}  [POST /users/me/avatar → {code}]", code == 200 and bool(url), out)
+    check(f"{label}  [POST /users/me/avatar → {code}]", code == want and (want != 200 or bool(url)), out)
     return url
 
 
@@ -1651,6 +1651,7 @@ def journey_storage():
     check("uploading as the signed type works", put("image/jpeg") in (200, 204))
     with urllib.request.urlopen(pre["file_url"], timeout=30) as r:
         check("…served as an image", r.headers.get("Content-Type") == "image/jpeg", r.headers.get("Content-Type"))
+    upload_selfie("a web page posing as a profile photo is refused", u, data=b"<html><script>alert(1)</script></html>", want=400)
 
 
 JOURNEYS = [

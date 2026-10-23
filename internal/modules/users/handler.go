@@ -126,22 +126,19 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	contentType := header.Header.Get("Content-Type")
-	ext := "jpg"
-	switch contentType {
-	case "image/png":
-		ext = "png"
-	case "image/webp":
-		ext = "webp"
-	case "image/gif":
-		ext = "gif"
-	default:
-		contentType = "image/jpeg"
-	}
-
 	data, err := io.ReadAll(file)
 	if err != nil {
 		response.Error(w, http.StatusInternalServerError, "read_error", "could not read uploaded file")
+		return
+	}
+
+	// The type comes from the bytes, not the client's header: the avatar is
+	// served from a public bucket.
+	exts := map[string]string{"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}
+	contentType := http.DetectContentType(data)
+	ext, ok := exts[contentType]
+	if !ok {
+		response.Error(w, http.StatusBadRequest, "invalid_image", "the profile photo must be a JPG, PNG, WebP or GIF image")
 		return
 	}
 
