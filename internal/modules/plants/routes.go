@@ -25,7 +25,9 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, re
 	} else {
 		service = NewService(repository, audit)
 	}
-	return Module{handler: NewHandler(service, jwt)}
+	handler := NewHandler(service, jwt)
+	handler.suggestions = &Suggestions{db: db, plants: service}
+	return Module{handler: handler}
 }
 
 func (m Module) RegisterRoutes(router chi.Router) {
@@ -39,6 +41,9 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Delete("/categories/{categoryId}", m.handler.DeleteCategory)
 		r.Get("/lookup", m.handler.Lookup)
 		r.Post("/resolve", m.handler.Resolve)
+		r.Get("/suggestions", m.handler.ListSuggestions)
+		r.Post("/suggestions", m.handler.CreateSuggestion)
+		r.Post("/suggestions/{suggestionId}/review", m.handler.ReviewSuggestion)
 		r.Get("/{id}", m.handler.Get)
 		r.Put("/{id}", m.handler.Update)
 		r.Delete("/{id}", m.handler.Delete)

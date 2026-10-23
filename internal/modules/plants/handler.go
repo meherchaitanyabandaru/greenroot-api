@@ -13,8 +13,9 @@ import (
 )
 
 type Handler struct {
-	service *Service
-	jwt     *jwtplatform.Service
+	service     *Service
+	suggestions *Suggestions
+	jwt         *jwtplatform.Service
 }
 
 func NewHandler(service *Service, jwt *jwtplatform.Service) *Handler {
@@ -351,7 +352,7 @@ func writePlantsError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrPlantRemoved):
 		response.Error(w, http.StatusConflict, "plant_removed", "this plant was removed from the catalog by an admin")
 	case errors.Is(err, ErrConflict):
-		response.Error(w, http.StatusConflict, "plant_conflict", "another plant is already linked to this botanical name")
+		response.Error(w, http.StatusConflict, "plant_conflict", "the catalog already has a plant with this scientific or botanical name")
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid plant input")
 	default:

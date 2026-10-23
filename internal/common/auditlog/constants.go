@@ -7,6 +7,7 @@ const (
 	EntityOrder        EntityType = "order"
 	EntityOrderItem    EntityType = "order_item"
 	EntityPlant        EntityType = "plant"
+	EntityPlantSuggest EntityType = "plant_suggestion"
 	EntityVehicle      EntityType = "vehicle"
 	EntityUser         EntityType = "user"
 	EntityUserAddress  EntityType = "user_address"

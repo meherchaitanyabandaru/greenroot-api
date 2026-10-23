@@ -1543,6 +1543,50 @@ def journey_access():
     check("…old sessions were signed out (must sign in again)", code == 401, code)
 
 
+def journey_plant_suggestions():
+    """Community plant suggestions: anyone suggests a missing plant; known names and repeats are ignored; only admins review; the suggester is told."""
+    boss = admin()
+    u = User(first="Sita", activity="CUSTOMER")
+    other = User(first="Gopi", activity="CUSTOMER")
+    tag = str(random.randint(10**5, 10**6))
+    name = f"Kanakambaram {tag}"
+
+    out = expect("suggest a missing plant", "POST", "/plants/suggestions", u.token, {"name": f"  {name} ", "notes": "orange flower"}, status=201)
+    check("…SUBMITTED, PENDING, name tidied", out["result"] == "SUBMITTED" and out["suggestion"]["status"] == "PENDING"
+          and out["suggestion"]["name"] == name, out)
+    sid = out["suggestion"]["id"]
+    out = expect("someone else suggests the same name", "POST", "/plants/suggestions", other.token, {"name": name.upper()})
+    check("…ignored: ALREADY_SUGGESTED", out["result"] == "ALREADY_SUGGESTED", out)
+    _, catalog = call("GET", "/plants?per_page=50", u.token)
+    known = next(p for p in catalog["plants"] if p.get("common_name"))  # linking must not rename it
+    out = expect("suggest a plant the catalog has", "POST", "/plants/suggestions", u.token, {"name": known["scientific_name"].lower()})
+    check("…ignored: EXISTS with the plant", out["result"] == "EXISTS" and out["plant"]["id"] == known["id"], out)
+    expect("a one-letter name is refused", "POST", "/plants/suggestions", u.token, {"name": "x"}, status=400)
+
+    expect("a user cannot see the review queue", "GET", "/plants/suggestions", u.token, status=403)
+    expect("a user cannot review", "POST", f"/plants/suggestions/{sid}/review", u.token, {"action": "LINKED", "plant_id": known["id"]}, status=403)
+    out = expect("admin sees the queue", "GET", "/plants/suggestions?status=PENDING&per_page=100", boss.token)
+    check("…with the suggestion and who sent it", any(x["id"] == sid and x["suggested_by_mobile"] == u.mobile for x in out["suggestions"]), out)
+    expect("linking needs a plant", "POST", f"/plants/suggestions/{sid}/review", boss.token, {"action": "LINKED"}, status=400)
+    out = expect("admin links it to an existing plant", "POST", f"/plants/suggestions/{sid}/review", boss.token, {"action": "LINKED", "plant_id": known["id"]})
+    check("…LINKED to that plant", out["suggestion"]["status"] == "LINKED" and out["suggestion"]["plant_id"] == known["id"], out)
+    _, after = call("GET", f"/plants/{known['id']}", u.token)
+    check("…its existing common name is kept", after["plant"]["common_name"] == known["common_name"], after)
+    expect("a reviewed suggestion cannot be reviewed again", "POST", f"/plants/suggestions/{sid}/review", boss.token, {"action": "REJECTED", "note": "x"}, status=409)
+    out = expect("the suggester's notifications", "GET", "/notifications", u.token)
+    check("…told it was added", "Thanks for your plant suggestion" in json.dumps(out), out)
+
+    out = expect("suggest another", "POST", "/plants/suggestions", u.token, {"name": f"Not a plant {tag}"}, status=201)
+    rid = out["suggestion"]["id"]
+    expect("rejecting needs a reason", "POST", f"/plants/suggestions/{rid}/review", boss.token, {"action": "REJECTED"}, status=400)
+    out = expect("admin rejects with a reason", "POST", f"/plants/suggestions/{rid}/review", boss.token, {"action": "REJECTED", "note": "Not a plant name"})
+    check("…REJECTED with the reason", out["suggestion"]["status"] == "REJECTED" and out["suggestion"]["review_note"] == "Not a plant name", out)
+
+    # 10 a day per user (two used above)
+    codes = [call("POST", "/plants/suggestions", u.token, {"name": f"Plant {tag} {i}"})[0] for i in range(9)]
+    check("the 11th suggestion in a day is refused (429)", codes[:8] == [201] * 8 and codes[8] == 429, codes)
+
+
 JOURNEYS = [
     ("auth", journey_auth),
     ("accounts", journey_accounts),
@@ -1551,6 +1595,7 @@ JOURNEYS = [
     ("order", journey_order),
     ("dispatch", journey_dispatch),
     ("top_items", journey_top_items),
+    ("plant_suggestions", journey_plant_suggestions),
     ("payments", journey_payments),
     ("market", journey_market),
     ("wanted", journey_wanted),
