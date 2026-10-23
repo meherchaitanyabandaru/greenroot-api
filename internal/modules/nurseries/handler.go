@@ -489,6 +489,8 @@ func writeNurseriesError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusConflict, "nursery_has_active_records", "finish or cancel open orders, trips and sent quotations before closing the nursery")
 	case errors.Is(err, ErrNotFound):
 		response.Error(w, http.StatusNotFound, "not_found", "nursery resource not found")
+	case errors.Is(err, ErrLastAddress):
+		response.Error(w, http.StatusConflict, "last_address", "add another address before removing this one: orders are picked up from here")
 	case errors.Is(err, ErrInvalidAddress):
 		response.Error(w, http.StatusBadRequest, "invalid_address", "invalid nursery address")
 	case errors.Is(err, ErrInvalidInput):

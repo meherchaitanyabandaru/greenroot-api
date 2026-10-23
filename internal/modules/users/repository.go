@@ -250,7 +250,10 @@ func (r *PostgresRepository) CreateAddress(ctx context.Context, userID int64, in
 				THEN ST_SetSRID(ST_MakePoint($12::double precision, $11::double precision), 4326)::geography
 				ELSE NULL
 			END,
-			$13, NULLIF($14, ''), NULLIF($15, ''), $16, $17, $18, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+			$13, NULLIF($14, ''), NULLIF($15, ''), $16, $17,
+			-- a user's first address is their default
+			$18 OR NOT EXISTS (SELECT 1 FROM public.user_addresses WHERE user_id = $1),
+			CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING address_id, user_id, address_type, contact_name, contact_mobile,
 			address_line1, address_line2, city, state, country, postal_code,
 			latitude, longitude, gps_accuracy_meters, landmark, location_source,
@@ -364,18 +367,29 @@ func (r *PostgresRepository) UpdateAddress(ctx context.Context, userID int64, ad
 }
 
 func (r *PostgresRepository) DeleteAddress(ctx context.Context, userID int64, addressID int64) error {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM public.user_addresses WHERE user_id = $1 AND address_id = $2`, userID, addressID)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
+	defer tx.Rollback()
+
+	var wasDefault bool
+	err = tx.QueryRowContext(ctx, `DELETE FROM public.user_addresses WHERE user_id = $1 AND address_id = $2 RETURNING COALESCE(is_default, false)`, userID, addressID).Scan(&wasDefault)
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	// Never leave a user with addresses but no default: promote the newest.
+	if wasDefault {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE public.user_addresses SET is_default = true, updated_at = CURRENT_TIMESTAMP
+			WHERE address_id = (SELECT address_id FROM public.user_addresses WHERE user_id = $1 ORDER BY address_id DESC LIMIT 1)`, userID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (r *PostgresRepository) ListRoles(ctx context.Context, userID int64) ([]Role, error) {

@@ -357,6 +357,13 @@ def journey_accounts():
     addr = expect("add a delivery address", "POST", f"/users/{u.id}/addresses", u.token, {
         "address_type": "DELIVERY", "contact_name": "Asha", "contact_mobile": u.mobile, "address_line1": "12 MG Road",
         "city": "Hyderabad", "state": "Telangana", "country": "India", "postal_code": "500001"}, status=(200, 201))
+    check("…the first address is the default", addr["address"]["is_default"] is True, addr)
+    second = expect("add a second address", "POST", f"/users/{u.id}/addresses", u.token, {
+        "address_line1": "4 Park Lane", "city": "Hyderabad", "country": "India"}, status=(200, 201))
+    check("…not the default", second["address"]["is_default"] is False, second)
+    expect("delete the default address", "DELETE", f"/users/addresses/{addr['address']['id']}", u.token, status=(200, 204))
+    out = expect("list addresses", "GET", f"/users/{u.id}/addresses", u.token)
+    check("…the remaining address became the default", [a["is_default"] for a in out["addresses"]] == [True], out)
     other = User(first="Mallik", activity="CUSTOMER")
     expect("cannot add an address to someone else's account", "POST", f"/users/{u.id}/addresses", other.token, {
         "address_line1": "x", "city": "y", "country": "India"}, status=(403, 404))
@@ -498,6 +505,16 @@ def journey_nursery():
     expect("owner edits their nursery", "PUT", f"/nurseries/{nid}", owner.token, {"description": "Fruit saplings"})
     out = expect("owner cannot change status through the edit form", "PUT", f"/nurseries/{nid}", owner.token, {"status": "SUSPENDED"})
     check("…status unchanged", out["nursery"]["status"] == "APPROVED", out["nursery"]["status"])
+    # Orders pick up from the primary address, so a nursery always keeps one.
+    out = expect("owner lists nursery addresses", "GET", f"/nurseries/{nid}/addresses", owner.token)
+    first = out["addresses"][0]
+    check("…the registration address is primary", first["is_primary"] is True, out)
+    expect("the only nursery address cannot be deleted", "DELETE", f"/nurseries/addresses/{first['id']}", owner.token, status=409)
+    expect("owner adds a second nursery address", "POST", f"/nurseries/{nid}/addresses", owner.token,
+           {"address_line1": "Godown 2", "city": "Hyderabad", "country": "India"}, status=(200, 201))
+    expect("owner deletes the primary address", "DELETE", f"/nurseries/addresses/{first['id']}", owner.token, status=(200, 204))
+    out = expect("owner lists nursery addresses again", "GET", f"/nurseries/{nid}/addresses", owner.token)
+    check("…the remaining address became primary", [a["is_primary"] for a in out["addresses"]] == [True], out)
 
     # Who may register a nursery
     d_boss = approved_owner(boss, "Driver Boss")

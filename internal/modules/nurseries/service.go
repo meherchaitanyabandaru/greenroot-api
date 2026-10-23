@@ -19,6 +19,7 @@ var (
 	ErrForbidden               = apperrs.ErrForbidden
 	ErrInvalidInput            = apperrs.ErrInvalidInput
 	ErrInvalidAddress          = errors.New("invalid address")
+	ErrLastAddress             = errors.New("a nursery must keep at least one address")
 	ErrAlreadyOwner            = errors.New("user already owns a nursery")
 	ErrNotNurseryOwner         = errors.New("only the nursery owner can perform this action")
 	ErrManagerCannotOwnNursery = errors.New("managers cannot register a nursery")

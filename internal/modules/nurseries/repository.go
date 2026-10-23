@@ -471,7 +471,10 @@ func (r *PostgresRepository) CreateAddress(ctx context.Context, nurseryID int64,
 				THEN ST_SetSRID(ST_MakePoint($10::double precision, $9::double precision), 4326)::geography
 				ELSE NULL
 			END,
-			$11, NULLIF($12, ''), NULLIF($13, ''), $14, $15, $16, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+			$11, NULLIF($12, ''), NULLIF($13, ''), $14, $15,
+			-- a nursery's first address is its primary (pickup) address
+			$16 OR NOT EXISTS (SELECT 1 FROM public.nursery_addresses WHERE nursery_id = $1),
+			CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING nursery_address_id, nursery_id, address_type::text, address_line1, address_line2,
 			city, state, country, postal_code, latitude, longitude, COALESCE(is_primary, false),
 			gps_accuracy_meters, landmark, location_source, location_confirmed_by_user_id, location_confirmed_at,
@@ -590,18 +593,37 @@ func (r *PostgresRepository) AddressNurseryID(ctx context.Context, addressID int
 }
 
 func (r *PostgresRepository) DeleteAddress(ctx context.Context, addressID int64) error {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM public.nursery_addresses WHERE nursery_address_id = $1`, addressID)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
+	defer tx.Rollback()
+
+	var nurseryID int64
+	var wasPrimary bool
+	err = tx.QueryRowContext(ctx, `DELETE FROM public.nursery_addresses WHERE nursery_address_id = $1 RETURNING nursery_id, COALESCE(is_primary, false)`, addressID).Scan(&nurseryID, &wasPrimary)
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	var remaining int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM public.nursery_addresses WHERE nursery_id = $1`, nurseryID).Scan(&remaining); err != nil {
+		return err
+	}
+	if remaining == 0 {
+		return ErrLastAddress // rolls back: orders need somewhere to pick up from
+	}
+	// Orders pick up from the primary address: promote the newest remaining one.
+	if wasPrimary {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE public.nursery_addresses SET is_primary = true, updated_at = CURRENT_TIMESTAMP
+			WHERE nursery_address_id = (SELECT nursery_address_id FROM public.nursery_addresses WHERE nursery_id = $1 ORDER BY nursery_address_id DESC LIMIT 1)`, nurseryID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // ListManagers returns all active managers for a nursery using the V1 text role column.

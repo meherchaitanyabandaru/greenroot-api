@@ -472,3 +472,4 @@ Retention: `LOG_RETENTION_DAYS` (default 90 days).
 | An ad saved before the nursery had coordinates could never publish, though the error says to add the nursery's location (2026-10-21) | Publish falls back to the nursery's coordinates, like create |
 | `days_remaining` divided hours by 24 and showed one day less for most of the day (2026-10-21) | Counted in calendar days to the end date |
 
+| A first address was never the default, and deleting the default/primary left none: quotation PDFs lost the customer address and orders lost the nursery pickup address (joins on `is_default` / `is_primary`). The app also sent `is_default` for nursery addresses, so every edit cleared `is_primary` (2026-10-23) | First user/nursery address becomes default/primary; deleting it promotes the newest remaining one; the last nursery address cannot be deleted (409 `last_address`). Journeys pin all three |
