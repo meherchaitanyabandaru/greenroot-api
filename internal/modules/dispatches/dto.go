@@ -24,6 +24,24 @@ type CreateDispatchRequest struct {
 	DestinationAddress *string               `json:"destination_address"`
 	Notes              *string               `json:"notes"`
 	Items              []DispatchItemRequest `json:"items"`
+	// Outside lorry whose driver has no app: the vehicle number is required.
+	IsOutsideTransport   bool    `json:"is_outside_transport"`
+	OutsideVehicleNumber *string `json:"outside_vehicle_number"`
+	OutsideDriverName    *string `json:"outside_driver_name"`
+	OutsideDriverMobile  *string `json:"outside_driver_mobile"`
+}
+
+// DeliverRequest marks a trip delivered: with the customer's delivery code,
+// or (nursery staff only) without it, giving the reason.
+type DeliverRequest struct {
+	Code           string  `json:"code"`
+	OverrideReason *string `json:"override_reason"`
+}
+
+// ReceiptRequest is the customer's side: confirm they received the plants
+// and/or report a problem.
+type ReceiptRequest struct {
+	Issue *string `json:"issue"`
 }
 
 type UpdateStatusRequest struct {

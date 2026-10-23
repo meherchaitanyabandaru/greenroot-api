@@ -2108,6 +2108,102 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+  /api/v1/dispatches/{id}/deliver:
+    post:
+      tags:
+        - Dispatches
+      summary: Mark delivered with the customer's code
+      description: "Driver or nursery staff, while DISPATCHED/IN_TRANSIT. With the customer's 4-digit code (5 wrong tries lock it), or staff only without a code giving override_reason (min 10 chars); the customer is notified and can dispute for 48 h."
+      operationId: postDispatchesByidDeliver
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+                  example: "4821"
+                override_reason:
+                  type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DispatchesDispatchResponse'
+          description: OK
+        "400":
+          $ref: '#/components/responses/Error'
+        "401":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+        "404":
+          $ref: '#/components/responses/Error'
+        "409":
+          $ref: '#/components/responses/Error'
+        "422":
+          $ref: '#/components/responses/Error'
+        "500":
+          $ref: '#/components/responses/Error'
+  /api/v1/dispatches/{id}/receipt:
+    post:
+      tags:
+        - Dispatches
+      summary: Customer confirms receipt or reports a problem
+      description: "The order's customer only. On the way: delivers the trip (CUSTOMER_APP). Within 48 h of delivery: confirms a nursery-marked delivery and/or records the first problem reported."
+      operationId: postDispatchesByidReceipt
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                issue:
+                  type: string
+                  maxLength: 500
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DispatchesDispatchResponse'
+          description: OK
+        "400":
+          $ref: '#/components/responses/Error'
+        "401":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+        "404":
+          $ref: '#/components/responses/Error'
+        "409":
+          $ref: '#/components/responses/Error'
+        "422":
+          $ref: '#/components/responses/Error'
+        "500":
+          $ref: '#/components/responses/Error'
   /api/v1/dispatches/{id}/trip-events:
     post:
       tags:

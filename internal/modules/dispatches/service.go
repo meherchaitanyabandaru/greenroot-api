@@ -2,6 +2,9 @@ package dispatches
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +15,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/phone"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisgeo"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
@@ -27,6 +31,15 @@ var (
 	ErrActiveDispatch   = errors.New("active dispatch already exists for order")
 	ErrAlreadyAccepted  = errors.New("dispatch already accepted")
 	ErrActiveDriverTrip = errors.New("driver already has an active trip")
+
+	ErrConfirmationRequired = errors.New("delivery needs the customer's confirmation")
+	ErrWrongDeliveryCode    = errors.New("wrong delivery code")
+	ErrDeliveryCodeLocked   = errors.New("delivery code locked after too many wrong tries")
+	ErrDeliveryCodeRequired = errors.New("delivery code required")
+	ErrOverrideReason       = errors.New("override reason required")
+	ErrReceiptWindowClosed  = errors.New("receipt window closed")
+	ErrAlreadyConfirmed     = errors.New("delivery already confirmed")
+	ErrOutsideTransport     = errors.New("trip uses an outside lorry")
 )
 
 type Service struct {
@@ -34,7 +47,11 @@ type Service struct {
 	auditSvc   *auditlog.Service
 	redis      redis.Cmdable
 	liveGeo    *redisgeo.Service
+	codeKey    []byte // derives delivery codes; see deliveryCode
 }
+
+// SetDeliveryCodeKey sets the server secret delivery codes are derived from.
+func (s *Service) SetDeliveryCodeKey(key []byte) { s.codeKey = key }
 
 func NewService(repository Repository, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
 	var rdb redis.Cmdable
@@ -57,7 +74,9 @@ func (s *Service) List(ctx context.Context, actor ActorContext, input ListDispat
 	if err != nil {
 		return nil, Pagination{}, err
 	}
-	enrichDispatches(actor, dispatches)
+	for i := range dispatches {
+		dispatches[i] = s.present(actor, dispatches[i])
+	}
 	return dispatches, Pagination{Page: input.Page, PerPage: input.PerPage, Total: total, TotalPages: totalPages(total, input.PerPage)}, nil
 }
 
@@ -69,7 +88,7 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, dispatchID int64)
 	if err := s.canAccess(ctx, actor, *dispatch); err != nil {
 		return Dispatch{}, err
 	}
-	return withLifecycle(actor, *dispatch), nil
+	return s.present(actor, *dispatch), nil
 }
 
 func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateDispatchRequest) (Dispatch, error) {
@@ -114,7 +133,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateDisp
 		return Dispatch{}, err
 	}
 	s.audit(ctx, actor, "dispatches", dispatch.ID, actionInsert, req)
-	return withLifecycle(actor, *dispatch), nil
+	return s.present(actor, *dispatch), nil
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatchID int64, req UpdateStatusRequest) (Dispatch, error) {
@@ -142,6 +161,10 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 	// Buyers only watch; drivers move the trip forward but cannot cancel it (no reject in V1).
 	if !staff && (!driver || status == "CANCELLED") {
 		return Dispatch{}, ErrForbidden
+	}
+	// Delivery is confirmed by the customer: POST /dispatches/{id}/deliver or /receipt.
+	if status == "DELIVERED" {
+		return Dispatch{}, ErrConfirmationRequired
 	}
 	if !CanTransition(current.Status, status) {
 		return Dispatch{}, ErrInvalidStatus
@@ -175,7 +198,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 		s.removeLiveDriverLocation(ctx, *dispatch)
 	}
 	s.audit(ctx, actor, "dispatches", dispatch.ID, actionUpdate, req)
-	return withLifecycle(actor, *dispatch), nil
+	return s.present(actor, *dispatch), nil
 }
 
 func (s *Service) AcknowledgeDeliveryUpdate(ctx context.Context, actor ActorContext, dispatchID int64) (Dispatch, error) {
@@ -194,7 +217,7 @@ func (s *Service) AcknowledgeDeliveryUpdate(ctx context.Context, actor ActorCont
 		return Dispatch{}, err
 	}
 	s.audit(ctx, actor, "dispatches", dispatchID, actionUpdate, map[string]any{"delivery_update_acknowledged": true})
-	return withLifecycle(actor, *updated), nil
+	return s.present(actor, *updated), nil
 }
 
 func (s *Service) CreateItem(ctx context.Context, actor ActorContext, dispatchID int64, req DispatchItemRequest) (DispatchItem, error) {
@@ -279,7 +302,7 @@ func (s *Service) GetByCode(ctx context.Context, actor ActorContext, code string
 			return Dispatch{}, err
 		}
 	}
-	return withLifecycle(actor, *dispatch), nil
+	return s.present(actor, *dispatch), nil
 }
 
 func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispatchID int64) (Dispatch, error) {
@@ -299,7 +322,10 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 	}
 	// If already accepted by this same driver, return the dispatch (idempotent).
 	if dispatch.Status == "ACCEPTED" && dispatch.DriverUserID != nil && *dispatch.DriverUserID == actor.UserID {
-		return withLifecycle(actor, *dispatch), nil
+		return s.present(actor, *dispatch), nil
+	}
+	if dispatch.IsOutsideTransport {
+		return Dispatch{}, ErrOutsideTransport
 	}
 	if dispatch.Status != "PENDING" {
 		return Dispatch{}, ErrForbidden
@@ -324,7 +350,7 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 			"Dispatch Accepted",
 			fmt.Sprintf("Dispatch %s was accepted by the driver.", updated.DispatchCode))
 	}
-	return withLifecycle(actor, *updated), nil
+	return s.present(actor, *updated), nil
 }
 
 func (s *Service) enqueueNotification(ctx context.Context, userID int64, notifType, title, message string) {
@@ -344,7 +370,11 @@ func (s *Service) GetPublicTracking(ctx context.Context, uuid string) (Dispatch,
 	if err != nil {
 		return Dispatch{}, err
 	}
-	return withLifecycle(ActorContext{}, *dispatch), nil
+	// Anyone with the link sees this: no customer, notes or delivery details.
+	d := withLifecycle(ActorContext{}, *dispatch)
+	d.CustomerNameSnapshot, d.CustomerMobileSnapshot, d.Notes = nil, nil, nil
+	d.OutsideDriverMobile, d.DeliveryOverrideReason, d.DeliveryIssue = nil, nil, nil
+	return d, nil
 }
 
 func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *ListDispatchesRequest) error {
@@ -502,8 +532,25 @@ func normalizeCreate(req CreateDispatchRequest) (CreateDispatchInput, error) {
 			return CreateDispatchInput{}, ErrInvalidInput
 		}
 	}
+	input := CreateDispatchInput{OrderID: req.OrderID, DispatchNumber: req.DispatchNumber, VehicleID: req.VehicleID, DriverID: req.DriverID, DispatchDate: dispatchDate, DestinationAddress: req.DestinationAddress, Notes: req.Notes, Items: req.Items}
+	if req.IsOutsideTransport {
+		vehicle := strings.ToUpper(strings.TrimSpace(stringOrEmpty(req.OutsideVehicleNumber)))
+		name := strings.TrimSpace(stringOrEmpty(req.OutsideDriverName))
+		if vehicle == "" || len(vehicle) > 20 || len([]rune(name)) > 100 {
+			return CreateDispatchInput{}, ErrInvalidInput
+		}
+		input.IsOutsideTransport = true
+		input.OutsideVehicleNumber, input.OutsideDriverName = &vehicle, &name
+		if raw := strings.TrimSpace(stringOrEmpty(req.OutsideDriverMobile)); raw != "" {
+			mobile, ok := phone.Normalize(raw)
+			if !ok {
+				return CreateDispatchInput{}, ErrInvalidInput
+			}
+			input.OutsideDriverMobile = &mobile
+		}
+	}
 	// Empty dispatch number: the repository uses the public code (DSP-YYYYMMDD-NNNN).
-	return CreateDispatchInput{OrderID: req.OrderID, DispatchNumber: req.DispatchNumber, VehicleID: req.VehicleID, DriverID: req.DriverID, DispatchDate: dispatchDate, DestinationAddress: req.DestinationAddress, Notes: req.Notes, Items: req.Items}, nil
+	return input, nil
 }
 
 func normalizeList(input ListDispatchesRequest) ListDispatchesRequest {
@@ -568,19 +615,224 @@ func totalPages(total int64, perPage int) int {
 	return int(math.Ceil(float64(total) / float64(perPage)))
 }
 
-func enrichDispatches(actor ActorContext, dispatches []Dispatch) {
-	for i := range dispatches {
-		dispatches[i] = withLifecycle(actor, dispatches[i])
-	}
-}
-
 func withLifecycle(actor ActorContext, dispatch Dispatch) Dispatch {
 	lc := lifecycle.Dispatch(dispatch.Status)
 	dispatch.Lifecycle = &lc
-	buyerSide := dispatch.CustomerUserID != nil && *dispatch.CustomerUserID == actor.UserID
+	buyerSide := isCustomer(actor, dispatch)
 	caps := BuildCapabilities(actor, dispatch.Status, buyerSide)
+	if dispatch.IsOutsideTransport { // no app driver: nothing to accept, share or start
+		caps.CanAccept, caps.CanShareCode, caps.CanStartTrip = false, false, false
+	}
+	caps.CanConfirmReceipt, caps.CanReportIssue = receiptActions(dispatch, buyerSide, time.Now())
 	dispatch.Capabilities = &caps
 	return dispatch
+}
+
+// present is what an actor receives: lifecycle, capabilities and, for the
+// customer only, the delivery code while the trip is on its way.
+func (s *Service) present(actor ActorContext, dispatch Dispatch) Dispatch {
+	dispatch = withLifecycle(actor, dispatch)
+	if isCustomer(actor, dispatch) && onTheWay(dispatch.Status) && dispatch.DeliveryCodeAttempts < maxDeliveryCodeAttempts {
+		if code, ok := s.deliveryCode(dispatch); ok {
+			dispatch.DeliveryCode = &code
+		}
+	}
+	return dispatch
+}
+
+func isCustomer(actor ActorContext, d Dispatch) bool {
+	return actor.UserID != 0 && d.CustomerUserID != nil && *d.CustomerUserID == actor.UserID
+}
+
+func onTheWay(status string) bool { return status == "DISPATCHED" || status == "IN_TRANSIT" }
+
+// ── Delivery confirmation ─────────────────────────────────────────────────────
+
+const (
+	maxDeliveryCodeAttempts = 5
+	receiptWindow           = 48 * time.Hour
+	minOverrideReason       = 10
+	maxIssueLength          = 500
+)
+
+// deliveryCode is the trip's 4-digit code, derived (HMAC) from a server
+// secret and the trip id, so it is never stored and the same on every read.
+// With 5 tries per trip a guess succeeds 1 time in 2,000.
+func (s *Service) deliveryCode(d Dispatch) (string, bool) {
+	if len(s.codeKey) == 0 || d.TripUUID == nil {
+		return "", false
+	}
+	mac := hmac.New(sha256.New, s.codeKey)
+	mac.Write([]byte("greenroot/delivery-code/v1/" + *d.TripUUID))
+	return fmt.Sprintf("%04d", binary.BigEndian.Uint32(mac.Sum(nil)[:4])%10000), true
+}
+
+// receiptActions: while on the way the customer can confirm receipt; for 48
+// hours after delivery they can confirm an unconfirmed one or report a problem.
+func receiptActions(d Dispatch, buyerSide bool, now time.Time) (confirm, report bool) {
+	if !buyerSide {
+		return false, false
+	}
+	if onTheWay(d.Status) {
+		return true, true
+	}
+	if d.Status != "DELIVERED" || d.DeliveryDate == nil || now.Sub(*d.DeliveryDate) > receiptWindow {
+		return false, false
+	}
+	return d.DeliveryConfirmation != nil && *d.DeliveryConfirmation == ConfirmationUnconfirmed, d.DeliveryIssue == nil
+}
+
+// Deliver marks the trip delivered by the driver or nursery: with the
+// customer's code, or (nursery staff only) without it, giving a reason the
+// customer is told about and can dispute.
+func (s *Service) Deliver(ctx context.Context, actor ActorContext, dispatchID int64, req DeliverRequest) (Dispatch, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "dispatches", dispatchID)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	defer lock.Release(ctx)
+
+	current, err := s.repository.FindByID(ctx, dispatchID)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	staff, driver, err := s.operatorRole(ctx, actor, *current)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if (!staff && !driver) || isCustomer(actor, *current) {
+		return Dispatch{}, ErrForbidden
+	}
+	if !onTheWay(current.Status) {
+		return Dispatch{}, ErrInvalidStatus
+	}
+
+	confirmation, reason := ConfirmationCode, (*string)(nil)
+	if code := strings.TrimSpace(req.Code); code != "" {
+		if current.DeliveryCodeAttempts >= maxDeliveryCodeAttempts {
+			return Dispatch{}, ErrDeliveryCodeLocked
+		}
+		want, ok := s.deliveryCode(*current)
+		if !ok {
+			return Dispatch{}, ErrDeliveryCodeLocked
+		}
+		if !hmac.Equal([]byte(code), []byte(want)) {
+			attempts, err := s.repository.AddWrongDeliveryCode(ctx, dispatchID)
+			if err != nil {
+				return Dispatch{}, err
+			}
+			s.audit(ctx, actor, "dispatches", dispatchID, actionUpdate, map[string]any{"wrong_delivery_code": attempts})
+			if attempts >= maxDeliveryCodeAttempts {
+				return Dispatch{}, ErrDeliveryCodeLocked
+			}
+			return Dispatch{}, ErrWrongDeliveryCode
+		}
+	} else {
+		r := strings.TrimSpace(stringOrEmpty(req.OverrideReason))
+		if !staff {
+			return Dispatch{}, ErrDeliveryCodeRequired // drivers always need the code
+		}
+		if len([]rune(r)) < minOverrideReason || len([]rune(r)) > maxIssueLength {
+			return Dispatch{}, ErrOverrideReason
+		}
+		confirmation, reason = ConfirmationUnconfirmed, &r
+	}
+
+	dispatch, err := s.markDelivered(ctx, actor, *current, confirmation, reason, nil)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if dispatch.CustomerUserID != nil {
+		if confirmation == ConfirmationUnconfirmed {
+			s.enqueueNotification(ctx, *dispatch.CustomerUserID, notifyqueue.EventOrderDelivered,
+				"Delivery marked without your confirmation",
+				fmt.Sprintf("%s was marked delivered by the nursery: %s. If you did not receive your plants, report a problem in the app within 48 hours.", dispatch.DispatchCode, *reason))
+		} else {
+			s.enqueueNotification(ctx, *dispatch.CustomerUserID, notifyqueue.EventOrderDelivered,
+				"Order delivered", fmt.Sprintf("%s was delivered with your code.", dispatch.DispatchCode))
+		}
+	}
+	s.audit(ctx, actor, "dispatches", dispatch.ID, actionUpdate, map[string]any{"delivered": confirmation, "override_reason": reason})
+	return s.present(actor, dispatch), nil
+}
+
+// ConfirmReceipt is the customer's side: "I received the plants" while the
+// trip is on its way (this delivers it), or within 48 hours of delivery to
+// confirm a nursery-marked delivery and/or report a problem.
+func (s *Service) ConfirmReceipt(ctx context.Context, actor ActorContext, dispatchID int64, req ReceiptRequest) (Dispatch, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "dispatches", dispatchID)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	defer lock.Release(ctx)
+
+	current, err := s.repository.FindByID(ctx, dispatchID)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if !isCustomer(actor, *current) {
+		return Dispatch{}, ErrForbidden
+	}
+	issue := strings.TrimSpace(stringOrEmpty(req.Issue))
+	if len([]rune(issue)) > maxIssueLength {
+		return Dispatch{}, ErrInvalidInput
+	}
+	var issuePtr *string
+	if issue != "" {
+		issuePtr = &issue
+	}
+
+	var dispatch Dispatch
+	switch {
+	case onTheWay(current.Status):
+		dispatch, err = s.markDelivered(ctx, actor, *current, ConfirmationApp, nil, issuePtr)
+	case current.Status == "DELIVERED":
+		if current.DeliveryDate == nil || time.Since(*current.DeliveryDate) > receiptWindow {
+			return Dispatch{}, ErrReceiptWindowClosed
+		}
+		canConfirm, canReport := receiptActions(*current, true, time.Now())
+		if !canConfirm && (issuePtr == nil || !canReport) {
+			return Dispatch{}, ErrAlreadyConfirmed
+		}
+		if !canReport {
+			issuePtr = nil
+		}
+		if err = s.repository.RecordReceipt(ctx, dispatchID, actor.UserID, canConfirm, issuePtr); err == nil {
+			var refreshed *Dispatch
+			if refreshed, err = s.repository.FindByID(ctx, dispatchID); err == nil {
+				dispatch = *refreshed
+			}
+		}
+	default:
+		return Dispatch{}, ErrInvalidStatus
+	}
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if issuePtr != nil && dispatch.OwnerUserIDSnapshot != nil {
+		s.enqueueNotification(ctx, *dispatch.OwnerUserIDSnapshot, notifyqueue.EventDeliveryIssue,
+			"Customer reported a delivery problem",
+			fmt.Sprintf("%s: %s", dispatch.DispatchCode, issue))
+	}
+	s.audit(ctx, actor, "dispatches", dispatchID, actionUpdate, map[string]any{"receipt_confirmed": true, "issue": issuePtr})
+	return s.present(actor, dispatch), nil
+}
+
+func (s *Service) markDelivered(ctx context.Context, actor ActorContext, current Dispatch, confirmation string, reason, issue *string) (Dispatch, error) {
+	updated, err := s.repository.MarkDelivered(ctx, current.ID, MarkDeliveredInput{
+		Confirmation: confirmation, ByUserID: actor.UserID, OverrideReason: reason, Issue: issue,
+	})
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if err := s.repository.CompleteOrderIfReady(ctx, updated.OrderID); err != nil {
+		return Dispatch{}, err
+	}
+	if refreshed, err := s.repository.FindByID(ctx, current.ID); err == nil {
+		updated = refreshed
+	}
+	s.removeLiveDriverLocation(ctx, *updated)
+	return *updated, nil
 }
 
 func (s *Service) audit(ctx context.Context, actor ActorContext, entityType string, entityID int64, action auditlog.Action, newValue any) {

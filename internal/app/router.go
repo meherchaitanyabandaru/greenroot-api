@@ -98,7 +98,7 @@ func NewRouter(deps Dependencies) chi.Router {
 		admin.NewModule(deps.DB, deps.JWT, redisClients...).RegisterRoutes(r)
 		attachments.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		audit.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		dispatches.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...).RegisterRoutes(r)
+		dispatches.NewModule(deps.DB, deps.JWT, deps.Audit, []byte(deps.Config.JWT.Secret), redisClients...).RegisterRoutes(r)
 		drivers.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, redisClients...).RegisterRoutes(r)
 		topitems.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		market.NewModule(deps.DB, deps.JWT, deps.Redis).RegisterRoutes(r)

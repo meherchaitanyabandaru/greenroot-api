@@ -126,6 +126,51 @@ func (h *Handler) AcknowledgeDeliveryUpdate(w http.ResponseWriter, r *http.Reque
 	response.OK(w, DispatchResponse{Dispatch: dispatch})
 }
 
+// Deliver: the driver or nursery marks the trip delivered with the customer's
+// code (or, nursery only, an override reason).
+func (h *Handler) Deliver(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req DeliverRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	dispatch, err := h.service.Deliver(r.Context(), actor, id, req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, DispatchResponse{Dispatch: dispatch})
+}
+
+// Receipt: the customer confirms they received the plants and/or reports a problem.
+func (h *Handler) Receipt(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req ReceiptRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	dispatch, err := h.service.ConfirmReceipt(r.Context(), actor, id, req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, DispatchResponse{Dispatch: dispatch})
+}
+
 func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {
@@ -284,6 +329,22 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusConflict, "dispatch_already_accepted", "this trip has already been accepted by a driver")
 	case errors.Is(err, ErrActiveDriverTrip):
 		response.Error(w, http.StatusConflict, "active_driver_trip_exists", "driver already has an active trip")
+	case errors.Is(err, ErrConfirmationRequired):
+		response.Error(w, http.StatusUnprocessableEntity, "delivery_confirmation_required", "Delivery needs the customer's code or their confirmation in the app. Update the app if you don't see the code entry.")
+	case errors.Is(err, ErrWrongDeliveryCode):
+		response.Error(w, http.StatusUnprocessableEntity, "wrong_delivery_code", "That code is not right. Check it with the customer; after 5 wrong tries it stops working.")
+	case errors.Is(err, ErrDeliveryCodeLocked):
+		response.Error(w, http.StatusConflict, "delivery_code_locked", "Too many wrong codes. Ask the customer to tap \"I received the plants\" in their app, or the nursery can mark it delivered with a reason.")
+	case errors.Is(err, ErrDeliveryCodeRequired):
+		response.Error(w, http.StatusUnprocessableEntity, "delivery_code_required", "Ask the customer for the 4-digit delivery code shown in their app.")
+	case errors.Is(err, ErrOverrideReason):
+		response.Error(w, http.StatusBadRequest, "override_reason_required", "Say why the customer cannot give the code (at least 10 characters).")
+	case errors.Is(err, ErrReceiptWindowClosed):
+		response.Error(w, http.StatusConflict, "receipt_window_closed", "Problems can be reported up to 48 hours after delivery. Please contact the nursery.")
+	case errors.Is(err, ErrAlreadyConfirmed):
+		response.Error(w, http.StatusConflict, "already_confirmed", "This delivery is already confirmed.")
+	case errors.Is(err, ErrOutsideTransport):
+		response.Error(w, http.StatusConflict, "outside_transport", "This trip goes on the nursery's outside lorry; there is no trip to join.")
 	case errors.Is(err, redisutil.ErrLockBusy):
 		response.Error(w, http.StatusConflict, "resource_locked", "another update is already in progress")
 	default:

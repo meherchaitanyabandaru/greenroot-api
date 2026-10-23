@@ -13,7 +13,8 @@ type Module struct {
 	handler *Handler
 }
 
-func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, redisClients ...*redis.Client) Module {
+// codeKey is the server secret delivery codes are derived from.
+func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, codeKey []byte, redisClients ...*redis.Client) Module {
 	repository := NewRepository(db)
 	var rdb *redis.Client
 	if len(redisClients) > 0 {
@@ -25,6 +26,7 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, re
 	} else {
 		service = NewService(repository, audit)
 	}
+	service.SetDeliveryCodeKey(codeKey)
 	return Module{handler: NewHandler(service, jwt)}
 }
 
@@ -39,7 +41,9 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Get("/{id}", m.handler.Get)
 		r.Put("/{id}/status", m.handler.UpdateStatus)
 		r.Post("/{id}/ack-delivery-update", m.handler.AcknowledgeDeliveryUpdate)
-		r.Post("/{id}/accept", m.handler.Accept) // driver accepts and links to dispatch
+		r.Post("/{id}/deliver", m.handler.Deliver) // driver/nursery: customer's code or override
+		r.Post("/{id}/receipt", m.handler.Receipt) // customer: received / report a problem
+		r.Post("/{id}/accept", m.handler.Accept)   // driver accepts and links to dispatch
 		r.Post("/{id}/items", m.handler.CreateItem)
 		r.Post("/{id}/trip-events", m.handler.CreateTripEvent)
 	})

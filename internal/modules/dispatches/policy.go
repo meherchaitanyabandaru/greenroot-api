@@ -81,7 +81,19 @@ type DispatchCapabilities struct {
 	CanAddItems       bool `json:"can_add_items"`
 	CanViewTracking   bool `json:"can_view_tracking"`
 	CanShareCode      bool `json:"can_share_code"`
+	// Without the customer's code: staff only, with a reason.
+	CanOverrideDelivery bool `json:"can_override_delivery"`
+	// The customer's own actions (set in withLifecycle, need the dispatch).
+	CanConfirmReceipt bool `json:"can_confirm_receipt"`
+	CanReportIssue    bool `json:"can_report_issue"`
 }
+
+// How a delivery was confirmed (dispatches.delivery_confirmation).
+const (
+	ConfirmationCode        = "CUSTOMER_CODE"
+	ConfirmationApp         = "CUSTOMER_APP"
+	ConfirmationUnconfirmed = "UNCONFIRMED"
+)
 
 // BuildCapabilities computes the capability set for the given actor and dispatch status.
 // No database access — status string and actor roles are the only inputs.
@@ -97,10 +109,12 @@ func BuildCapabilities(actor ActorContext, status string, buyerSide bool) Dispat
 		CanAccept:         isDriver && status == "PENDING",
 		CanMarkDispatched: (isOperator || isAdmin) && (status == "PENDING" || status == "ACCEPTED"),
 		CanStartTrip:      isDriver && status == "DISPATCHED",
-		CanMarkDelivered:  (isDriver || isOperator || isAdmin) && status == "IN_TRANSIT",
-		CanCancel:         (isOperator || isAdmin) && !terminal,
-		CanAddItems:       (isOperator || isAdmin) && !terminal,
-		CanViewTracking:   IsActive(status),
-		CanShareCode:      (isOperator || isAdmin) && !terminal,
+		// The lorry may arrive before the driver taps Start: the customer's code is what counts.
+		CanMarkDelivered:    (isDriver || isOperator || isAdmin) && !buyerSide && onTheWay(status),
+		CanOverrideDelivery: (isOperator || isAdmin) && onTheWay(status),
+		CanCancel:           (isOperator || isAdmin) && !terminal,
+		CanAddItems:         (isOperator || isAdmin) && !terminal,
+		CanViewTracking:     IsActive(status),
+		CanShareCode:        (isOperator || isAdmin) && !terminal,
 	}
 }

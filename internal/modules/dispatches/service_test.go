@@ -255,6 +255,35 @@ func (m *mockRepo) GetOwnedNurseryID(_ context.Context, userID int64) (*int64, e
 	return &id, nil
 }
 
+func (m *mockRepo) MarkDelivered(_ context.Context, id int64, in MarkDeliveredInput) (*Dispatch, error) {
+	d, ok := m.dispatches[id]
+	if !ok || !onTheWay(d.Status) {
+		return nil, ErrConflict
+	}
+	now := time.Now()
+	d.Status, d.DeliveryDate = "DELIVERED", &now
+	d.DeliveryConfirmation, d.DeliveryConfirmedByUserID = &in.Confirmation, &in.ByUserID
+	d.DeliveryOverrideReason, d.DeliveryIssue = in.OverrideReason, in.Issue
+	return d, nil
+}
+
+func (m *mockRepo) AddWrongDeliveryCode(_ context.Context, id int64) (int, error) {
+	m.dispatches[id].DeliveryCodeAttempts++
+	return m.dispatches[id].DeliveryCodeAttempts, nil
+}
+
+func (m *mockRepo) RecordReceipt(_ context.Context, id, userID int64, confirm bool, issue *string) error {
+	d := m.dispatches[id]
+	if confirm {
+		c := ConfirmationApp
+		d.DeliveryConfirmation, d.DeliveryConfirmedByUserID = &c, &userID
+	}
+	if d.DeliveryIssue == nil {
+		d.DeliveryIssue = issue
+	}
+	return nil
+}
+
 func (m *mockRepo) GetUserNurseryIDs(_ context.Context, userID int64) ([]int64, error) {
 	return m.userNurseries[userID], nil
 }
@@ -397,18 +426,14 @@ func TestUpdateStatus_PendingToDispatched(t *testing.T) {
 	}
 }
 
-func TestUpdateStatus_InTransitToDelivered(t *testing.T) {
+func TestUpdateStatus_DeliveredNeedsConfirmation(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, 100)
 	nid := int64(1)
-	repo.seedOrderAccess(20, &nid)
 	repo.seedDispatch(Dispatch{ID: 10, OrderID: 20, Status: "IN_TRANSIT", SellerNurseryID: &nid})
 	_, err := svc(repo).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "DELIVERED"})
-	if err != nil {
-		t.Errorf("IN_TRANSIT→DELIVERED: %v", err)
-	}
-	if got := repo.orderAccess[20].OrderStatus; got != "COMPLETED" {
-		t.Errorf("linked order status: want COMPLETED, got %s", got)
+	if !errors.Is(err, ErrConfirmationRequired) {
+		t.Errorf("PUT status DELIVERED: want ErrConfirmationRequired, got %v", err)
 	}
 }
 
@@ -431,7 +456,8 @@ func TestUpdateStatus_DeliveredRemovesLiveDriverLocation(t *testing.T) {
 		t.Fatalf("seed live driver location: %v", err)
 	}
 
-	_, err := NewService(repo, nil, client).UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "DELIVERED"})
+	reason := "Customer phone switched off"
+	_, err := NewService(repo, nil, client).Deliver(context.Background(), ownerActor(100), 10, DeliverRequest{OverrideReason: &reason})
 	if err != nil {
 		t.Fatalf("deliver dispatch: %v", err)
 	}
@@ -803,5 +829,168 @@ func TestUpdateStatus_StaleIfMatchConflicts(t *testing.T) {
 	d, err := svc(repo).UpdateStatus(rowversion.With(context.Background(), 2), ownerActor(100), 10, UpdateStatusRequest{Status: "DISPATCHED"})
 	if err != nil || d.Status != "DISPATCHED" || d.Version != 3 {
 		t.Fatalf("matching If-Match: got %+v, %v", d, err)
+	}
+}
+
+// ── Delivery confirmation ─────────────────────────────────────────────────────
+
+func deliveryWorld(status string) (*mockRepo, *Service, Dispatch) {
+	repo := newMock()
+	repo.seedNursery(1, 100)
+	n, buyer, driver, trip := int64(1), int64(300), int64(400), "6f1c2a7e-0000-4000-8000-000000000001"
+	repo.seedOrderAccess(20, &n)
+	d := Dispatch{ID: 10, OrderID: 20, Status: status, SellerNurseryID: &n, CustomerUserID: &buyer, DriverUserID: &driver, TripUUID: &trip}
+	repo.seedDispatch(d)
+	s := svc(repo)
+	s.SetDeliveryCodeKey([]byte("test-secret"))
+	return repo, s, d
+}
+
+func TestDeliveryCode_StableSecretAndPerTrip(t *testing.T) {
+	_, s, d := deliveryWorld("IN_TRANSIT")
+	a, ok := s.deliveryCode(d)
+	b, _ := s.deliveryCode(d)
+	if !ok || len(a) != 4 || a != b {
+		t.Fatalf("code %q / %q, ok=%v: want the same 4 digits every time", a, b, ok)
+	}
+	other := "6f1c2a7e-0000-4000-8000-000000000002"
+	d2 := d
+	d2.TripUUID = &other
+	c, _ := s.deliveryCode(d2)
+	s.SetDeliveryCodeKey([]byte("another-secret"))
+	e, _ := s.deliveryCode(d)
+	if c == a && e == a {
+		t.Fatalf("code does not depend on the trip or the secret")
+	}
+	s.SetDeliveryCodeKey(nil)
+	if _, ok := s.deliveryCode(d); ok {
+		t.Fatal("no secret must mean no code")
+	}
+}
+
+func TestPresent_CodeOnlyForTheCustomerOnTheWay(t *testing.T) {
+	_, s, d := deliveryWorld("IN_TRANSIT")
+	if s.present(buyerActor(300), d).DeliveryCode == nil {
+		t.Fatal("customer must see the code while the trip is on its way")
+	}
+	for _, a := range []ActorContext{ownerActor(100), driverActor(400), buyerActor(999), adminActor(1)} {
+		if s.present(a, d).DeliveryCode != nil {
+			t.Fatalf("%v must never see the code", a.Roles)
+		}
+	}
+	d.Status = "PENDING"
+	if s.present(buyerActor(300), d).DeliveryCode != nil {
+		t.Fatal("no code before the trip is dispatched")
+	}
+}
+
+func TestDeliver_WithCustomerCode(t *testing.T) {
+	repo, s, d := deliveryWorld("DISPATCHED") // the lorry may arrive before Start
+	code, _ := s.deliveryCode(d)
+	got, err := s.Deliver(context.Background(), driverActor(400), 10, DeliverRequest{Code: code})
+	if err != nil || got.Status != "DELIVERED" || *got.DeliveryConfirmation != ConfirmationCode {
+		t.Fatalf("deliver with code: %+v %v", got.DeliveryConfirmation, err)
+	}
+	if repo.orderAccess[20].OrderStatus != "COMPLETED" {
+		t.Errorf("order not completed")
+	}
+}
+
+func TestDeliver_WrongCodesLockAfterFive(t *testing.T) {
+	repo, s, d := deliveryWorld("IN_TRANSIT")
+	code, _ := s.deliveryCode(d)
+	wrong := "0000"
+	if code == wrong {
+		wrong = "1111"
+	}
+	for i := 1; i <= 4; i++ {
+		if _, err := s.Deliver(context.Background(), driverActor(400), 10, DeliverRequest{Code: wrong}); !errors.Is(err, ErrWrongDeliveryCode) {
+			t.Fatalf("try %d: want ErrWrongDeliveryCode, got %v", i, err)
+		}
+	}
+	if _, err := s.Deliver(context.Background(), driverActor(400), 10, DeliverRequest{Code: wrong}); !errors.Is(err, ErrDeliveryCodeLocked) {
+		t.Fatalf("5th wrong: want locked, got %v", err)
+	}
+	if _, err := s.Deliver(context.Background(), driverActor(400), 10, DeliverRequest{Code: code}); !errors.Is(err, ErrDeliveryCodeLocked) {
+		t.Fatalf("right code after lock: want locked, got %v", err)
+	}
+	if s.present(buyerActor(300), *repo.dispatches[10]).DeliveryCode != nil {
+		t.Fatal("a locked code must not be shown")
+	}
+}
+
+func TestDeliver_OverrideOnlyStaffWithReason(t *testing.T) {
+	_, s, _ := deliveryWorld("IN_TRANSIT")
+	short, reason := "no", "Customer not reachable, plants left with the watchman"
+	if _, err := s.Deliver(context.Background(), driverActor(400), 10, DeliverRequest{OverrideReason: &reason}); !errors.Is(err, ErrDeliveryCodeRequired) {
+		t.Fatalf("driver override: want ErrDeliveryCodeRequired, got %v", err)
+	}
+	if _, err := s.Deliver(context.Background(), ownerActor(100), 10, DeliverRequest{OverrideReason: &short}); !errors.Is(err, ErrOverrideReason) {
+		t.Fatalf("short reason: want ErrOverrideReason, got %v", err)
+	}
+	if _, err := s.Deliver(context.Background(), buyerActor(300), 10, DeliverRequest{OverrideReason: &reason}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("customer cannot use deliver: got %v", err)
+	}
+	got, err := s.Deliver(context.Background(), ownerActor(100), 10, DeliverRequest{OverrideReason: &reason})
+	if err != nil || *got.DeliveryConfirmation != ConfirmationUnconfirmed {
+		t.Fatalf("owner override: %v %v", got.DeliveryConfirmation, err)
+	}
+}
+
+func TestReceipt_CustomerConfirmsAndReports(t *testing.T) {
+	repo, s, _ := deliveryWorld("IN_TRANSIT")
+	if _, err := s.ConfirmReceipt(context.Background(), ownerActor(100), 10, ReceiptRequest{}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("only the customer: got %v", err)
+	}
+	got, err := s.ConfirmReceipt(context.Background(), buyerActor(300), 10, ReceiptRequest{})
+	if err != nil || got.Status != "DELIVERED" || *got.DeliveryConfirmation != ConfirmationApp {
+		t.Fatalf("received in app: %v", err)
+	}
+	if !got.Capabilities.CanReportIssue || got.Capabilities.CanConfirmReceipt {
+		t.Fatalf("after confirming: report yes, confirm no: %+v", got.Capabilities)
+	}
+	if _, err := s.ConfirmReceipt(context.Background(), buyerActor(300), 10, ReceiptRequest{}); !errors.Is(err, ErrAlreadyConfirmed) {
+		t.Fatalf("confirm twice: got %v", err)
+	}
+	issue := "10 plants broken"
+	if got, err = s.ConfirmReceipt(context.Background(), buyerActor(300), 10, ReceiptRequest{Issue: &issue}); err != nil || *got.DeliveryIssue != issue {
+		t.Fatalf("report problem: %v", err)
+	}
+	old := time.Now().Add(-49 * time.Hour)
+	repo.dispatches[10].DeliveryDate = &old
+	if _, err := s.ConfirmReceipt(context.Background(), buyerActor(300), 10, ReceiptRequest{Issue: &issue}); !errors.Is(err, ErrReceiptWindowClosed) {
+		t.Fatalf("after 48h: got %v", err)
+	}
+}
+
+func TestReceipt_ConfirmsAnOverride(t *testing.T) {
+	_, s, _ := deliveryWorld("IN_TRANSIT")
+	reason := "Customer phone switched off at delivery"
+	if _, err := s.Deliver(context.Background(), ownerActor(100), 10, DeliverRequest{OverrideReason: &reason}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ConfirmReceipt(context.Background(), buyerActor(300), 10, ReceiptRequest{})
+	if err != nil || *got.DeliveryConfirmation != ConfirmationApp {
+		t.Fatalf("customer confirms the override later: %v", err)
+	}
+}
+
+func TestOutsideTransport_NoDriverJoin(t *testing.T) {
+	repo, s, d := deliveryWorld("PENDING")
+	repo.dispatches[10].IsOutsideTransport = true
+	if _, err := s.AcceptDispatch(context.Background(), driverActor(401), 10); !errors.Is(err, ErrOutsideTransport) {
+		t.Fatalf("join outside trip: got %v", err)
+	}
+	if caps := s.present(ownerActor(100), *repo.dispatches[10]).Capabilities; caps.CanShareCode || caps.CanAccept {
+		t.Fatalf("outside trip offers QR/accept: %+v", caps)
+	}
+	_ = d
+	if _, err := normalizeCreate(CreateDispatchRequest{OrderID: 20, IsOutsideTransport: true}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("outside without vehicle: got %v", err)
+	}
+	v, m := " ap05 tb 1234 ", "+91 98765 43210"
+	in, err := normalizeCreate(CreateDispatchRequest{OrderID: 20, IsOutsideTransport: true, OutsideVehicleNumber: &v, OutsideDriverMobile: &m})
+	if err != nil || *in.OutsideVehicleNumber != "AP05 TB 1234" || *in.OutsideDriverMobile != "9876543210" {
+		t.Fatalf("normalize outside: %+v %v", in, err)
 	}
 }

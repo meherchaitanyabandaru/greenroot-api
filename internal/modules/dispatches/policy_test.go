@@ -86,8 +86,8 @@ func TestBuildCapabilities(t *testing.T) {
 		if !caps.CanStartTrip {
 			t.Error("driver should CanStartTrip at DISPATCHED")
 		}
-		if caps.CanAccept || caps.CanMarkDelivered {
-			t.Error("driver at DISPATCHED should not have accept/deliver caps")
+		if caps.CanAccept || !caps.CanMarkDelivered { // the code counts even before Start
+			t.Error("driver at DISPATCHED: no accept, but can deliver with the code")
 		}
 	})
 

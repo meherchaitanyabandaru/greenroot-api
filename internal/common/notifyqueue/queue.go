@@ -16,6 +16,8 @@ const (
 	EventDispatchAccepted  = "DISPATCH_ACCEPTED"
 	EventQuotationSent     = "QUOTATION_SENT"
 	EventQuotationAccepted = "QUOTATION_ACCEPTED"
+	EventOrderDelivered    = "ORDER_DELIVERED"
+	EventDeliveryIssue     = "DELIVERY_ISSUE"
 )
 
 var ErrUnavailable = errors.New("notification queue unavailable")

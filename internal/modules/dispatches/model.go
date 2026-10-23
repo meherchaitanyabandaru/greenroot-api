@@ -58,6 +58,22 @@ type Dispatch struct {
 	Notes             *string    `json:"notes,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         *time.Time `json:"updated_at,omitempty"`
+	// Outside lorry: the driver has no app (no QR join, no GPS).
+	IsOutsideTransport   bool    `json:"is_outside_transport"`
+	OutsideVehicleNumber *string `json:"outside_vehicle_number,omitempty"`
+	OutsideDriverName    *string `json:"outside_driver_name,omitempty"`
+	OutsideDriverMobile  *string `json:"outside_driver_mobile,omitempty"`
+	// How the customer confirmed delivery: CUSTOMER_CODE, CUSTOMER_APP or
+	// UNCONFIRMED (nursery override, with a reason).
+	DeliveryConfirmation      *string    `json:"delivery_confirmation,omitempty"`
+	DeliveryConfirmedByUserID *int64     `json:"delivery_confirmed_by_user_id,omitempty"`
+	DeliveryConfirmedAt       *time.Time `json:"delivery_confirmed_at,omitempty"`
+	DeliveryOverrideReason    *string    `json:"delivery_override_reason,omitempty"`
+	DeliveryIssue             *string    `json:"delivery_issue,omitempty"`
+	DeliveryIssueReportedAt   *time.Time `json:"delivery_issue_reported_at,omitempty"`
+	DeliveryCodeAttempts      int        `json:"-"`
+	// Only in the customer's own view, while the trip is on its way.
+	DeliveryCode *string `json:"delivery_code,omitempty"`
 	// Version changes on every update; send it back as If-Match.
 	Version      int64                       `json:"version"`
 	Items        []DispatchItem              `json:"items,omitempty"`

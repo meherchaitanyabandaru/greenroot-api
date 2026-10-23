@@ -926,13 +926,66 @@ def journey_dispatch():
     expect("an unknown tracking link is not found", "GET", "/track/00000000-0000-0000-0000-000000000000", None, status=(400, 404))
 
     expect("order cannot complete while the trip is open", "PUT", f"/orders/{o['id']}/status", owner.token, {"order_status": "COMPLETED"}, status=409)
-    st(("driver", driver), "DELIVERED")
+    # Delivery needs the customer: their code, or their "received" tap
+    st(("driver", driver), "DELIVERED", 422)
+    bd = expect("buyer opens the trip on its way", "GET", f"/dispatches/{did}", buyer.token)["dispatch"]
+    code4 = bd.get("delivery_code") or ""
+    check("…the customer sees a 4-digit delivery code", len(code4) == 4 and code4.isdigit(), bd)
+    for who in [("owner", owner), ("manager", manager), ("driver", driver)]:
+        seen = expect(f"{who[0]} opens the trip", "GET", f"/dispatches/{did}", who[1].token)["dispatch"]
+        check(f"…the {who[0]} never sees the code", "delivery_code" not in seen, seen)
+    _, pub = call("GET", f"/track/{d['trip_uuid']}")
+    check("…nor does the public tracking link", "delivery_code" not in json.dumps(pub), pub)
+    wrong = "0000" if code4 != "0000" else "1111"
+    deliver = lambda what, who, body, status=200: expect(what, "POST", f"/dispatches/{did}/deliver", who.token, body, status=status)
+    deliver("a wrong code is refused", driver, {"code": wrong}, 422)
+    deliver("a driver cannot deliver without the code", driver, {"override_reason": "Customer did not pick up the phone"}, 422)
+    deliver("the customer cannot use deliver", buyer, {"code": code4}, 403)
+    deliver("a rival owner cannot deliver", rival, {"code": code4}, 403)
+    out = deliver("driver delivers with the customer's code", driver, {"code": code4})["dispatch"]
+    check("…DELIVERED, confirmed by code", out["dispatch_status"] == "DELIVERED" and out.get("delivery_confirmation") == "CUSTOMER_CODE", out)
+    deliver("delivering twice is refused", owner, {"code": code4}, 422)
+    bd = expect("buyer opens the delivered trip", "GET", f"/dispatches/{did}", buyer.token)["dispatch"]
+    check("…the code is gone; the customer can report a problem", "delivery_code" not in bd and bd["capabilities"]["can_report_issue"], bd)
+    receipt = lambda what, who, body, status=200: expect(what, "POST", f"/dispatches/{did}/receipt", who.token, body, status=status)
+    receipt("the seller cannot report for the customer", owner, {"issue": "x"}, 403)
+    out = receipt("buyer reports a problem", buyer, {"issue": "3 plants broken"})["dispatch"]
+    check("…recorded", out.get("delivery_issue") == "3 plants broken", out)
+    receipt("only one problem report", buyer, {"issue": "again"}, 409)
     out = expect("buyer sees the order", "GET", f"/orders/{o['id']}", buyer.token)
     check("…delivery completed the order", out["order"]["order_status"] == "COMPLETED", out["order"]["order_status"])
     st(("owner", owner), "CANCELLED", 422)
     expect("no trip events after delivery", "POST", f"/dispatches/{did}/trip-events", driver.token, {"event_type": "LATE"}, status=422)
     expect("second driver is free to accept the other trip", "POST", f"/dispatches/{d2['id']}/accept", second_driver.token, {})
     expect("owner cancels the other trip", "PUT", f"/dispatches/{d2['id']}/status", owner.token, {"dispatch_status": "CANCELLED"})
+
+    # Outside lorry (driver without the app): the nursery confirms with the customer's code
+    o3 = loaded_order()
+    expect("start loading", "POST", f"/orders/{o3['id']}/start-loading", owner.token, {})
+    expect("complete loading", "POST", f"/orders/{o3['id']}/complete-loading", owner.token, {})
+    expect("an outside lorry needs its vehicle number", "POST", "/dispatches", owner.token, {"order_id": o3["id"], "is_outside_transport": True}, status=400)
+    d3 = expect("owner sends it on an outside lorry", "POST", "/dispatches", owner.token, {"order_id": o3["id"], "is_outside_transport": True,
+                "outside_vehicle_number": "ap05 tb 1234", "outside_driver_name": "Ramesh", "outside_driver_mobile": "+91 98765 01234"}, status=201)["dispatch"]
+    check("…no QR to share, vehicle and driver recorded", d3["is_outside_transport"] and not d3["capabilities"]["can_share_code"]
+          and d3.get("outside_vehicle_number") == "AP05 TB 1234" and d3.get("outside_driver_mobile") == "9876501234", d3)
+    expect("no app driver can join an outside lorry", "POST", f"/dispatches/{d3['id']}/accept", second_driver.token, {}, status=409)
+    expect("owner marks it dispatched", "PUT", f"/dispatches/{d3['id']}/status", owner.token, {"dispatch_status": "DISPATCHED"})
+    code3 = expect("buyer opens it", "GET", f"/dispatches/{d3['id']}", buyer.token)["dispatch"].get("delivery_code") or ""
+    wrong3 = "0000" if code3 != "0000" else "1111"
+    for i in range(4):
+        expect(f"wrong code {i + 1}", "POST", f"/dispatches/{d3['id']}/deliver", owner.token, {"code": wrong3}, status=422)
+    expect("the 5th wrong code locks it", "POST", f"/dispatches/{d3['id']}/deliver", owner.token, {"code": wrong3}, status=409)
+    expect("…even the right code no longer works", "POST", f"/dispatches/{d3['id']}/deliver", owner.token, {"code": code3}, status=409)
+    bd = expect("buyer opens it", "GET", f"/dispatches/{d3['id']}", buyer.token)["dispatch"]
+    check("…a locked code is not shown", "delivery_code" not in bd, bd)
+    expect("an override needs a real reason", "POST", f"/dispatches/{d3['id']}/deliver", owner.token, {"override_reason": "ok"}, status=400)
+    out = expect("owner marks it delivered without the code, with a reason", "POST", f"/dispatches/{d3['id']}/deliver", owner.token,
+                 {"override_reason": "Customer's phone was switched off; plants handed to his son"})["dispatch"]
+    check("…UNCONFIRMED, reason kept", out.get("delivery_confirmation") == "UNCONFIRMED" and "son" in (out.get("delivery_override_reason") or ""), out)
+    bd = expect("buyer opens it", "GET", f"/dispatches/{d3['id']}", buyer.token)["dispatch"]
+    check("…the customer can confirm or dispute", bd["capabilities"]["can_confirm_receipt"] and bd["capabilities"]["can_report_issue"], bd["capabilities"])
+    out = expect("buyer confirms they received it", "POST", f"/dispatches/{d3['id']}/receipt", buyer.token, {})["dispatch"]
+    check("…now confirmed in the app", out.get("delivery_confirmation") == "CUSTOMER_APP", out)
 
     # Lists are scoped
     out = expect("driver's list", "GET", "/dispatches", driver.token)

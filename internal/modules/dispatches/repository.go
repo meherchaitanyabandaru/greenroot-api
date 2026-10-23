@@ -29,6 +29,9 @@ type Repository interface {
 	Create(ctx context.Context, actorID int64, input CreateDispatchInput) (*Dispatch, error)
 	UpdateStatus(ctx context.Context, dispatchID int64, input UpdateStatusInput) (*Dispatch, error)
 	CompleteOrderIfReady(ctx context.Context, orderID int64) error
+	MarkDelivered(ctx context.Context, dispatchID int64, input MarkDeliveredInput) (*Dispatch, error)
+	AddWrongDeliveryCode(ctx context.Context, dispatchID int64) (int, error)
+	RecordReceipt(ctx context.Context, dispatchID, customerUserID int64, confirm bool, issue *string) error
 	AcknowledgeDeliveryUpdate(ctx context.Context, dispatchID int64, driverUserID int64) error
 	SetDriverUser(ctx context.Context, dispatchID int64, userID int64) (*Dispatch, error)
 	CreateItem(ctx context.Context, dispatchID int64, input DispatchItemRequest) (*DispatchItem, error)
@@ -62,6 +65,18 @@ type CreateDispatchInput struct {
 	DestinationAddress *string
 	Notes              *string
 	Items              []DispatchItemRequest
+
+	IsOutsideTransport   bool
+	OutsideVehicleNumber *string
+	OutsideDriverName    *string
+	OutsideDriverMobile  *string
+}
+
+type MarkDeliveredInput struct {
+	Confirmation   string
+	ByUserID       int64 // who recorded it: code entered by, customer, or the overriding staff
+	OverrideReason *string
+	Issue          *string
 }
 
 type UpdateStatusInput struct {
@@ -267,7 +282,9 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 	const query = `
 		INSERT INTO public.dispatches (
 			dispatch_code, order_id, dispatch_number, status, vehicle_id, driver_id, dispatched_by_user_id,
-			dispatched_at, destination_address, notes, created_at, updated_at
+			dispatched_at, destination_address, notes, created_at, updated_at,
+			is_outside_transport, outside_vehicle_number, outside_driver_name, outside_driver_mobile,
+			nursery_id, customer_user_id, snapshot_owner_user_id
 		)
 		VALUES (
 			$1, $2, NULLIF($3, ''), 'PENDING', $4, $5, $6, $7,
@@ -282,12 +299,17 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 				FROM public.order_delivery_snapshots ods
 				WHERE ods.order_id = $2
 			)),
-			NULLIF($9, ''), $10, $10
+			NULLIF($9, ''), $10, $10,
+			$11, NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, ''),
+			(SELECT o.seller_nursery_id FROM public.orders o WHERE o.order_id = $2),
+			(SELECT o.buyer_user_id FROM public.orders o WHERE o.order_id = $2),
+			(SELECT n.owner_user_id FROM public.orders o JOIN public.nurseries n ON n.nursery_id = o.seller_nursery_id WHERE o.order_id = $2)
 		)
 		RETURNING dispatch_id
 	`
 	var dispatchID int64
-	if err := tx.QueryRowContext(ctx, query, dispatchCode, input.OrderID, stringOrEmpty(input.DispatchNumber), int64OrNil(input.VehicleID), int64OrNil(input.DriverID), actorID, timeOrNil(input.DispatchDate), stringOrEmpty(input.DestinationAddress), stringOrEmpty(input.Notes), now).Scan(&dispatchID); err != nil {
+	if err := tx.QueryRowContext(ctx, query, dispatchCode, input.OrderID, stringOrEmpty(input.DispatchNumber), int64OrNil(input.VehicleID), int64OrNil(input.DriverID), actorID, timeOrNil(input.DispatchDate), stringOrEmpty(input.DestinationAddress), stringOrEmpty(input.Notes), now,
+		input.IsOutsideTransport, stringOrEmpty(input.OutsideVehicleNumber), stringOrEmpty(input.OutsideDriverName), stringOrEmpty(input.OutsideDriverMobile)).Scan(&dispatchID); err != nil {
 		return nil, err
 	}
 	for _, item := range input.Items {
@@ -327,6 +349,58 @@ func (r *PostgresRepository) UpdateStatus(ctx context.Context, dispatchID int64,
 		return nil, ErrNotFound
 	}
 	return r.FindByID(ctx, dispatchID)
+}
+
+// MarkDelivered delivers a trip that is still on its way (a concurrent
+// delivery finds no row: ErrConflict).
+func (r *PostgresRepository) MarkDelivered(ctx context.Context, dispatchID int64, in MarkDeliveredInput) (*Dispatch, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE public.dispatches
+		SET status = 'DELIVERED',
+			delivered_at = CURRENT_TIMESTAMP,
+			delivery_confirmation = $2::varchar,
+			delivery_confirmed_by_user_id = $3,
+			delivery_confirmed_at = CASE WHEN $2::varchar = 'UNCONFIRMED' THEN NULL ELSE CURRENT_TIMESTAMP END,
+			delivery_override_reason = $4,
+			delivery_issue = $5,
+			delivery_issue_reported_at = CASE WHEN $5::text IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE dispatch_id = $1 AND status IN ('DISPATCHED', 'IN_TRANSIT')
+	`, dispatchID, in.Confirmation, in.ByUserID, in.OverrideReason, in.Issue)
+	if err != nil {
+		return nil, pgerr.Map(err)
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return nil, err
+	} else if n == 0 {
+		return nil, ErrConflict
+	}
+	return r.FindByID(ctx, dispatchID)
+}
+
+// AddWrongDeliveryCode counts a wrong code and returns the total so far.
+func (r *PostgresRepository) AddWrongDeliveryCode(ctx context.Context, dispatchID int64) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+		UPDATE public.dispatches SET delivery_code_attempts = delivery_code_attempts + 1
+		WHERE dispatch_id = $1 RETURNING delivery_code_attempts`, dispatchID).Scan(&n)
+	return n, err
+}
+
+// RecordReceipt confirms a delivered trip as the customer and/or records the
+// first problem they report.
+func (r *PostgresRepository) RecordReceipt(ctx context.Context, dispatchID, customerUserID int64, confirm bool, issue *string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE public.dispatches
+		SET delivery_confirmation = CASE WHEN $3 THEN 'CUSTOMER_APP' ELSE delivery_confirmation END,
+			delivery_confirmed_by_user_id = CASE WHEN $3 THEN $2 ELSE delivery_confirmed_by_user_id END,
+			delivery_confirmed_at = CASE WHEN $3 THEN CURRENT_TIMESTAMP ELSE delivery_confirmed_at END,
+			delivery_issue_reported_at = CASE WHEN delivery_issue IS NULL AND $4::text IS NOT NULL THEN CURRENT_TIMESTAMP ELSE delivery_issue_reported_at END,
+			delivery_issue = COALESCE(delivery_issue, $4),
+			updated_at = CURRENT_TIMESTAMP
+		WHERE dispatch_id = $1 AND status = 'DELIVERED'
+	`, dispatchID, customerUserID, confirm, issue)
+	return pgerr.Map(err)
 }
 
 func (r *PostgresRepository) CompleteOrderIfReady(ctx context.Context, orderID int64) error {
@@ -608,7 +682,10 @@ func baseSelect() string {
 			d.customer_name_snapshot, d.customer_mobile_snapshot,
 			d.trip_started_at, d.trip_started_by_user_id, d.completed_at,
 			tl.tracking_uuid::text,
-			d.trip_uuid::text
+			d.trip_uuid::text,
+			d.is_outside_transport, d.outside_vehicle_number, d.outside_driver_name, d.outside_driver_mobile,
+			d.delivery_confirmation, d.delivery_confirmed_by_user_id, d.delivery_confirmed_at,
+			d.delivery_override_reason, d.delivery_issue, d.delivery_issue_reported_at, d.delivery_code_attempts
 		FROM public.dispatches d
 		JOIN public.orders o ON o.order_id = d.order_id
 		LEFT JOIN public.nurseries sn ON sn.nursery_id = o.seller_nursery_id
@@ -710,6 +787,9 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 	var tripStartedAt, completedAt sql.NullTime
 	var tripStartedByUserID sql.NullInt64
 	var trackingUUID, tripUUID sql.NullString
+	var outsideVehicle, outsideDriverName, outsideDriverMobile, confirmation, overrideReason, issue sql.NullString
+	var confirmedBy sql.NullInt64
+	var confirmedAt, issueAt sql.NullTime
 	if err := row.Scan(
 		&dispatch.ID, &dispatch.DispatchCode, &dispatch.OrderID, &orderNumber,
 		&orderStatus, &loadingStartedAt, &loadingCompletedAt,
@@ -724,6 +804,9 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 		&customerNameSnapshot, &customerMobileSnapshot,
 		&tripStartedAt, &tripStartedByUserID, &completedAt,
 		&trackingUUID, &tripUUID,
+		&dispatch.IsOutsideTransport, &outsideVehicle, &outsideDriverName, &outsideDriverMobile,
+		&confirmation, &confirmedBy, &confirmedAt,
+		&overrideReason, &issue, &issueAt, &dispatch.DeliveryCodeAttempts,
 	); err != nil {
 		return Dispatch{}, err
 	}
@@ -737,6 +820,19 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 	}
 	dispatch.SellerNurseryID = nullableInt64(nurseryID)
 	dispatch.SellerNurseryName = nullableString(sellerNurseryName)
+	dispatch.OutsideVehicleNumber = nullableString(outsideVehicle)
+	dispatch.OutsideDriverName = nullableString(outsideDriverName)
+	dispatch.OutsideDriverMobile = nullableString(outsideDriverMobile)
+	dispatch.DeliveryConfirmation = nullableString(confirmation)
+	dispatch.DeliveryConfirmedByUserID = nullableInt64(confirmedBy)
+	dispatch.DeliveryOverrideReason = nullableString(overrideReason)
+	dispatch.DeliveryIssue = nullableString(issue)
+	if confirmedAt.Valid {
+		dispatch.DeliveryConfirmedAt = &confirmedAt.Time
+	}
+	if issueAt.Valid {
+		dispatch.DeliveryIssueReportedAt = &issueAt.Time
+	}
 	dispatch.DispatchNumber = nullableString(dispatchNumber)
 	dispatch.VehicleID = nullableInt64(vehicleID)
 	dispatch.VehicleNumber = nullableString(vehicleNumber)
