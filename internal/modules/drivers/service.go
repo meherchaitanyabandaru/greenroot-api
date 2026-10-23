@@ -178,7 +178,9 @@ func (s *Service) Apply(ctx context.Context, actor ActorContext, req ApplyDriver
 		photo := strings.TrimSpace(*req.LicencePhotoURL)
 		if photo == "" {
 			req.LicencePhotoURL = nil
-		} else if bucket, _, ok := s.locate(photo); !ok || bucket != storage.BucketAttachments {
+		} else if bucket, key, ok := s.locate(photo); !ok || bucket != storage.BucketAttachments ||
+			!strings.HasPrefix(key, storage.UploaderPrefix(actor.UserID)) {
+			// Only a photo this applicant uploaded, not any private file they saw.
 			return Driver{}, ErrInvalidLicencePhoto
 		} else {
 			req.LicencePhotoURL = &photo

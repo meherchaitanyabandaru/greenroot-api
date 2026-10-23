@@ -686,6 +686,10 @@ def journey_quotation():
     bo = expect("buyer sees the order", "GET", f"/orders/{cq['converted_order_id']}", buyer.token)
     bo = bo.get("order", bo)
     check("…without the nursery's internal notes", not bo.get("notes") and not bo.get("assigned_manager_name"), bo.get("notes"))
+    out = expect("buyer searches their orders for a word in the internal notes", "GET", "/orders?buying=true&search=final", buyer.token)
+    check("…the notes are not searchable by the buyer", cq["converted_order_id"] not in [x["id"] for x in out.get("orders", [])], out.get("orders"))
+    out = expect("owner searches the same word", "GET", "/orders?search=final", owner.token)
+    check("…the seller still finds it by its notes", cq["converted_order_id"] in [x["id"] for x in out.get("orders", [])], out.get("pagination"))
 
     # Manager's own quotation, buyer rejection
     q2 = expect("manager creates a quotation", "POST", "/quotations", manager.token, quote(), status=201)["quotation"]
@@ -1471,6 +1475,11 @@ def journey_roles():
     put = urllib.request.Request(pre["upload_url"], data=SELFIE_PNG, method="PUT", headers={"Content-Type": "image/png"})
     with urllib.request.urlopen(put, timeout=30) as r:
         check("…uploaded to storage", r.status in (200, 204), r.status)
+    check("…the private key carries its uploader", pre["key"].startswith(f"u{lic.id}/"), pre["key"])
+    peeker = User(first="Other", activity="DRIVER")
+    expect("someone else's private file cannot be used as a licence photo", "POST", "/drivers/apply", peeker.token,
+           {"licence_number": "TS09" + peeker.mobile, "vehicle_number": "TS09" + peeker.mobile[-4:], "vehicle_type": "VAN",
+            "licence_photo_url": pre["file_url"]}, status=400)
     drv_lic = expect("apply with the licence photo", "POST", "/drivers/apply", lic.token,
                      dict(body, licence_photo_url=pre["file_url"]), status=(200, 201))["driver"]
     check("…stored", drv_lic.get("licence_photo_url") == pre["file_url"], drv_lic)

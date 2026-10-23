@@ -324,7 +324,8 @@ func (r *PostgresRepository) UpdateAddress(ctx context.Context, userID int64, ad
 			location_source = NULLIF($16, ''),
 			location_confirmed_by_user_id = $17,
 			location_confirmed_at = $18,
-			is_default = $19,
+			-- only another address can take the default away (see CreateAddress/DeleteAddress)
+			is_default = CASE WHEN $19 THEN true ELSE is_default END,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE user_id = $1 AND address_id = $2
 		RETURNING address_id, user_id, address_type, contact_name, contact_mobile,

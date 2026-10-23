@@ -870,7 +870,9 @@ func (s *Service) DeleteItem(ctx context.Context, actor ActorContext, itemID int
 }
 
 func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *ListOrdersRequest) error {
+	input.SearchNotes = false
 	if actor.HasRole("ADMIN") {
+		input.SearchNotes = true
 		return nil
 	}
 	if input.Buying {
@@ -886,6 +888,7 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 	}
 	if actor.HasRole("NURSERY_OWNER") || actor.HasRole("MANAGER") {
 		if input.NurseryID > 0 {
+			input.SearchNotes = true
 			return s.mustBeNurseryMember(ctx, actor, input.NurseryID)
 		}
 		nurseryIDs, err := s.repository.GetUserNurseryIDs(ctx, actor.UserID)
@@ -896,6 +899,7 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 			return ErrForbidden
 		}
 		input.NurseryID = nurseryIDs[0]
+		input.SearchNotes = true
 		return nil
 	}
 	if actor.HasRole("DRIVER") {

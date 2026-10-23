@@ -862,7 +862,12 @@ func buildWhere(input ListOrdersRequest) (string, []any) {
 	}
 	if input.Search != "" {
 		args = append(args, "%"+input.Search+"%")
-		clauses = append(clauses, fmt.Sprintf("(o.order_code ILIKE $%d OR o.order_number ILIKE $%d OR bu.first_name ILIKE $%d OR n.nursery_name ILIKE $%d OR o.notes ILIKE $%d)", len(args), len(args), len(args), len(args), len(args)))
+		n := len(args)
+		match := fmt.Sprintf("o.order_code ILIKE $%d OR o.order_number ILIKE $%d OR bu.first_name ILIKE $%d OR n.nursery_name ILIKE $%d", n, n, n, n)
+		if input.SearchNotes {
+			match += fmt.Sprintf(" OR o.notes ILIKE $%d", n)
+		}
+		clauses = append(clauses, "("+match+")")
 	}
 	return "WHERE " + strings.Join(clauses, " AND "), args
 }

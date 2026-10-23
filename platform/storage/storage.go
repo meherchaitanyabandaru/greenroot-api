@@ -188,5 +188,8 @@ func (c *Client) EnsureBuckets(ctx context.Context) error {
 	return nil
 }
 
+// UploaderPrefix is the key prefix of private files a user uploaded.
+func UploaderPrefix(userID int64) string { return "u" + strconv.FormatInt(userID, 10) + "/" }
+
 // IsValidBucket returns true if the bucket name is one of the known platform buckets.
 func IsValidBucket(bucket string) bool { return validBuckets[bucket] }

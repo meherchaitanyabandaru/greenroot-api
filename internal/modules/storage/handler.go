@@ -93,7 +93,7 @@ func NewHandler(s *platformstorage.Client, jwt *jwtplatform.Service) *Handler {
 // Presign handles POST /api/v1/storage/presign
 // Returns a pre-signed PUT URL so the client uploads directly to MinIO/S3.
 func (h *Handler) Presign(w http.ResponseWriter, r *http.Request) {
-	_, ok := authctx.FromRequest(w, r, h.jwt)
+	actor, ok := authctx.FromRequest(w, r, h.jwt)
 	if !ok {
 		return
 	}
@@ -130,6 +130,11 @@ func (h *Handler) Presign(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := uuid.NewString() + ext
+	if req.Bucket == platformstorage.BucketAttachments {
+		// Private files carry their uploader, so a record can only point at
+		// a file its own user uploaded (e.g. a driver's licence photo).
+		key = platformstorage.UploaderPrefix(actor.UserID) + key
+	}
 	// The upload must send this exact Content-Type and size (both are signed into the URL).
 	uploadURL, fileURL, err := h.storage.PresignPut(r.Context(), req.Bucket, key, req.ContentType, req.Size, presignTTL)
 	if err != nil {

@@ -546,7 +546,8 @@ func (r *PostgresRepository) UpdateAddress(ctx context.Context, addressID int64,
 			location_source = NULLIF($13, ''),
 			location_confirmed_by_user_id = $14,
 			location_confirmed_at = $15,
-			is_primary = $16,
+			-- only another address can take the primary (pickup) away
+			is_primary = CASE WHEN $16 THEN true ELSE is_primary END,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE nursery_address_id = $1
 		RETURNING nursery_address_id, nursery_id, address_type::text, address_line1, address_line2,

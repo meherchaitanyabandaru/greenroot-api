@@ -12,6 +12,8 @@ type ListOrdersRequest struct {
 	SortBy    string
 	SortOrder string
 	Buying    bool // true = buyer perspective (buyer_user_id or buyer_nursery_id filter)
+	// Notes are internal: only the seller side and admins may search them.
+	SearchNotes bool
 }
 
 type CreateOrderRequest struct {
