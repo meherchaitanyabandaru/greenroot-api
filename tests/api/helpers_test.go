@@ -53,6 +53,27 @@ func seedAPITestFixtures() error {
 	if err := db.PingContext(ctx); err != nil {
 		return err
 	}
+	// The fixtures upsert fixed ids. On a DB where real people hold those ids
+	// (a dev DB after signups) that would overwrite their accounts: refuse.
+	var taken []string
+	rows, err := db.QueryContext(ctx, `SELECT user_id || ' ' || mobile FROM public.users
+		WHERE (user_id, mobile) IN ((2,'9100000000'),(3,'9300000000'),(4,'9200000000'),(5,'9400000000'),(6,'9500000000')) IS NOT TRUE
+		  AND user_id BETWEEN 2 AND 6`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			rows.Close()
+			return err
+		}
+		taken = append(taken, s)
+	}
+	rows.Close()
+	if len(taken) > 0 {
+		return fmt.Errorf("refusing to overwrite real users %v: run tests/api on a fresh DB (reset-dbs.sh) or set DATABASE_URL to a test DB", taken)
+	}
 
 	const fixtureSQL = `
 INSERT INTO public.users
