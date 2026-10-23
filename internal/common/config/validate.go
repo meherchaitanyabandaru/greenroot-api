@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/clientip"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/semver"
 )
@@ -97,6 +98,15 @@ func (c Config) productionProblems() []error {
 	if c.Storage.AccessKeyID == devStorageKey || c.Storage.SecretAccessKey == devStorageSecret {
 		add("STORAGE_ACCESS_KEY / STORAGE_SECRET_KEY are the local MinIO defaults")
 	}
+	if !c.Storage.UseSSL {
+		add("STORAGE_USE_SSL must be true: files and credentials would cross the network unencrypted")
+	}
+	if !strings.HasPrefix(c.Storage.PublicURL, "https://") {
+		add("STORAGE_PUBLIC_URL must start with https://")
+	}
+	if c.Database.URL != "" && !databaseEncrypted(c.Database.URL) {
+		add("DATABASE_URL must use sslmode=require, verify-ca or verify-full (the default \"prefer\" silently falls back to plaintext); a Unix socket or localhost is fine")
+	}
 	if !c.App.AllowMockProviders {
 		if isMock(c.SMS.Provider) {
 			add("SMS_PROVIDER is mock: OTP is the fixed dev code 123456 for every account (set ALLOW_MOCK_PROVIDERS=true only for a closed beta)")
@@ -128,4 +138,25 @@ func (e *UnsafeConfigError) Unwrap() []error { return e.Problems }
 func isMock(provider string) bool {
 	p := strings.ToLower(strings.TrimSpace(provider))
 	return p == "" || p == "mock"
+}
+
+// databaseEncrypted reports whether every connection pgx may make to the
+// database is TLS, or never leaves the machine (Unix socket / localhost).
+func databaseEncrypted(dsn string) bool {
+	cfg, err := pgconn.ParseConfig(dsn)
+	if err != nil {
+		return true // a malformed URL fails at connect; not this check's job
+	}
+	if strings.HasPrefix(cfg.Host, "/") || cfg.Host == "localhost" || cfg.Host == "127.0.0.1" || cfg.Host == "::1" {
+		return true
+	}
+	if cfg.TLSConfig == nil {
+		return false
+	}
+	for _, fb := range cfg.Fallbacks {
+		if fb.TLSConfig == nil {
+			return false // "prefer"/"allow": plaintext fallback
+		}
+	}
+	return true
 }

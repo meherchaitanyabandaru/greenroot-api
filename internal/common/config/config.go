@@ -93,6 +93,7 @@ type StorageConfig struct {
 	UseSSL          bool
 	Region          string
 	PublicURL       string // base URL for constructing permanent file URLs
+	BucketPrefix    string // e.g. "greenroot-prod-": S3 bucket names are global
 }
 
 // SMSConfig selects the outbound SMS gateway. DLT identifiers (PE ID, headers,
@@ -190,6 +191,7 @@ func Load() Config {
 			UseSSL:          getBool("STORAGE_USE_SSL", false),
 			Region:          getString("STORAGE_REGION", "us-east-1"),
 			PublicURL:       getString("STORAGE_PUBLIC_URL", "http://localhost:9000"),
+			BucketPrefix:    getString("STORAGE_BUCKET_PREFIX", ""),
 		},
 		Redis: RedisConfig{
 			Addr:     getString("REDIS_ADDR", ""),

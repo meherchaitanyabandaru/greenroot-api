@@ -10,9 +10,9 @@ func safeProduction() Config {
 	return Config{
 		App:      AppConfig{Env: "production"},
 		HTTP:     HTTPConfig{CORSAllowedOrigins: []string{"https://admin.greenroot.in"}, MaxBodyBytes: 1 << 20, MaxUploadBytes: 12 << 20},
-		Database: DatabaseConfig{URL: "postgres://prod"},
+		Database: DatabaseConfig{URL: "postgres://app@db.internal/greenroot?sslmode=require"},
 		JWT:      JWTConfig{Secret: strings.Repeat("s", 40)},
-		Storage:  StorageConfig{AccessKeyID: "prod-key", SecretAccessKey: "prod-secret"},
+		Storage:  StorageConfig{AccessKeyID: "prod-key", SecretAccessKey: "prod-secret", UseSSL: true, PublicURL: "https://files.greenroot.in"},
 		Redis:    RedisConfig{Addr: "redis:6379"},
 		SMS:      SMSConfig{Provider: "msg91"},
 		Email:    EmailConfig{Provider: "ses"},
@@ -38,18 +38,23 @@ func TestValidate_EachUnsafeSetting(t *testing.T) {
 		mutate func(*Config)
 		want   string
 	}{
-		"default jwt secret": {func(c *Config) { c.JWT.Secret = devJWTSecret }, "JWT_SECRET"},
-		"short jwt secret":   {func(c *Config) { c.JWT.Secret = "short" }, "JWT_SECRET"},
-		"no database":        {func(c *Config) { c.Database.URL = "" }, "DATABASE_URL"},
-		"no redis":           {func(c *Config) { c.Redis.Addr = "" }, "REDIS_ADDR"},
-		"no cors":            {func(c *Config) { c.HTTP.CORSAllowedOrigins = nil }, "CORS_ALLOWED_ORIGINS"},
-		"no body limit":      {func(c *Config) { c.HTTP.MaxBodyBytes = 0 }, "HTTP_MAX_BODY_BYTES"},
-		"minio defaults":     {func(c *Config) { c.Storage.SecretAccessKey = devStorageSecret }, "STORAGE_"},
-		"mock sms":           {func(c *Config) { c.SMS.Provider = "mock" }, "SMS_PROVIDER"},
-		"mock email":         {func(c *Config) { c.Email.Provider = "" }, "EMAIL_PROVIDER"},
-		"no razorpay keys":   {func(c *Config) { c.Razorpay = RazorpayConfig{} }, "RAZORPAY_KEY_ID"},
-		"razorpay test key":  {func(c *Config) { c.Razorpay.KeyID = "rzp_test_x" }, "test key"},
-		"no webhook secret":  {func(c *Config) { c.Razorpay.WebhookSecret = "" }, "RAZORPAY_WEBHOOK_SECRET"},
+		"default jwt secret":  {func(c *Config) { c.JWT.Secret = devJWTSecret }, "JWT_SECRET"},
+		"short jwt secret":    {func(c *Config) { c.JWT.Secret = "short" }, "JWT_SECRET"},
+		"no database":         {func(c *Config) { c.Database.URL = "" }, "DATABASE_URL"},
+		"no redis":            {func(c *Config) { c.Redis.Addr = "" }, "REDIS_ADDR"},
+		"no cors":             {func(c *Config) { c.HTTP.CORSAllowedOrigins = nil }, "CORS_ALLOWED_ORIGINS"},
+		"no body limit":       {func(c *Config) { c.HTTP.MaxBodyBytes = 0 }, "HTTP_MAX_BODY_BYTES"},
+		"minio defaults":      {func(c *Config) { c.Storage.SecretAccessKey = devStorageSecret }, "STORAGE_"},
+		"storage without tls": {func(c *Config) { c.Storage.UseSSL = false }, "STORAGE_USE_SSL"},
+		"http file urls":      {func(c *Config) { c.Storage.PublicURL = "http://files.greenroot.in" }, "STORAGE_PUBLIC_URL"},
+		"db sslmode default":  {func(c *Config) { c.Database.URL = "postgres://app@db.internal/greenroot" }, "sslmode"},
+		"db sslmode disable":  {func(c *Config) { c.Database.URL = "postgres://app@db.internal/greenroot?sslmode=disable" }, "sslmode"},
+		"db sslmode prefer":   {func(c *Config) { c.Database.URL = "postgres://app@db.internal/greenroot?sslmode=prefer" }, "sslmode"},
+		"mock sms":            {func(c *Config) { c.SMS.Provider = "mock" }, "SMS_PROVIDER"},
+		"mock email":          {func(c *Config) { c.Email.Provider = "" }, "EMAIL_PROVIDER"},
+		"no razorpay keys":    {func(c *Config) { c.Razorpay = RazorpayConfig{} }, "RAZORPAY_KEY_ID"},
+		"razorpay test key":   {func(c *Config) { c.Razorpay.KeyID = "rzp_test_x" }, "test key"},
+		"no webhook secret":   {func(c *Config) { c.Razorpay.WebhookSecret = "" }, "RAZORPAY_WEBHOOK_SECRET"},
 	}
 	for name, tc := range cases {
 		cfg := safeProduction()
@@ -142,6 +147,31 @@ func TestValidate_ClientVersions(t *testing.T) {
 		c.Client = bad
 		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "CLIENT_") {
 			t.Errorf("%+v accepted: %v", bad, err)
+		}
+	}
+}
+
+func TestDatabaseEncrypted(t *testing.T) {
+	ok := []string{
+		"postgres://app@db.internal/greenroot?sslmode=require",
+		"postgres://app@db.internal/greenroot?sslmode=verify-full",
+		"postgres:///greenroot?host=/var/run/postgresql", // Unix socket
+		"postgres://app@localhost/greenroot?sslmode=disable",
+		"host=db.internal dbname=greenroot sslmode=require",
+	}
+	for _, dsn := range ok {
+		if !databaseEncrypted(dsn) {
+			t.Errorf("%s: want encrypted/local", dsn)
+		}
+	}
+	bad := []string{
+		"postgres://app@db.internal/greenroot",
+		"postgres://app@db.internal/greenroot?sslmode=allow",
+		"host=db.internal dbname=greenroot sslmode=disable",
+	}
+	for _, dsn := range bad {
+		if databaseEncrypted(dsn) {
+			t.Errorf("%s: want rejected", dsn)
 		}
 	}
 }

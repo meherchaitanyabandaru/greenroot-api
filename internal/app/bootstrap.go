@@ -97,6 +97,7 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		UseSSL:          cfg.Storage.UseSSL,
 		Region:          cfg.Storage.Region,
 		PublicURL:       cfg.Storage.PublicURL,
+		BucketPrefix:    cfg.Storage.BucketPrefix,
 	})
 	if err != nil {
 		_ = logManager.Close()

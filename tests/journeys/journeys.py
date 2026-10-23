@@ -1613,6 +1613,32 @@ def journey_plant_suggestions():
     check("the 11th suggestion in a day is refused (429)", codes[:8] == [201] * 8 and codes[8] == 429, codes)
 
 
+def journey_storage():
+    """Direct uploads: only the buckets apps upload to, only allowed file types, and the signed type is enforced."""
+    u = User(first="Uploader", activity="CUSTOMER")
+    expect("server-only bucket refused", "POST", "/storage/presign", u.token,
+           {"bucket": "plant-images", "file_name": "a.jpg", "content_type": "image/jpeg"}, status=400)
+    expect("a web page in a public bucket refused", "POST", "/storage/presign", u.token,
+           {"bucket": "market-ads", "file_name": "a.html", "content_type": "text/html"}, status=400)
+    expect("SVG in a public bucket refused", "POST", "/storage/presign", u.token,
+           {"bucket": "market-ads", "file_name": "a.svg", "content_type": "image/svg+xml"}, status=400)
+    pre = expect("photo upload allowed", "POST", "/storage/presign", u.token,
+                 {"bucket": "market-ads", "file_name": "evil.html", "content_type": "image/jpeg"})
+    check("…extension comes from the type, not the file name", pre["key"].endswith(".jpg"), pre["key"])
+
+    def put(content_type):
+        req = urllib.request.Request(pre["upload_url"], data=SELFIE_PNG, method="PUT", headers={"Content-Type": content_type})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
+    check("uploading as a different type is refused", put("text/html") == 403)
+    check("uploading as the signed type works", put("image/jpeg") in (200, 204))
+    with urllib.request.urlopen(pre["file_url"], timeout=30) as r:
+        check("…served as an image", r.headers.get("Content-Type") == "image/jpeg", r.headers.get("Content-Type"))
+
+
 JOURNEYS = [
     ("auth", journey_auth),
     ("accounts", journey_accounts),
@@ -1622,6 +1648,7 @@ JOURNEYS = [
     ("dispatch", journey_dispatch),
     ("top_items", journey_top_items),
     ("plant_suggestions", journey_plant_suggestions),
+    ("storage", journey_storage),
     ("payments", journey_payments),
     ("market", journey_market),
     ("wanted", journey_wanted),

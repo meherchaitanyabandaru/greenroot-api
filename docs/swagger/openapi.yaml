@@ -4950,6 +4950,90 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+  /api/v1/plants/suggestions:
+    get:
+      tags: [Plants]
+      summary: Plant suggestions review queue (admin)
+      operationId: listPlantSuggestions
+      security:
+        - BearerAuth: []
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [PENDING, APPROVED, LINKED, REJECTED]}, description: Empty for all}
+        - {name: page, in: query, schema: {type: integer}}
+        - {name: per_page, in: query, schema: {type: integer, maximum: 100}}
+      responses:
+        "200":
+          description: "`{suggestions, total}`, newest first"
+        "401":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [Plants]
+      summary: Suggest a plant the search could not find
+      description: >-
+        Any signed-in user, 10 a day (429 `suggestion_limit`). A name the catalog
+        already has returns `EXISTS` with that plant; an open suggestion with the
+        same name returns `ALREADY_SUGGESTED`; otherwise 201 `SUBMITTED`. Users never
+        write the plants master data.
+      operationId: createPlantSuggestion
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, minLength: 2, maxLength: 100}
+                scientific_name: {type: string, maxLength: 255}
+                notes: {type: string, maxLength: 500}
+      responses:
+        "200":
+          description: EXISTS or ALREADY_SUGGESTED
+        "201":
+          description: SUBMITTED
+        "400":
+          $ref: '#/components/responses/Error'
+        "429":
+          $ref: '#/components/responses/Error'
+  /api/v1/plants/suggestions/{suggestionId}/review:
+    post:
+      tags: [Plants]
+      summary: Review a pending plant suggestion (admin)
+      description: >-
+        APPROVED (added as a new plant) or LINKED (an existing plant) need `plant_id`;
+        a plant with no common name gets the suggested name. REJECTED needs `note`.
+        The suggester is notified. 409 `suggestion_reviewed` when not pending.
+      operationId: reviewPlantSuggestion
+      security:
+        - BearerAuth: []
+      parameters:
+        - {name: suggestionId, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: {type: string, enum: [APPROVED, LINKED, REJECTED]}
+                plant_id: {type: integer}
+                note: {type: string}
+      responses:
+        "200":
+          description: "`{suggestion}`"
+        "400":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+        "404":
+          $ref: '#/components/responses/Error'
+        "409":
+          $ref: '#/components/responses/Error'
   /api/v1/plants/resolve:
     post:
       tags: [Plants]
@@ -6738,7 +6822,14 @@ paths:
     post:
       tags:
         - Storage
-      summary: Presign
+      summary: Presign a direct upload
+      description: >-
+        Only `attachments` and `delivery-photos` (private), `market-ads` and
+        `nursery-logos` (public). Images only (jpeg, png, webp, heic, heif, gif);
+        `attachments` also takes pdf, doc(x), xls(x), csv, txt and octet-stream.
+        Other types → 400 `invalid_content_type`, other buckets → 400
+        `invalid_bucket`. The key's extension comes from the type, and the PUT must
+        send the same `Content-Type` (it is signed into `upload_url`).
       operationId: postStoragePresign
       security:
         - BearerAuth: []

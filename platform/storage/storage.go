@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net/url"
+	"net/http"
 	"strings"
 	"time"
 
@@ -45,12 +45,20 @@ type Config struct {
 	UseSSL          bool
 	Region          string
 	PublicURL       string // base URL used to build the final file URL shown to clients
+	// BucketPrefix makes bucket names unique where they are global (AWS S3):
+	// "greenroot-prod-" stores "attachments" as "greenroot-prod-attachments".
+	// Code keeps using the plain names. Empty for local MinIO.
+	BucketPrefix string
 }
 
 type Client struct {
 	minio     *minio.Client
 	publicURL string
+	prefix    string
 }
+
+// physical is the real bucket name for a platform bucket.
+func (c *Client) physical(bucket string) string { return c.prefix + bucket }
 
 func New(cfg Config) (*Client, error) {
 	mc, err := minio.New(cfg.Endpoint, &minio.Options{
@@ -61,32 +69,34 @@ func New(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("storage: init minio client: %w", err)
 	}
-	return &Client{minio: mc, publicURL: cfg.PublicURL}, nil
+	return &Client{minio: mc, publicURL: cfg.PublicURL, prefix: cfg.BucketPrefix}, nil
 }
 
 // PresignPut generates a pre-signed PUT URL. The caller uploads the file directly.
 // Returns (uploadURL, fileURL, error).
 // uploadURL — the client uses this to PUT the file (expires in ttl).
 // fileURL   — the permanent URL to store in the database and return to end users.
-func (c *Client) PresignPut(ctx context.Context, bucket, key string, ttl time.Duration) (uploadURL string, fileURL string, err error) {
+// contentType is signed into the URL: the upload must send exactly that
+// Content-Type, so a ".jpg" cannot be stored (and served) as a web page.
+func (c *Client) PresignPut(ctx context.Context, bucket, key, contentType string, ttl time.Duration) (uploadURL string, fileURL string, err error) {
 	if !validBuckets[bucket] {
 		return "", "", fmt.Errorf("storage: unknown bucket %q", bucket)
 	}
-
-	params := url.Values{}
-	u, err := c.minio.PresignedPutObject(ctx, bucket, key, ttl)
+	u, err := c.minio.PresignHeader(ctx, http.MethodPut, c.physical(bucket), key, ttl, nil,
+		http.Header{"Content-Type": []string{contentType}})
 	if err != nil {
 		return "", "", fmt.Errorf("storage: presign put %s/%s: %w", bucket, key, err)
 	}
-	_ = params
+	return u.String(), c.fileURL(bucket, key), nil
+}
 
-	fileURL = fmt.Sprintf("%s/%s/%s", c.publicURL, bucket, key)
-	return u.String(), fileURL, nil
+func (c *Client) fileURL(bucket, key string) string {
+	return fmt.Sprintf("%s/%s/%s", c.publicURL, c.physical(bucket), key)
 }
 
 // PresignGet generates a pre-signed GET URL for private buckets (loading-photos, delivery-photos, attachments).
 func (c *Client) PresignGet(ctx context.Context, bucket, key string, ttl time.Duration) (string, error) {
-	u, err := c.minio.PresignedGetObject(ctx, bucket, key, ttl, nil)
+	u, err := c.minio.PresignedGetObject(ctx, c.physical(bucket), key, ttl, nil)
 	if err != nil {
 		return "", fmt.Errorf("storage: presign get %s/%s: %w", bucket, key, err)
 	}
@@ -99,13 +109,13 @@ func (c *Client) PutObject(ctx context.Context, bucket, key, contentType string,
 	if !validBuckets[bucket] {
 		return "", fmt.Errorf("storage: unknown bucket %q", bucket)
 	}
-	_, err := c.minio.PutObject(ctx, bucket, key, bytes.NewReader(data), int64(len(data)),
+	_, err := c.minio.PutObject(ctx, c.physical(bucket), key, bytes.NewReader(data), int64(len(data)),
 		minio.PutObjectOptions{ContentType: contentType},
 	)
 	if err != nil {
 		return "", fmt.Errorf("storage: put %s/%s: %w", bucket, key, err)
 	}
-	return fmt.Sprintf("%s/%s/%s", c.publicURL, bucket, key), nil
+	return c.fileURL(bucket, key), nil
 }
 
 // Locate splits a file URL this client issued into bucket and key; ok is
@@ -115,7 +125,11 @@ func (c *Client) Locate(fileURL string) (bucket, key string, ok bool) {
 	if !ok {
 		return "", "", false
 	}
-	bucket, key, ok = strings.Cut(rest, "/")
+	physical, key, ok := strings.Cut(rest, "/")
+	if !ok {
+		return "", "", false
+	}
+	bucket, ok = strings.CutPrefix(physical, c.prefix)
 	if !ok || !validBuckets[bucket] || key == "" || strings.Contains(key, "..") {
 		return "", "", false
 	}
@@ -138,7 +152,7 @@ func (c *Client) RemoveByURL(ctx context.Context, fileURL string) error {
 	if !ok {
 		return nil
 	}
-	if err := c.minio.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{}); err != nil {
+	if err := c.minio.RemoveObject(ctx, c.physical(bucket), key, minio.RemoveObjectOptions{}); err != nil {
 		return fmt.Errorf("storage: remove %s/%s: %w", bucket, key, err)
 	}
 	return nil
@@ -153,19 +167,19 @@ var publicBuckets = []string{BucketProfileImages, BucketPlantImages, BucketMarke
 // provisioned by infra.
 func (c *Client) EnsureBuckets(ctx context.Context) error {
 	for bucket := range validBuckets {
-		exists, err := c.minio.BucketExists(ctx, bucket)
+		exists, err := c.minio.BucketExists(ctx, c.physical(bucket))
 		if err != nil {
 			return fmt.Errorf("storage: check bucket %s: %w", bucket, err)
 		}
 		if !exists {
-			if err := c.minio.MakeBucket(ctx, bucket, minio.MakeBucketOptions{}); err != nil {
+			if err := c.minio.MakeBucket(ctx, c.physical(bucket), minio.MakeBucketOptions{}); err != nil {
 				return fmt.Errorf("storage: create bucket %s: %w", bucket, err)
 			}
 		}
 	}
 	for _, bucket := range publicBuckets {
-		policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/*"]}]}`, bucket)
-		if err := c.minio.SetBucketPolicy(ctx, bucket, policy); err != nil {
+		policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/*"]}]}`, c.physical(bucket))
+		if err := c.minio.SetBucketPolicy(ctx, c.physical(bucket), policy); err != nil {
 			return fmt.Errorf("storage: make %s public: %w", bucket, err)
 		}
 	}
