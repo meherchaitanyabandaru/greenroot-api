@@ -640,6 +640,9 @@ def journey_quotation():
     mq = expect("assigned manager sees it", "GET", f"/quotations/{qid}", manager.token)["quotation"]
     check("…recipient hidden from the manager", not mq.get("recipient_mobile") and not mq.get("recipient_name"), mq)
     expect("owner cannot edit while a manager is assigned", "PUT", f"/quotations/{qid}", owner.token, quote(notes="owner edit"), status=403)
+    oq = expect("owner opens the assigned quotation", "GET", f"/quotations/{qid}", owner.token)["quotation"]
+    check("…its capabilities say the owner cannot edit (no pencil that then fails)", oq["capabilities"]["can_edit"] is False, oq["capabilities"])
+    check("…the assigned manager can", mq["capabilities"]["can_edit"] is True, mq["capabilities"])
     out = expect("assigned manager edits", "PUT", f"/quotations/{qid}", manager.token,
                  quote(items=[{"plant_id": mango, "quantity": 20, "unit_price": 150, "total_price": 3000}, {"plant_id": jamun, "quantity": 5, "unit_price": 80, "total_price": 400}]))
     check("…total recalculated to 3400", float(out["quotation"]["total_amount"]) == 3400, out["quotation"]["total_amount"])

@@ -62,7 +62,9 @@ func BuildCapabilities(actor ActorContext, q Quotation) *QuotationCapabilities {
 	editable := IsEditable(status) && q.ConvertedOrderID == nil
 	isCustomerSent := status == "CUSTOMER_SENT" && !isExpiredTime(q.ValidUntil)
 
-	assignedToOther := q.AssignedManagerUserID != nil && *q.AssignedManagerUserID != actor.UserID && !isOwnerRole
+	// Exclusive editor, as Update enforces: once assigned, only that manager
+	// edits (the owner too must reassign or unassign first); admins excepted.
+	assignedToOther := q.AssignedManagerUserID != nil && *q.AssignedManagerUserID != actor.UserID && !isAdmin
 
 	return &QuotationCapabilities{
 		CanEdit:              isSeller && editable && !assignedToOther,
