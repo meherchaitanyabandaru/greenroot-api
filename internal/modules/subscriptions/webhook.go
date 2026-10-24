@@ -57,7 +57,7 @@ func (s *Service) HandleRazorpayWebhook(ctx context.Context, body []byte, signat
 		if p.ID == "" || p.OrderID == "" {
 			return http.StatusOK
 		}
-		ok, err := s.ApplyGatewayPayment(ctx, p.OrderID, p.ID)
+		res, err := s.ApplyGatewayPayment(ctx, p.OrderID, p.ID)
 		if errors.Is(err, razorpay.ErrRejected) {
 			// Razorpay refused the lookup (unknown or invalid id): a retry can
 			// never succeed, so acknowledge instead of retrying for days.
@@ -68,9 +68,16 @@ func (s *Service) HandleRazorpayWebhook(ctx context.Context, body []byte, signat
 			slog.Error("razorpay webhook: will retry", "event", ev.Event, "order_id", p.OrderID, "payment_id", p.ID, "error", err)
 			return http.StatusInternalServerError
 		}
-		if !ok {
-			// Charged but a rule refuses it (e.g. paused meanwhile): refund by hand.
-			slog.Error("razorpay webhook: paid but not applied — refund manually", "order_id", p.OrderID, "payment_id", p.ID)
+		if res.Refusal != nil {
+			// Charged but a rule refuses it: a retry cannot help, so it goes
+			// to the admin queue (and alarm) instead of only a log line.
+			orderID, uid, amount := p.OrderID, res.UserID, float64(res.AmountPaise)/100
+			if err := s.recordIssue(ctx, PaymentIssue{
+				IssueType: IssuePaidNotApplied, Provider: providerRazorpay, ProviderOrderID: &orderID,
+				ProviderPaymentID: p.ID, UserID: &uid, Amount: &amount, Reason: res.Refusal.Error(),
+			}); err != nil {
+				return http.StatusInternalServerError // keep the event until it is recorded
+			}
 		}
 	case "refund.processed", "refund.failed":
 		r := ev.Payload.Refund.Entity
@@ -79,7 +86,13 @@ func (s *Service) HandleRazorpayWebhook(ctx context.Context, body []byte, signat
 				return http.StatusInternalServerError
 			}
 			if ev.Event == "refund.failed" {
-				slog.Error("razorpay webhook: refund failed — the customer has not been paid back", "refund_id", r.ID, "payment_id", r.PaymentID)
+				refundID := r.ID
+				if err := s.recordIssue(ctx, PaymentIssue{
+					IssueType: IssueRefundFailed, Provider: providerRazorpay, ProviderPaymentID: r.PaymentID,
+					ProviderRefundID: &refundID, Reason: "Razorpay reports the refund failed: the customer has not been paid back",
+				}); err != nil {
+					return http.StatusInternalServerError
+				}
 			}
 		}
 	}

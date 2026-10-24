@@ -380,6 +380,22 @@ func (s *Service) Cancel(ctx context.Context, actor ActorContext, subscriptionID
 	if err := s.canAccess(actor, *current); err != nil {
 		return UserSubscription{}, err
 	}
+	if IsTerminal(current.Status) {
+		return UserSubscription{}, ErrConflict // already cancelled or expired
+	}
+	// By default the owner keeps what they paid for: the subscription runs
+	// to end_date and then becomes CANCELLED. cancel_immediately ends it now
+	// (no refund; refunds are an admin action on the payment).
+	paidAhead := current.EndDate != nil && !current.EndDate.Before(businessDay(time.Now()))
+	if !input.CancelImmediately && paidAhead && (current.Status == statusActive || current.Status == statusTrial) {
+		subscription, err := s.repository.RequestCancel(ctx, subscriptionID)
+		if err != nil {
+			return UserSubscription{}, err
+		}
+		s.audit(ctx, actor, subscription.ID, actionUpdate, map[string]any{
+			"cancel_requested": true, "ends_on": subscription.EndDate, "reason": stringOrEmpty(input.Reason)})
+		return enrichSubscription(actor, *subscription), nil
+	}
 	subscription, err := s.repository.UpdateStatus(ctx, subscriptionID, statusCancelled)
 	if err != nil {
 		return UserSubscription{}, err

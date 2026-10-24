@@ -16,6 +16,10 @@ import (
 var ErrNotFound = apperrs.ErrNotFound
 
 type Repository interface {
+	RequestCancel(ctx context.Context, subscriptionID int64) (*UserSubscription, error)
+	RecordPaymentIssue(ctx context.Context, issue PaymentIssue) error
+	ListPaymentIssues(ctx context.Context, status string) ([]PaymentIssue, error)
+	ResolvePaymentIssue(ctx context.Context, id, userID int64, note string) (*PaymentIssue, error)
 	ListPlans(ctx context.Context, activeOnly bool) ([]SubscriptionPlan, error)
 	FindPlan(ctx context.Context, planID int64) (*SubscriptionPlan, error)
 	FindPlanByCode(ctx context.Context, code string) (*SubscriptionPlan, error)
@@ -328,6 +332,7 @@ func (r *PostgresRepository) Renew(ctx context.Context, subscriptionID int64, in
 			status = 'ACTIVE',
 			is_auto_renew = $4,
 			plan_id = $5,
+			cancel_requested_at = NULL,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE user_subscription_id = $1
 	`
@@ -470,7 +475,8 @@ func baseSubscriptionSelect() string {
 			lp.status, lp.paid_at, lp.provider, lp.provider_payment_id,
 			lp.provider_order_id, lp.created_at,
 			NULLIF(TRIM(CONCAT_WS(' ', su.first_name, su.last_name)), ''), su.mobile,
-			(SELECT n.nursery_name FROM public.nurseries n WHERE n.owner_user_id = us.user_id AND n.status <> 'DELETED' ORDER BY n.nursery_id LIMIT 1)
+			(SELECT n.nursery_name FROM public.nurseries n WHERE n.owner_user_id = us.user_id AND n.status <> 'DELETED' ORDER BY n.nursery_id LIMIT 1),
+			us.cancel_requested_at
 		FROM public.user_subscriptions us
 		LEFT JOIN public.users su ON su.user_id = us.user_id
 		JOIN public.subscription_plans sp ON sp.plan_id = us.plan_id
@@ -549,6 +555,7 @@ func scanSubscription(row interface{ Scan(dest ...any) error }) (UserSubscriptio
 	var paymentCode, paymentMethod, txRef, paymentStatus, provider, providerPaymentID, providerOrderID sql.NullString
 	var paymentDate, paymentCreatedAt sql.NullTime
 	var userName, userMobile, nurseryName sql.NullString
+	var cancelRequestedAt sql.NullTime
 	if err := row.Scan(
 		&subscription.ID,
 		&subscription.SubscriptionCode,
@@ -576,8 +583,12 @@ func scanSubscription(row interface{ Scan(dest ...any) error }) (UserSubscriptio
 		&userName,
 		&userMobile,
 		&nurseryName,
+		&cancelRequestedAt,
 	); err != nil {
 		return UserSubscription{}, err
+	}
+	if cancelRequestedAt.Valid {
+		subscription.CancelRequestedAt = &cancelRequestedAt.Time
 	}
 	if userName.Valid {
 		subscription.UserName = &userName.String
@@ -853,4 +864,22 @@ func scanPromo(row interface{ Scan(dest ...any) error }) (*SubscriptionPromo, er
 		p.ApplicableCycles = []string{}
 	}
 	return &p, nil
+}
+
+// RequestCancel marks a running subscription to end as CANCELLED at end_date
+// (no auto-renew meanwhile); ErrConflict when it is not running.
+func (r *PostgresRepository) RequestCancel(ctx context.Context, subscriptionID int64) (*UserSubscription, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE public.user_subscriptions
+		SET cancel_requested_at = COALESCE(cancel_requested_at, CURRENT_TIMESTAMP), is_auto_renew = false, updated_at = CURRENT_TIMESTAMP
+		WHERE user_subscription_id = $1 AND status IN ('ACTIVE', 'TRIAL')`, subscriptionID)
+	if err != nil {
+		return nil, err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return nil, err
+	} else if affected == 0 {
+		return nil, ErrConflict
+	}
+	return r.FindByID(ctx, subscriptionID)
 }

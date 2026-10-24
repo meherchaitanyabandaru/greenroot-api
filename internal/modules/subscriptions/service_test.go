@@ -28,6 +28,7 @@ type mockRepo struct {
 	recorded       []CreatePaymentInput
 	refundStatus   map[string]string // refund id → status (webhook)
 	lastRefund     *ApplyRefundInput
+	issues         []PaymentIssue
 
 	nextPlanID  int64
 	nextSubID   int64
@@ -191,6 +192,20 @@ func (m *mockRepo) Renew(_ context.Context, id int64, input RenewSubscriptionInp
 	s.StartDate = input.StartDate
 	s.EndDate = &input.EndDate
 	s.PlanID = input.PlanID
+	s.CancelRequestedAt = nil
+	return s, nil
+}
+
+func (m *mockRepo) RequestCancel(_ context.Context, id int64) (*UserSubscription, error) {
+	s, ok := m.subs[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	if s.Status != statusActive && s.Status != statusTrial {
+		return nil, ErrConflict
+	}
+	now := time.Now()
+	s.CancelRequestedAt, s.AutoRenew = &now, false
 	return s, nil
 }
 
@@ -742,6 +757,42 @@ func TestCancel_OtherUserForbidden(t *testing.T) {
 	}
 }
 
+// cancel_immediately used to be ignored: every cancel threw away the paid
+// days. Now a cancel runs to end_date unless the owner asks for "now".
+func TestCancel_KeepsThePaidPeriodUnlessImmediate(t *testing.T) {
+	repo := newMock()
+	sub := repo.seedSub(1, 10, 1, "ACTIVE")
+	end := businessDay(time.Now()).AddDate(0, 0, 20)
+	sub.EndDate, sub.AutoRenew = &end, true
+
+	got, err := svc(repo).Cancel(context.Background(), ownerActor(10), 1, CancelSubscriptionRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != statusActive || got.CancelRequestedAt == nil || got.AutoRenew {
+		t.Fatalf("want ACTIVE until %v with a cancel request and no auto-renew, got %+v", end, got)
+	}
+	if got.Capabilities != nil && got.Capabilities.CanCancel {
+		t.Error("a requested cancel cannot be requested again")
+	}
+
+	// Renewing means they changed their mind.
+	if _, err := repo.Renew(context.Background(), 1, RenewSubscriptionInput{EndDate: end.AddDate(0, 1, 0), PlanID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if repo.subs[1].CancelRequestedAt != nil {
+		t.Fatal("renewal must clear the cancel request")
+	}
+
+	got, err = svc(repo).Cancel(context.Background(), ownerActor(10), 1, CancelSubscriptionRequest{CancelImmediately: true})
+	if err != nil || got.Status != statusCancelled {
+		t.Fatalf("cancel_immediately: %v %v", got.Status, err)
+	}
+	if _, err := svc(repo).Cancel(context.Background(), ownerActor(10), 1, CancelSubscriptionRequest{}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("cancelling a cancelled subscription: %v", err)
+	}
+}
+
 // ─── ListPayments ─────────────────────────────────────────────────────────────
 
 func TestListPayments_AdminSuccess(t *testing.T) {
@@ -1138,4 +1189,36 @@ func TestCalendarDaysLeft(t *testing.T) {
 			t.Errorf("now %v: want %d, got %d", c.now, c.want, got)
 		}
 	}
+}
+
+func (m *mockRepo) RecordPaymentIssue(_ context.Context, issue PaymentIssue) error {
+	for i := range m.issues {
+		if m.issues[i].ProviderPaymentID == issue.ProviderPaymentID && m.issues[i].IssueType == issue.IssueType {
+			m.issues[i].Reason = issue.Reason
+			return nil
+		}
+	}
+	issue.ID, issue.Status = int64(len(m.issues)+1), IssueOpen
+	m.issues = append(m.issues, issue)
+	return nil
+}
+
+func (m *mockRepo) ListPaymentIssues(_ context.Context, status string) ([]PaymentIssue, error) {
+	out := []PaymentIssue{}
+	for _, i := range m.issues {
+		if status == "" || i.Status == status {
+			out = append(out, i)
+		}
+	}
+	return out, nil
+}
+
+func (m *mockRepo) ResolvePaymentIssue(_ context.Context, id, userID int64, note string) (*PaymentIssue, error) {
+	for i := range m.issues {
+		if m.issues[i].ID == id && m.issues[i].Status == IssueOpen {
+			m.issues[i].Status, m.issues[i].ResolutionNote, m.issues[i].ResolvedByUserID = IssueResolved, &note, &userID
+			return &m.issues[i], nil
+		}
+	}
+	return nil, ErrNotFound
 }

@@ -49,6 +49,11 @@ func (m Module) RegisterRoutes(router chi.Router) {
 
 	// Razorpay → us; authenticated by X-Razorpay-Signature, not a user token.
 	router.Post("/webhooks/razorpay", m.handler.RazorpayWebhook)
+	// Admin: Razorpay money that needs a manual action (see payment_issues.go).
+	router.Route("/payment-issues", func(r chi.Router) {
+		r.Get("/", m.handler.ListPaymentIssues)
+		r.Post("/{id}/resolve", m.handler.ResolvePaymentIssue)
+	})
 
 	router.Route("/subscriptions", func(r chi.Router) {
 		r.Get("/", m.handler.List)

@@ -20,6 +20,8 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/messaging"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sms"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -47,11 +49,20 @@ type Service struct {
 	auditSvc   *auditlog.Service
 	redis      redis.Cmdable
 	liveGeo    *redisgeo.Service
-	codeKey    []byte // derives delivery codes; see deliveryCode
+	codeKey    []byte        // derives delivery codes; see deliveryCode
+	events     EventNotifier // SMS/email events; nil = in-app only
 }
 
 // SetDeliveryCodeKey sets the server secret delivery codes are derived from.
 func (s *Service) SetDeliveryCodeKey(key []byte) { s.codeKey = key }
+
+// EventNotifier raises SMS/email events (messaging.Notifier).
+type EventNotifier interface {
+	NotifyAsync(ev messaging.Event)
+}
+
+// SetEvents turns on SMS/email for delivery events (nil = in-app only).
+func (s *Service) SetEvents(n EventNotifier) { s.events = n }
 
 func NewService(repository Repository, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
 	var rdb redis.Cmdable
@@ -773,6 +784,16 @@ func (s *Service) Deliver(ctx context.Context, actor ActorContext, dispatchID in
 			s.enqueueNotification(ctx, *dispatch.CustomerUserID, notifyqueue.EventOrderDelivered,
 				"Delivery marked without your confirmation",
 				fmt.Sprintf("%s was marked delivered by the nursery: %s. If you did not receive your plants, report a problem in the app within 48 hours.", dispatch.DispatchCode, *reason))
+			// The dispute window only protects a customer who hears about it:
+			// also SMS and email, not just the in-app inbox and push.
+			if s.events != nil {
+				id := dispatch.ID
+				s.events.NotifyAsync(messaging.Event{
+					Code: sms.TemplateDeliveryUnconfirmed, UserID: *dispatch.CustomerUserID,
+					Values:        map[string]string{"dispatch_code": dispatch.DispatchCode, "reason": *reason},
+					ReferenceType: "DISPATCH", ReferenceID: &id,
+				})
+			}
 		} else {
 			s.enqueueNotification(ctx, *dispatch.CustomerUserID, notifyqueue.EventOrderDelivered,
 				"Order delivered", fmt.Sprintf("%s was delivered with your code.", dispatch.DispatchCode))

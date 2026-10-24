@@ -19,6 +19,7 @@ type Config struct {
 	SMS      SMSConfig
 	Email    EmailConfig
 	Razorpay RazorpayConfig
+	Push     PushConfig
 	Client   ClientAppConfig
 }
 
@@ -117,6 +118,11 @@ type EmailConfig struct {
 
 // RazorpayConfig: both keys set = real Razorpay checkout for subscriptions;
 // either empty = mock payments (local dev, journeys).
+// PushConfig: FCM HTTP v1 with a Google service account (JSON key).
+type PushConfig struct {
+	FCMServiceAccountJSON string
+}
+
 type RazorpayConfig struct {
 	KeyID     string
 	KeySecret string
@@ -220,6 +226,9 @@ func Load() Config {
 			KeyID:         getString("RAZORPAY_KEY_ID", ""),
 			KeySecret:     getString("RAZORPAY_KEY_SECRET", ""),
 			WebhookSecret: getString("RAZORPAY_WEBHOOK_SECRET", ""),
+		},
+		Push: PushConfig{
+			FCMServiceAccountJSON: getString("FCM_SERVICE_ACCOUNT_JSON", ""),
 		},
 	}
 }

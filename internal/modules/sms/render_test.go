@@ -139,11 +139,13 @@ func TestSeedTemplatesFitOneSMS(t *testing.T) {
 		{Body: "Payment of Rs.{#numeric#}.{#numeric#} received for GreenRoot order ORD-{#numeric#}-{#numeric#}. Payment ref PAY-{#numeric#}-{#numeric#}. - GreenRoot", Variables: []string{"amount_rupees", "amount_paise", "order_date", "order_seq", "payment_date", "payment_seq"}},
 		{Body: "Payment of Rs.{#numeric#}.{#numeric#} received for your GreenRoot subscription. Payment ref PAY-{#numeric#}-{#numeric#}. - GreenRoot", Variables: []string{"amount_rupees", "amount_paise", "payment_date", "payment_seq"}},
 		{Body: "Your payment of Rs.{#numeric#}.{#numeric#} on GreenRoot (ref PAY-{#numeric#}-{#numeric#}) was not successful. Please try again. - GreenRoot", Variables: []string{"amount_rupees", "amount_paise", "payment_date", "payment_seq"}},
+		{Body: "GreenRoot delivery DSP-{#numeric#}-{#numeric#} was marked done by the nursery without your code. Not received? Report it in the app within 48 hours. - GreenRoot", Variables: []string{"dispatch_date", "dispatch_seq"}},
 	}
 	values := map[string]string{
 		"otp": "123456", "valid_minutes": "5", "mobile_last4": "0000",
 		"amount_rupees": "1250000", "amount_paise": "50",
 		"order_date": "20261016", "order_seq": "12345", "payment_date": "20261016", "payment_seq": "12345",
+		"dispatch_date": "20261016", "dispatch_seq": "12345",
 	}
 	for _, spec := range seeds {
 		spec.Category = CategoryServiceImplicit

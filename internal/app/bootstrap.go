@@ -20,6 +20,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/market"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/notifications"
 	platformemail "github.com/meherchaitanyabandaru/greenroot-api/platform/email"
+	"github.com/meherchaitanyabandaru/greenroot-api/platform/fcm"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/razorpay"
 	platformsms "github.com/meherchaitanyabandaru/greenroot-api/platform/sms"
@@ -132,6 +133,19 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		logManager.Logger().Warn("ALLOW_MOCK_PROVIDERS (staging): email is mock; nothing is delivered")
 	}
 
+	pushClient, err := fcm.New(cfg.Push.FCMServiceAccountJSON)
+	if err != nil {
+		_ = logManager.Close()
+		_ = db.Close()
+		return nil, err
+	}
+	var push notifications.Sender = notifications.MockSender{}
+	if pushClient != nil {
+		push = notifications.NewPushSender(pushClient, notifications.NewPushStore(db), logManager.Logger())
+	} else if cfg.IsProduction() {
+		logManager.Logger().Warn("ALLOW_MOCK_PROVIDERS (staging): FCM_SERVICE_ACCOUNT_JSON not set, push notifications are in-app only")
+	}
+
 	// Rate limits, the token blocklist, suspensions, OTP storage, locks and
 	// idempotency all live in Redis: production refuses to run without it
 	// rather than silently switching them off.
@@ -154,6 +168,7 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		SMS:        smsProvider,
 		Email:      emailProvider,
 		Razorpay:   razorpay.New(cfg.Razorpay.KeyID, cfg.Razorpay.KeySecret),
+		Push:       push,
 	}
 	if deps.Razorpay == nil && cfg.IsProduction() {
 		deps.Logger.Warn("ALLOW_MOCK_PROVIDERS (staging): RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET not set, subscription payments are mock")
@@ -180,7 +195,7 @@ func (a *App) Run(ctx context.Context) error {
 	go runCronJobs(ctx, a.deps)
 	if a.deps.Redis != nil {
 		go market.StartCounterFlusher(ctx, a.deps.DB, a.deps.Redis, a.deps.Logger, 10*time.Second)
-		go notifications.StartQueueWorker(ctx, a.deps.DB, a.deps.Redis, notifications.MockSender{}, a.deps.Logger)
+		go notifications.StartQueueWorker(ctx, a.deps.DB, a.deps.Redis, a.deps.Push, a.deps.Logger)
 	}
 	go runRedisExpiryJobs(ctx, a.deps)
 
@@ -259,7 +274,8 @@ func runCronJobs(ctx context.Context, deps Dependencies) {
 func expireSubscriptions(ctx context.Context, deps Dependencies) {
 	const q = `
 		UPDATE public.user_subscriptions
-		SET status = 'EXPIRED', updated_at = CURRENT_TIMESTAMP
+		SET status = CASE WHEN cancel_requested_at IS NOT NULL THEN 'CANCELLED' ELSE 'EXPIRED' END,
+			is_auto_renew = false, updated_at = CURRENT_TIMESTAMP
 		WHERE status IN ('ACTIVE', 'TRIAL')
 		  AND end_date IS NOT NULL
 		  AND end_date < CURRENT_DATE

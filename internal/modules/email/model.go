@@ -15,6 +15,7 @@ const (
 	TemplatePaymentReceivedOrder        = "PAYMENT_RECEIVED_ORDER"
 	TemplatePaymentReceivedSubscription = "PAYMENT_RECEIVED_SUBSCRIPTION"
 	TemplatePaymentFailed               = "PAYMENT_FAILED"
+	TemplateDeliveryUnconfirmed         = "DELIVERY_UNCONFIRMED"
 )
 
 var SystemTemplateCodes = []string{
@@ -22,6 +23,7 @@ var SystemTemplateCodes = []string{
 	TemplatePaymentReceivedOrder,
 	TemplatePaymentReceivedSubscription,
 	TemplatePaymentFailed,
+	TemplateDeliveryUnconfirmed,
 }
 
 // email_messages.status values.

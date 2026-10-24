@@ -17,6 +17,7 @@ func safeProduction() Config {
 		SMS:      SMSConfig{Provider: "msg91"},
 		Email:    EmailConfig{Provider: "ses"},
 		Razorpay: RazorpayConfig{KeyID: "rzp_live_x", KeySecret: "live-secret", WebhookSecret: "wh-secret"},
+		Push:     PushConfig{FCMServiceAccountJSON: `{"project_id":"greenroot"}`},
 	}
 }
 
@@ -55,6 +56,7 @@ func TestValidate_EachUnsafeSetting(t *testing.T) {
 		"no razorpay keys":    {func(c *Config) { c.Razorpay = RazorpayConfig{} }, "RAZORPAY_KEY_ID"},
 		"razorpay test key":   {func(c *Config) { c.Razorpay.KeyID = "rzp_test_x" }, "test key"},
 		"no webhook secret":   {func(c *Config) { c.Razorpay.WebhookSecret = "" }, "RAZORPAY_WEBHOOK_SECRET"},
+		"no push":             {func(c *Config) { c.Push.FCMServiceAccountJSON = "" }, "FCM_SERVICE_ACCOUNT_JSON"},
 		"no trusted proxies":  {func(c *Config) { c.HTTP.TrustedProxies = nil }, "TRUSTED_PROXIES"},
 		"no delivery secret":  {func(c *Config) { c.JWT.DeliveryCodeSecret = "" }, "DELIVERY_CODE_SECRET"},
 		"delivery = jwt":      {func(c *Config) { c.JWT.DeliveryCodeSecret = c.JWT.Secret }, "DELIVERY_CODE_SECRET"},

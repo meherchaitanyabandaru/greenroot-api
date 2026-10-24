@@ -150,6 +150,9 @@ func (c Config) productionProblems() []error {
 		if isMock(c.SMS.Provider) {
 			add("SMS_PROVIDER is mock: OTP is the fixed dev code 123456 for every account")
 		}
+		if strings.TrimSpace(c.Push.FCMServiceAccountJSON) == "" {
+			add("FCM_SERVICE_ACCOUNT_JSON is not set: no push notification reaches a phone (delivery overrides, order updates)")
+		}
 		if isMock(c.Email.Provider) {
 			add("EMAIL_PROVIDER is mock: no email is delivered")
 		}

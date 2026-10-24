@@ -374,3 +374,21 @@ func int64OrNil(v *int64) any {
 	}
 	return *v
 }
+
+// DeactivateDeviceToken retires a token FCM no longer accepts.
+func (r *PostgresRepository) DeactivateDeviceToken(ctx context.Context, token string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE public.user_notification_devices SET is_active = false, updated_at = CURRENT_TIMESTAMP
+		WHERE fcm_token = $1 AND is_active`, token)
+	return err
+}
+
+// MarkDelivery records how a notification's push went.
+func (r *PostgresRepository) MarkDelivery(ctx context.Context, notificationID int64, status string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE public.notifications
+		SET status = $2::varchar, sent_at = CASE WHEN $2::varchar = 'SENT' THEN CURRENT_TIMESTAMP ELSE sent_at END,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE notification_id = $1`, notificationID, status)
+	return err
+}
