@@ -102,6 +102,7 @@ type StorageConfig struct {
 	Region          string
 	PublicURL       string // base URL for constructing permanent file URLs
 	BucketPrefix    string // e.g. "greenroot-prod-": S3 bucket names are global
+	UseIAMRole      bool   // AWS: credentials from the EC2 instance role, no keys
 }
 
 // SMSConfig selects the outbound SMS gateway. DLT identifiers (PE ID, headers,
@@ -210,6 +211,7 @@ func Load() Config {
 			Region:          getString("STORAGE_REGION", "us-east-1"),
 			PublicURL:       getString("STORAGE_PUBLIC_URL", "http://localhost:9000"),
 			BucketPrefix:    getString("STORAGE_BUCKET_PREFIX", ""),
+			UseIAMRole:      getBool("STORAGE_USE_IAM_ROLE", false),
 		},
 		Redis: RedisConfig{
 			Addr:     getString("REDIS_ADDR", ""),

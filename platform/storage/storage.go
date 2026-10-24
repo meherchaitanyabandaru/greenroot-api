@@ -50,6 +50,9 @@ type Config struct {
 	// "greenroot-prod-" stores "attachments" as "greenroot-prod-attachments".
 	// Code keeps using the plain names. Empty for local MinIO.
 	BucketPrefix string
+	// UseIAMRole takes credentials from the EC2 instance role (IMDSv2)
+	// instead of AccessKeyID/SecretAccessKey: no long-lived keys to leak.
+	UseIAMRole bool
 }
 
 type Client struct {
@@ -62,8 +65,12 @@ type Client struct {
 func (c *Client) physical(bucket string) string { return c.prefix + bucket }
 
 func New(cfg Config) (*Client, error) {
+	creds := credentials.NewStaticV4(cfg.AccessKeyID, cfg.SecretAccessKey, "")
+	if cfg.UseIAMRole {
+		creds = credentials.NewIAM("") // instance metadata; refreshed before expiry
+	}
 	mc, err := minio.New(cfg.Endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
+		Creds:  creds,
 		Secure: cfg.UseSSL,
 		Region: cfg.Region,
 	})

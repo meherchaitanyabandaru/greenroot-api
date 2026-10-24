@@ -97,6 +97,20 @@ func TestValidate_ListsAllProblemsAndAllowsMockOnlyInStaging(t *testing.T) {
 	}
 }
 
+// On EC2 the instance role replaces storage keys; the MinIO defaults that
+// remain in the unused key fields must not block the start.
+func TestValidate_StorageIAMRoleNeedsNoKeys(t *testing.T) {
+	cfg := safeProduction()
+	cfg.Storage.AccessKeyID, cfg.Storage.SecretAccessKey = devStorageKey, devStorageSecret
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("MinIO default keys accepted without the IAM role")
+	}
+	cfg.Storage.UseIAMRole = true
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("IAM role: %v", err)
+	}
+}
+
 func TestValidate_StagingAcceptsRazorpayTestKeys(t *testing.T) {
 	cfg := safeProduction()
 	cfg.App.Env = "staging"

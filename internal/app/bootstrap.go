@@ -99,6 +99,7 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		Region:          cfg.Storage.Region,
 		PublicURL:       cfg.Storage.PublicURL,
 		BucketPrefix:    cfg.Storage.BucketPrefix,
+		UseIAMRole:      cfg.Storage.UseIAMRole,
 	})
 	if err != nil {
 		_ = logManager.Close()
