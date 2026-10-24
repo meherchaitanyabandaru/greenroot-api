@@ -1,0 +1,2 @@
+# Sample JWT from jwt.io in clientapp/scrub_test.go: proves crash reports strip tokens. Not a credential.
+957b9c87679211a532eaafc61fbd0167c6334a50:internal/modules/clientapp/scrub_test.go:jwt:10

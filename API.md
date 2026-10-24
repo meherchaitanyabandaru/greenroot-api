@@ -6,7 +6,7 @@
 
 ## Stack
 
-Go 1.26.9 · chi router · PostgreSQL + PostGIS · Redis (optional) · JWT/OTP auth (mobile + `123456` mock OTP in dev)
+Go 1.26.10 · chi router · PostgreSQL + PostGIS · Redis (optional) · JWT/OTP auth (mobile + `123456` mock OTP in dev)
 
 Run locally (port 8080):
 ```bash
