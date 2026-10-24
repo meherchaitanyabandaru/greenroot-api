@@ -9304,7 +9304,45 @@ components:
       type: object
       properties:
         dispatch:
-          $ref: '#/components/schemas/DispatchesDispatch'
+          $ref: '#/components/schemas/DispatchesPublicTrip'
+    DispatchesPublicTrip:
+      type: object
+      description: What an unauthenticated tracking link shows. No customer address or coordinates, phone numbers, people's names, notes or internal ids.
+      properties:
+        dispatch_code:
+          type: string
+        dispatch_status:
+          type: string
+        lifecycle:
+          type: object
+        seller_nursery_name:
+          type: string
+        vehicle_number:
+          type: string
+        dispatch_date:
+          type: string
+          format: date-time
+        trip_started_at:
+          type: string
+          format: date-time
+        delivery_date:
+          type: string
+          format: date-time
+        trip_events:
+          type: array
+          description: Only while the trip is DISPATCHED or IN_TRANSIT.
+          items:
+            type: object
+            properties:
+              event_type:
+                type: string
+              latitude:
+                type: number
+              longitude:
+                type: number
+              created_at:
+                type: string
+                format: date-time
     DispatchesTripEvent:
       type: object
       properties:

@@ -89,12 +89,12 @@ func run(args []string) error {
 // cleanFile writes to a temp file and renames it at the end, so a half-written
 // seed is never mistaken for a complete one.
 func cleanFile(inPath, outPath string) (int, error) {
-	in, err := os.Open(inPath)
+	in, err := os.Open(filepath.Clean(inPath)) // #nosec G304 -- operator CLI: the path is the operator's own argument
 	if err != nil {
 		return 0, err
 	}
 	defer in.Close()
-	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o750); err != nil {
 		return 0, err
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(outPath), ".botanical_names-*.csv")
@@ -109,10 +109,7 @@ func cleanFile(inPath, outPath string) (int, error) {
 	if err != nil {
 		return n, err
 	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil { // CreateTemp makes it owner-only
-		return n, err
-	}
-	return n, os.Rename(tmp.Name(), outPath)
+	return n, os.Rename(tmp.Name(), outPath) // owner-only (CreateTemp's 0600); git keeps no read bits
 }
 
 func clean(r io.Reader, w io.Writer) (int, error) {
@@ -232,7 +229,7 @@ func load(path string, batchSize int, restart bool) error {
 }
 
 func loadFile(ctx context.Context, db *sql.DB, path string, batchSize int, restart bool) error {
-	f, err := os.Open(path)
+	f, err := os.Open(filepath.Clean(path)) // #nosec G304 -- operator CLI: the path is the operator's own argument
 	if err != nil {
 		return err
 	}

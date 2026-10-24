@@ -155,7 +155,7 @@ func (r *PostgresRepository) CreateAd(ctx context.Context, nurseryID, userID int
 		    title, description, quantity, size_description, price_per_unit, price_unit, photos,
 		    pickup_address, pickup_landmark, pickup_latitude, pickup_longitude, pickup_location,
 		    pickup_gps_accuracy_meters, pickup_location_source, pickup_confirmed_by_user_id, pickup_confirmed_at,
-		    ad_type, needed_by, is_road_accessible, is_truck_accessible, access_instructions)
+		    ad_type, needed_by_date, is_road_accessible, is_truck_accessible, access_instructions)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
 		    CASE WHEN $15::numeric IS NOT NULL AND $16::numeric IS NOT NULL
 		      THEN ST_SetSRID(ST_MakePoint($16::double precision, $15::double precision), 4326)::geography
@@ -178,7 +178,7 @@ func (r *PostgresRepository) CreateAd(ctx context.Context, nurseryID, userID int
 
 func (r *PostgresRepository) GetAd(ctx context.Context, id int64) (Ad, error) {
 	const q = `
-		SELECT ma.ad_id, ma.ad_code, ma.ad_type, ma.needed_by, ma.nursery_id, n.nursery_name,
+		SELECT ma.ad_id, ma.ad_code, ma.ad_type, ma.needed_by_date, ma.nursery_id, n.nursery_name,
 		       (n.status IN ('ACTIVE', 'APPROVED')) AS nursery_verified, n.mobile AS nursery_mobile,
 		       ma.created_by_user_id, ma.plant_id, ma.plant_name, ma.category_name,
 		       ma.title, ma.description, ma.quantity, ma.size_description,
@@ -301,7 +301,7 @@ func (r *PostgresRepository) listAds(ctx context.Context, filter, sort string, p
 
 	// #nosec G201 -- WHERE/ORDER BY fragments are fixed strings with $n placeholders (ORDER BY from an allowlist); values are bound args.
 	listQ := fmt.Sprintf(`
-		SELECT ma.ad_id, ma.ad_code, ma.ad_type, ma.needed_by, ma.nursery_id, n.nursery_name,
+		SELECT ma.ad_id, ma.ad_code, ma.ad_type, ma.needed_by_date, ma.nursery_id, n.nursery_name,
 		       (n.status IN ('ACTIVE', 'APPROVED')) AS nursery_verified, n.mobile AS nursery_mobile,
 		       ma.created_by_user_id, ma.plant_id, ma.plant_name, ma.category_name,
 		       ma.title, ma.description, ma.quantity, ma.size_description,
@@ -363,7 +363,7 @@ func (r *PostgresRepository) UpdateAd(ctx context.Context, id, userID int64, req
 		add("plant_name", *req.PlantName)
 	}
 	if req.NeededBy != nil {
-		addExpr("needed_by = NULLIF($1, '')::date", *req.NeededBy)
+		addExpr("needed_by_date = NULLIF($1, '')::date", *req.NeededBy)
 	}
 	if req.PlantID != nil {
 		add("plant_id", *req.PlantID)
@@ -488,7 +488,7 @@ func (r *PostgresRepository) ModerateAd(ctx context.Context, id int64, status st
 func (r *PostgresRepository) PostingBlockedUntil(ctx context.Context, nurseryID int64) (*time.Time, error) {
 	var until sql.NullTime
 	err := r.db.QueryRowContext(ctx,
-		`SELECT market_blocked_until FROM public.nurseries WHERE nursery_id = $1 AND market_blocked_until > NOW()`,
+		`SELECT market_blocked_until_at FROM public.nurseries WHERE nursery_id = $1 AND market_blocked_until_at > NOW()`,
 		nurseryID).Scan(&until)
 	if errors.Is(err, sql.ErrNoRows) || !until.Valid {
 		return nil, nil
@@ -787,14 +787,14 @@ func (r *PostgresRepository) AddOffer(ctx context.Context, enquiryID, userID, nu
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE public.market_enquiry_messages SET offer_status = 'WITHDRAWN'
-		 WHERE enquiry_id = $1 AND offer_status = 'PENDING'`, enquiryID); err != nil {
+		`UPDATE public.market_enquiry_messages SET status = 'WITHDRAWN'
+		 WHERE enquiry_id = $1 AND status = 'PENDING'`, enquiryID); err != nil {
 		return Message{}, err
 	}
 	var msgID int64
 	if err := tx.QueryRowContext(ctx,
 		`INSERT INTO public.market_enquiry_messages
-		   (enquiry_id, sent_by_user_id, sent_by_nursery_id, body, message_type, offer_price_per_unit, offer_quantity, offer_status)
+		   (enquiry_id, sent_by_user_id, sent_by_nursery_id, body, message_type, offer_price_per_unit, offer_quantity, status)
 		 VALUES ($1,$2,$3,$4,'OFFER',$5,$6,'PENDING') RETURNING message_id`,
 		enquiryID, userID, nurseryID, body, req.PricePerUnit, req.Quantity,
 	).Scan(&msgID); err != nil {
@@ -825,8 +825,8 @@ func (r *PostgresRepository) RespondToOffer(ctx context.Context, enquiryID, mess
 	var price float64
 	var qty sql.NullInt64
 	err = tx.QueryRowContext(ctx,
-		`UPDATE public.market_enquiry_messages SET offer_status = $4
-		 WHERE message_id = $1 AND enquiry_id = $2 AND offer_status = 'PENDING' AND sent_by_nursery_id <> $3
+		`UPDATE public.market_enquiry_messages SET status = $4
+		 WHERE message_id = $1 AND enquiry_id = $2 AND status = 'PENDING' AND sent_by_nursery_id <> $3
 		 RETURNING offer_price_per_unit, offer_quantity`,
 		messageID, enquiryID, nurseryID, next,
 	).Scan(&price, &qty)
@@ -873,8 +873,8 @@ func (r *PostgresRepository) SetEnquiryStatus(ctx context.Context, id int64, sta
 	}
 	// Nobody can answer an offer in a finished chat.
 	_, err = r.db.ExecContext(ctx,
-		`UPDATE public.market_enquiry_messages SET offer_status = 'WITHDRAWN'
-		 WHERE enquiry_id = $1 AND offer_status = 'PENDING'`, id)
+		`UPDATE public.market_enquiry_messages SET status = 'WITHDRAWN'
+		 WHERE enquiry_id = $1 AND status = 'PENDING'`, id)
 	return err
 }
 
@@ -1010,7 +1010,7 @@ func (r *PostgresRepository) EnquiryIDFor(ctx context.Context, adID, nurseryID i
 const messageSelect = `
 	SELECT m.message_id, m.enquiry_id, m.sent_by_user_id, m.sent_by_nursery_id,
 	       n.nursery_name, TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')),
-	       m.message_type, m.body, m.offer_price_per_unit, m.offer_quantity, m.offer_status, m.created_at
+	       m.message_type, m.body, m.offer_price_per_unit, m.offer_quantity, m.status, m.created_at
 	FROM public.market_enquiry_messages m
 	JOIN public.nurseries n ON n.nursery_id = m.sent_by_nursery_id
 	JOIN public.users u     ON u.user_id    = m.sent_by_user_id`

@@ -13,6 +13,7 @@ env:
   GOVULNCHECK_VERSION: v1.1.4
   GOSEC_VERSION: v2.22.5
   GITLEAKS_VERSION: v8.21.2
+  MINIO_VERSION: RELEASE.2024-12-18T13-15-44Z
 
 jobs:
   unit:
@@ -86,6 +87,7 @@ jobs:
       # Production-shaped roles from greenroot-infra roles.sql.
       MIGRATE_DATABASE_URL: postgres://greenroot_migrator:ci-migrator@localhost:5432/greenroot?sslmode=disable
       APP_DATABASE_URL: postgres://greenroot_app:ci-app@localhost:5432/greenroot?sslmode=disable
+      APP_ENV: ci
       REDIS_ADDR: localhost:6379
       JWT_SECRET: ci-only-secret-not-used-anywhere-else-0123456789
       LOG_DIR: /tmp/gr-logs
@@ -149,16 +151,29 @@ jobs:
 
       # Object storage for uploads (profile selfies gate market posting and
       # chats). Default STORAGE_* settings match; the API creates the buckets.
+      # Docker Hub no longer serves minio/minio images, so the pinned release
+      # is built from source through the Go module proxy (cached by version).
+      - name: Cache MinIO
+        id: minio-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/minio-bin
+          key: minio-${{ env.MINIO_VERSION }}-${{ runner.os }}
+
+      - name: Build MinIO
+        if: steps.minio-cache.outputs.cache-hit != 'true'
+        run: GOBIN="$HOME/minio-bin" go install "github.com/minio/minio@${MINIO_VERSION}"
+
       - name: Start MinIO
         run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=greenroot -e MINIO_ROOT_PASSWORD=greenroot123 \
-            minio/minio:RELEASE.2024-12-18T13-15-44Z server /data
+          mkdir -p "$RUNNER_TEMP/minio"
+          MINIO_ROOT_USER=greenroot MINIO_ROOT_PASSWORD=greenroot123 \
+            nohup "$HOME/minio-bin/minio" server "$RUNNER_TEMP/minio" --address :9000 > /tmp/minio.log 2>&1 &
           for i in $(seq 1 30); do
             curl -sf http://localhost:9000/minio/health/live && exit 0
             sleep 1
           done
-          echo "MinIO did not start"; docker logs minio; exit 1
+          echo "MinIO did not start"; cat /tmp/minio.log; exit 1
 
       - name: Start API
         run: |

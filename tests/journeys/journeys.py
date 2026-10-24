@@ -935,6 +935,10 @@ def journey_dispatch():
     code_pub, pub = call("GET", f"/track/{d['trip_uuid']}")
     check("public tracking link works without login", code_pub == 200, code_pub)
     check("…and does not expose the buyer's mobile", buyer.mobile not in json.dumps(pub), pub)
+    pub_trip = (pub or {}).get("dispatch", {})
+    leaked = sorted(set(pub_trip) & {"destination_address", "delivery_latitude", "delivery_longitude", "driver_mobile",
+                                     "driver_name", "customer_user_id", "driver_user_id", "notes", "order_id", "id"})
+    check("…nor the delivery address, coordinates, driver's phone or internal ids", not leaked, leaked)
     expect("an unknown tracking link is not found", "GET", "/track/00000000-0000-0000-0000-000000000000", None, status=(400, 404))
 
     expect("order cannot complete while the trip is open", "PUT", f"/orders/{o['id']}/status", owner.token, {"order_status": "COMPLETED"}, status=409)

@@ -876,8 +876,12 @@ func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *List
 		return nil
 	}
 	if input.Buying {
-		// Buyer perspective: filter by buyer_user_id OR buyer_nursery_id
+		// Buyer perspective: filter by buyer_user_id OR buyer_nursery_id.
+		// The buyer nursery is always the caller's own, never the client's
+		// nursery_id: buildWhere ORs it in, so a foreign id would list that
+		// nursery's purchases.
 		input.BuyerID = actor.UserID
+		input.NurseryID = 0
 		if actor.HasRole("NURSERY_OWNER") {
 			nurseryID, _ := s.repository.GetOwnedNurseryID(ctx, actor.UserID)
 			if nurseryID != nil {

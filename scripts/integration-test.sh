@@ -70,7 +70,7 @@ ON CONFLICT (nursery_id) DO UPDATE
 SELECT setval('public.nurseries_nursery_id_seq', (SELECT max(nursery_id) FROM public.nurseries), true);
 SQL
 
-DATABASE_URL="$DATABASE_URL" HTTP_PORT="$PORT" LOG_DIR="$LOG_DIR" JWT_SECRET="$JWT_SECRET" go run ./cmd/api >"$API_PROCESS_LOG" 2>&1 &
+APP_ENV="${APP_ENV:-test}" DATABASE_URL="$DATABASE_URL" HTTP_PORT="$PORT" LOG_DIR="$LOG_DIR" JWT_SECRET="$JWT_SECRET" go run ./cmd/api >"$API_PROCESS_LOG" 2>&1 &
 SERVER_PID="$!"
 
 for _ in $(seq 1 50); do

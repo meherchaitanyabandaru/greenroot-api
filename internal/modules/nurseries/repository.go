@@ -380,12 +380,17 @@ func (r *PostgresRepository) Delete(ctx context.Context, actorID int64, nurseryI
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
+			_ = rows.Close() // the scan error is the one to report
 			return err
 		}
 		managerIDs = append(managerIDs, id)
 	}
-	rows.Close()
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	steps := []struct {
 		q    string
 		args []any

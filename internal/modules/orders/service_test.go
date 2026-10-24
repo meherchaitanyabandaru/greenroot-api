@@ -1189,6 +1189,32 @@ func TestScopeList_BuyerScopedToSelf(t *testing.T) {
 	}
 }
 
+// A client-supplied nursery_id must never widen the buyer view: buildWhere
+// ORs it with buyer_user_id, which listed another nursery's purchases.
+func TestScopeList_BuyingIgnoresClientNurseryID(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, 100) // owner 100 owns nursery 1
+	for _, tc := range []struct {
+		name  string
+		actor ActorContext
+		want  int64
+	}{
+		{"buyer", buyerActor(300), 0},
+		{"manager", managerActor(400), 0},
+		{"owner of another nursery", ownerActor(500), 0},
+		{"owner", ownerActor(100), 1},
+	} {
+		input := ListOrdersRequest{Page: 1, PerPage: 20, Buying: true, NurseryID: 2}
+		if err := svc(repo).scopeList(context.Background(), tc.actor, &input); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if input.NurseryID != tc.want || input.BuyerID != tc.actor.UserID {
+			t.Errorf("%s: nursery_id=%d buyer_id=%d, want nursery_id=%d buyer_id=%d",
+				tc.name, input.NurseryID, input.BuyerID, tc.want, tc.actor.UserID)
+		}
+	}
+}
+
 // ── State machine transition table ───────────────────────────────────────────
 
 func TestValidOrderTransitions(t *testing.T) {

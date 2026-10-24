@@ -120,7 +120,7 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		return nil, err
 	}
 	if cfg.IsProduction() && !smsProvider.Live() {
-		logManager.Logger().Warn("ALLOW_MOCK_PROVIDERS: SMS is mock in production; OTP is the fixed dev code 123456 for every account")
+		logManager.Logger().Warn("ALLOW_MOCK_PROVIDERS (staging): SMS is mock; OTP is the fixed dev code 123456 for every account")
 	}
 	emailProvider, err := platformemail.New(cfg.Email.Provider)
 	if err != nil {
@@ -129,7 +129,17 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		return nil, err
 	}
 	if cfg.IsProduction() && !emailProvider.Live() {
-		logManager.Logger().Warn("ALLOW_MOCK_PROVIDERS: email is mock in production; nothing is delivered")
+		logManager.Logger().Warn("ALLOW_MOCK_PROVIDERS (staging): email is mock; nothing is delivered")
+	}
+
+	// Rate limits, the token blocklist, suspensions, OTP storage, locks and
+	// idempotency all live in Redis: production refuses to run without it
+	// rather than silently switching them off.
+	rdb := connectRedis(ctx, cfg.Redis, logManager.Logger())
+	if rdb == nil && cfg.IsProduction() {
+		_ = logManager.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("redis at REDIS_ADDR %q is not reachable; production needs it for rate limits, sessions and locks", cfg.Redis.Addr)
 	}
 
 	deps := Dependencies{
@@ -140,13 +150,13 @@ func Bootstrap(ctx context.Context) (*App, error) {
 		JWT:        jwtplatform.NewService(cfg.JWT),
 		Storage:    storageClient,
 		Audit:      auditlog.NewService(db, logManager.Logger()),
-		Redis:      connectRedis(ctx, cfg.Redis, logManager.Logger()),
+		Redis:      rdb,
 		SMS:        smsProvider,
 		Email:      emailProvider,
 		Razorpay:   razorpay.New(cfg.Razorpay.KeyID, cfg.Razorpay.KeySecret),
 	}
 	if deps.Razorpay == nil && cfg.IsProduction() {
-		deps.Logger.Warn("RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET not set: subscription payments are mock")
+		deps.Logger.Warn("ALLOW_MOCK_PROVIDERS (staging): RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET not set, subscription payments are mock")
 	}
 
 	// Sync suspension state into Redis before accepting any traffic.

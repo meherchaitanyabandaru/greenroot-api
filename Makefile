@@ -7,7 +7,7 @@ DATABASE_URL ?= $(DB_URL)
 REDIS_ADDR ?= 127.0.0.1:6379
 
 run:
-	DATABASE_URL="$(DATABASE_URL)" REDIS_ADDR="$(REDIS_ADDR)" go run ./cmd/api
+	APP_ENV=local DATABASE_URL="$(DATABASE_URL)" REDIS_ADDR="$(REDIS_ADDR)" go run ./cmd/api
 
 test:
 	go test ./...

@@ -267,9 +267,12 @@ func (m *mockRepo) MarkDelivered(_ context.Context, id int64, in MarkDeliveredIn
 	return d, nil
 }
 
-func (m *mockRepo) AddWrongDeliveryCode(_ context.Context, id int64) (int, error) {
+func (m *mockRepo) UseDeliveryCodeAttempt(_ context.Context, id int64, max int) (int, bool, error) {
+	if m.dispatches[id].DeliveryCodeAttempts >= max {
+		return max, false, nil
+	}
 	m.dispatches[id].DeliveryCodeAttempts++
-	return m.dispatches[id].DeliveryCodeAttempts, nil
+	return m.dispatches[id].DeliveryCodeAttempts, true, nil
 }
 
 func (m *mockRepo) RecordReceipt(_ context.Context, id, userID int64, confirm bool, issue *string) error {

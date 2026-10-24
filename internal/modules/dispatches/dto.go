@@ -1,5 +1,11 @@
 package dispatches
 
+import (
+	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+)
+
 type ListDispatchesRequest struct {
 	Page           int
 	PerPage        int
@@ -90,5 +96,30 @@ type TripEventResponse struct {
 }
 
 type PublicTrackingResponse struct {
-	Dispatch Dispatch `json:"dispatch"`
+	Dispatch PublicTrip `json:"dispatch"`
+}
+
+// PublicTrip is everything an unauthenticated tracking link shows: the trip's
+// progress and the lorry's position while it is on the way. It never carries
+// the customer's address or delivery coordinates, phone numbers, names of
+// people, notes or internal ids (anyone holding the link sees it, forever).
+type PublicTrip struct {
+	DispatchCode      string                      `json:"dispatch_code"`
+	Status            string                      `json:"dispatch_status"`
+	Lifecycle         *lifecycle.DispatchDisplays `json:"lifecycle,omitempty"`
+	SellerNurseryName *string                     `json:"seller_nursery_name,omitempty"`
+	VehicleNumber     *string                     `json:"vehicle_number,omitempty"`
+	DispatchDate      *time.Time                  `json:"dispatch_date,omitempty"`
+	TripStartedAt     *time.Time                  `json:"trip_started_at,omitempty"`
+	DeliveryDate      *time.Time                  `json:"delivery_date,omitempty"`
+	// Positions only while the trip is on its way; after delivery the link
+	// shows the outcome without the route that led to the customer.
+	TripEvents []PublicTripEvent `json:"trip_events,omitempty"`
+}
+
+type PublicTripEvent struct {
+	EventType string    `json:"event_type"`
+	Latitude  *float64  `json:"latitude,omitempty"`
+	Longitude *float64  `json:"longitude,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }

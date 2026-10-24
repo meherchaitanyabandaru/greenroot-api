@@ -50,7 +50,7 @@ type AdminAd struct {
 	CreatedAt          time.Time  `json:"created_at"`
 
 	SizeDescription *string `json:"size_description,omitempty"`
-	NeededBy        *string `json:"needed_by,omitempty"`
+	NeededBy        *string `json:"needed_by_date,omitempty"`
 	// Where buyers collect. HasLocation false means nearby lists never show
 	// the ad (they filter by distance).
 	HasLocation        bool     `json:"has_location"`
@@ -83,10 +83,10 @@ const adminAdSelect = `
 	       (SELECT count(*) FROM public.market_ad_reports rp WHERE rp.ad_id = a.ad_id AND rp.status = 'PENDING'),
 	       n.nursery_id, n.nursery_name, (n.status IN ('ACTIVE', 'APPROVED')),
 	       (SELECT count(*) FROM public.market_ads x WHERE x.nursery_id = n.nursery_id AND x.status = 'REMOVED'),
-	       CASE WHEN n.market_blocked_until > NOW() THEN n.market_blocked_until END,
+	       CASE WHEN n.market_blocked_until_at > NOW() THEN n.market_blocked_until_at END,
 	       NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''), u.profile_image_url,
 	       a.published_at, a.expires_at, a.created_at,
-	       a.size_description, to_char(a.needed_by, 'YYYY-MM-DD'), a.pickup_location IS NOT NULL,
+	       a.size_description, to_char(a.needed_by_date, 'YYYY-MM-DD'), a.pickup_location IS NOT NULL,
 	       a.pickup_latitude, a.pickup_longitude, a.pickup_location_source, a.pickup_address, a.pickup_landmark,
 	       a.is_road_accessible, a.is_truck_accessible, a.access_instructions,
 	       a.deleted_at, NULLIF(TRIM(CONCAT_WS(' ', du.first_name, du.last_name)), '')
@@ -309,7 +309,7 @@ func (m *moderationHandler) UnblockNursery(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	res, err := m.db.ExecContext(r.Context(),
-		`UPDATE public.nurseries SET market_blocked_until = NULL, updated_at = NOW() WHERE nursery_id = $1`, id)
+		`UPDATE public.nurseries SET market_blocked_until_at = NULL, updated_at = NOW() WHERE nursery_id = $1`, id)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -342,10 +342,10 @@ func (m *moderationHandler) ListBlockedNurseries(w http.ResponseWriter, r *http.
 	rows, err := m.db.QueryContext(r.Context(), `
 		SELECT n.nursery_id, n.nursery_name,
 		       (SELECT count(*) FROM public.market_ads x WHERE x.nursery_id = n.nursery_id AND x.status = 'REMOVED'),
-		       n.market_blocked_until
+		       n.market_blocked_until_at
 		FROM public.nurseries n
-		WHERE n.market_blocked_until > NOW()
-		ORDER BY n.market_blocked_until DESC
+		WHERE n.market_blocked_until_at > NOW()
+		ORDER BY n.market_blocked_until_at DESC
 		LIMIT 200`)
 	if err != nil {
 		writeError(w, err)

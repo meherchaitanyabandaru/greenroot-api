@@ -32,8 +32,10 @@ func TestMarketLifecycle_AllRoles(t *testing.T) {
 
 	t.Run("RBAC browse matrix", func(t *testing.T) {
 		assertStatus(t, get(t, "/api/v1/market/ads", ""), http.StatusUnauthorized)
-		assertStatus(t, get(t, "/api/v1/market/ads", ownerToken), http.StatusOK)
-		assertStatus(t, get(t, "/api/v1/market/ads", managerToken), http.StatusOK)
+		// Browsing is local (b986578): staff browse from a location.
+		const near = "/api/v1/market/ads?near_lat=17.385&near_lon=78.4867"
+		assertStatus(t, get(t, near, ownerToken), http.StatusOK)
+		assertStatus(t, get(t, near, managerToken), http.StatusOK)
 		assertStatus(t, get(t, "/api/v1/market/ads", adminToken), http.StatusOK)
 		assertStatus(t, get(t, "/api/v1/market/ads", buyerToken), http.StatusForbidden)
 		assertStatus(t, get(t, "/api/v1/market/ads", driverToken), http.StatusForbidden)
@@ -77,7 +79,7 @@ func TestMarketLifecycle_AllRoles(t *testing.T) {
 
 		assertStatus(t, post(t, fmt.Sprintf("/api/v1/market/enquiries/%d/cancel", enquiryID), nil, ownerToken), http.StatusForbidden)
 		assertEnquiryStatus(t, post(t, fmt.Sprintf("/api/v1/market/enquiries/%d/close", enquiryID), nil, managerToken), http.StatusOK, "CLOSED")
-		assertStatus(t, post(t, fmt.Sprintf("/api/v1/market/enquiries/%d/reply", enquiryID), map[string]any{"body": "too late"}, ownerToken), http.StatusBadRequest)
+		assertStatus(t, post(t, fmt.Sprintf("/api/v1/market/enquiries/%d/reply", enquiryID), map[string]any{"body": "too late"}, ownerToken), http.StatusConflict) // closed chat: state conflict
 	})
 
 	t.Run("ad pause resume archive lifecycle", func(t *testing.T) {
@@ -94,7 +96,7 @@ func TestMarketLifecycle_AllRoles(t *testing.T) {
 	t.Run("enquiring nursery cancels its enquiry", func(t *testing.T) {
 		assertStatus(t, post(t, fmt.Sprintf("/api/v1/market/enquiries/%d/cancel", cancelEnquiryID), nil, ownerToken), http.StatusForbidden)
 		assertEnquiryStatus(t, post(t, fmt.Sprintf("/api/v1/market/enquiries/%d/cancel", cancelEnquiryID), nil, secondOwnerToken), http.StatusOK, "CANCELLED")
-		assertStatus(t, post(t, fmt.Sprintf("/api/v1/market/enquiries/%d/reply", cancelEnquiryID), map[string]any{"body": "too late"}, secondOwnerToken), http.StatusBadRequest)
+		assertStatus(t, post(t, fmt.Sprintf("/api/v1/market/enquiries/%d/reply", cancelEnquiryID), map[string]any{"body": "too late"}, secondOwnerToken), http.StatusConflict)
 	})
 
 	assertMarketAdStatus(t, post(t, fmt.Sprintf("/api/v1/market/ads/%d/archive", cancelAdID), nil, ownerToken), http.StatusOK, "ARCHIVED")
@@ -110,6 +112,10 @@ func createMarketAd(t *testing.T, token, title string) int64 {
 		"price_per_unit": 125,
 		"price_unit":     "PER_PLANT",
 		"photos":         []string{},
+		// Ads are local: publishing needs a pickup location (b986578).
+		"pickup_latitude":        17.385,
+		"pickup_longitude":       78.4867,
+		"pickup_location_source": "gps_confirmed",
 	}, token)
 	assertStatus(t, resp, http.StatusCreated)
 	var result marketAdEnvelope

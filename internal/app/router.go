@@ -72,8 +72,15 @@ func NewRouter(deps Dependencies) chi.Router {
 		response.Error(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 	})
 
-	health.NewHandler(deps.Config.App.Version, deps.Config.App.Env).Register(router)
-	registerDocsRoutes(router)
+	// Production health checks don't tell strangers which environment answered.
+	env := deps.Config.App.Env
+	if deps.Config.IsProduction() {
+		env = ""
+	}
+	health.NewHandler(deps.Config.App.Version, env).Register(router)
+	if deps.Config.App.DocsEnabled {
+		registerDocsRoutes(router)
+	}
 
 	router.Route("/api/v1", func(r chi.Router) {
 		redisClients := optionalRedis(deps.Redis)
@@ -102,7 +109,7 @@ func NewRouter(deps Dependencies) chi.Router {
 		admin.NewModule(deps.DB, deps.JWT, redisClients...).RegisterRoutes(r)
 		attachments.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		audit.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		dispatches.NewModule(deps.DB, deps.JWT, deps.Audit, []byte(deps.Config.JWT.Secret), redisClients...).RegisterRoutes(r)
+		dispatches.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Config.DeliveryCodeKey(), redisClients...).RegisterRoutes(r)
 		drivers.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, redisClients...).RegisterRoutes(r)
 		topitems.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
 		market.NewModule(deps.DB, deps.JWT, deps.Redis).RegisterRoutes(r)

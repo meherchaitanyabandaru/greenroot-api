@@ -116,13 +116,13 @@ func (s *Service) RefundPayment(ctx context.Context, actor ActorContext, subscri
 		return UserSubscription{}, err
 	}
 
-	today := time.Now().Truncate(24 * time.Hour)
+	today := businessDay(time.Now())
 	endDate := current.StartDate.AddDate(0, 0, -1)
 	// The earlier period's start isn't stored (renew overwrites it): use when
 	// it was paid for, or when the subscription began; never after the end.
-	startDate := current.CreatedAt.Truncate(24 * time.Hour)
+	startDate := businessDay(current.CreatedAt)
 	if previous != nil && previous.PaymentDate != nil {
-		startDate = previous.PaymentDate.Truncate(24 * time.Hour)
+		startDate = businessDay(*previous.PaymentDate)
 	}
 	if startDate.After(endDate) {
 		startDate = endDate

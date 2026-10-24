@@ -310,7 +310,7 @@ func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID 
 	if !plan.IsActive || (isFreePlan(plan.Code) && !actor.HasRole("ADMIN")) {
 		return UserSubscription{}, ErrInvalidInput
 	}
-	startDate := time.Now().Truncate(24 * time.Hour)
+	startDate := businessDay(time.Now())
 	if current.EndDate != nil && current.EndDate.After(startDate) {
 		startDate = current.EndDate.AddDate(0, 0, 1)
 	}
@@ -415,7 +415,7 @@ func (s *Service) CreateTrialForOwner(ctx context.Context, ownerUserID int64, ap
 		}
 		return err
 	}
-	startDateStr := approvalDate.Truncate(24 * time.Hour).Format(time.DateOnly)
+	startDateStr := businessDay(approvalDate).Format(time.DateOnly)
 	adminActor := ActorContext{UserID: ownerUserID, Roles: []string{"ADMIN"}}
 	_, err = s.Create(ctx, adminActor, CreateSubscriptionRequest{
 		UserID:       &ownerUserID,
@@ -539,7 +539,7 @@ func normalizeList(actor ActorContext, input ListSubscriptionsRequest) ListSubsc
 
 func parseStartDate(value *string) (time.Time, error) {
 	if value == nil || strings.TrimSpace(*value) == "" {
-		return time.Now().Truncate(24 * time.Hour), nil
+		return businessDay(time.Now()), nil
 	}
 	return time.Parse(time.DateOnly, strings.TrimSpace(*value))
 }

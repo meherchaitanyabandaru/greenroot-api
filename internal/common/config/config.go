@@ -37,8 +37,12 @@ type AppConfig struct {
 	Name    string
 	Env     string
 	Version string
-	// AllowMockProviders permits mock SMS/email in production (closed beta only).
+	// AllowMockProviders permits mock SMS/email/payments in staging. It has no
+	// effect in production, where every provider must be live.
 	AllowMockProviders bool
+	// DocsEnabled serves /swagger and /openapi.yaml; off by default in
+	// production-like environments.
+	DocsEnabled bool
 }
 
 type HTTPConfig struct {
@@ -79,11 +83,14 @@ type DatabaseConfig struct {
 }
 
 type JWTConfig struct {
-	Secret        string
-	Issuer        string
-	AccessTTL     time.Duration
-	RefreshTTL    time.Duration
-	SigningMethod string
+	Secret string
+	// DeliveryCodeSecret derives the 4-digit delivery codes. Separate from
+	// Secret so rotating the JWT key does not change codes of trips on the way.
+	DeliveryCodeSecret string
+	Issuer             string
+	AccessTTL          time.Duration
+	RefreshTTL         time.Duration
+	SigningMethod      string
 }
 
 type StorageConfig struct {
@@ -133,9 +140,12 @@ var devCORSOrigins = []string{
 }
 
 func Load() Config {
-	appEnv := getString("APP_ENV", "local")
+	// No default: a forgotten APP_ENV must not start the API with the
+	// development secrets and mock OTP (Validate rejects an empty value).
+	appEnv := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+	productionLike := appEnv == "production" || appEnv == "prod" || appEnv == "staging"
 	defaultOrigins := devCORSOrigins
-	if appEnv == "production" {
+	if productionLike || appEnv == "" {
 		defaultOrigins = nil
 	}
 	return Config{
@@ -145,6 +155,7 @@ func Load() Config {
 			Version: getString("APP_VERSION", "0.1.0"),
 
 			AllowMockProviders: getBool("ALLOW_MOCK_PROVIDERS", false),
+			DocsEnabled:        getBool("DOCS_ENABLED", !productionLike),
 		},
 		HTTP: HTTPConfig{
 			Host:               getString("HTTP_HOST", "0.0.0.0"),
@@ -178,11 +189,12 @@ func Load() Config {
 			TimeZone:        getString("DB_TIMEZONE", "Asia/Kolkata"),
 		},
 		JWT: JWTConfig{
-			Secret:        getString("JWT_SECRET", "local-dev-change-me"),
-			Issuer:        getString("JWT_ISSUER", "greenroot-api"),
-			AccessTTL:     getDuration("JWT_ACCESS_TTL", 15*time.Minute),
-			RefreshTTL:    getDuration("JWT_REFRESH_TTL", 720*time.Hour),
-			SigningMethod: getString("JWT_SIGNING_METHOD", "HS256"),
+			Secret:             getString("JWT_SECRET", devJWTSecret),
+			DeliveryCodeSecret: getString("DELIVERY_CODE_SECRET", ""),
+			Issuer:             getString("JWT_ISSUER", "greenroot-api"),
+			AccessTTL:          getDuration("JWT_ACCESS_TTL", 15*time.Minute),
+			RefreshTTL:         getDuration("JWT_REFRESH_TTL", 720*time.Hour),
+			SigningMethod:      getString("JWT_SIGNING_METHOD", "HS256"),
 		},
 		Storage: StorageConfig{
 			Endpoint:        getString("STORAGE_ENDPOINT", "localhost:9000"),
