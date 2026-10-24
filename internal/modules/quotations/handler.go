@@ -68,7 +68,7 @@ func (h *Handler) BuyerReject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req AcceptRejectQuotationRequest
-	_ = decodeJSON(w, r, &req) // reason is optional; ignore decode error
+	_ = response.DecodeJSON(w, r, &req) // reason is optional; ignore decode error
 	q, err := h.service.BuyerReject(r.Context(), actor, id, req)
 	if err != nil {
 		writeError(w, err)
@@ -104,7 +104,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateQuotationRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	q, err := h.service.Create(r.Context(), actor, req)
@@ -125,7 +125,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req UpdateQuotationRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	q, err := h.service.Update(r.Context(), actor, id, req)
@@ -146,7 +146,7 @@ func (h *Handler) UpdateCustomer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req UpdateQuotationCustomerRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	q, err := h.service.UpdateCustomer(r.Context(), actor, id, req)
@@ -183,7 +183,7 @@ func (h *Handler) AssignManager(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req AssignManagerRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	q, err := h.service.AssignManager(r.Context(), actor, id, req)
@@ -509,15 +509,6 @@ func listRequest(r *http.Request) ListQuotationsRequest {
 		AmountMin:      float64PtrQuery(q.Get("amount_min")),
 		AmountMax:      float64PtrQuery(q.Get("amount_max")),
 	}
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid JSON request body")
-		return false
-	}
-	return true
 }
 
 func pathID(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {

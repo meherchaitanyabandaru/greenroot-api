@@ -1,7 +1,6 @@
 package sourcing
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -66,7 +65,7 @@ func (h *Handler) JoinNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req JoinNetworkRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	m, err := h.service.JoinNetwork(r.Context(), actor, nurseryID, req)
@@ -175,15 +174,6 @@ func pathID(w http.ResponseWriter, r *http.Request, param string) (int64, bool) 
 		return 0, false
 	}
 	return id, true
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid JSON request body")
-		return false
-	}
-	return true
 }
 
 func nearbyQuery(r *http.Request) NearbyQuery {

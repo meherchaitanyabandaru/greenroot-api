@@ -1,6 +1,10 @@
 package quotations
 
-import "time"
+import (
+	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+)
 
 type ListQuotationsRequest struct {
 	Page               int
@@ -46,12 +50,7 @@ type QuotationItemRequest struct {
 	TotalPrice  float64 `json:"total_price"`
 }
 
-type Pagination struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-}
+type Pagination = response.Pagination
 
 type QuotationsResponse struct {
 	Quotations []Quotation `json:"quotations"`

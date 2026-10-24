@@ -1,5 +1,7 @@
 package plants
 
+import "github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+
 type ListPlantsRequest struct {
 	Page             int
 	PerPage          int
@@ -45,12 +47,7 @@ type CareGuideRequest struct {
 	Notes       *string `json:"notes"`
 }
 
-type Pagination struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-}
+type Pagination = response.Pagination
 
 type PlantsResponse struct {
 	Plants     []Plant    `json:"plants"`

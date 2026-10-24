@@ -1,5 +1,7 @@
 package notifications
 
+import "github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+
 type ListNotificationsRequest struct {
 	Page    int
 	PerPage int
@@ -38,12 +40,7 @@ type TemplateRequest struct {
 	IsActive        bool    `json:"is_active"`
 }
 
-type Pagination struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-}
+type Pagination = response.Pagination
 
 type NotificationsResponse struct {
 	Notifications []Notification `json:"notifications"`

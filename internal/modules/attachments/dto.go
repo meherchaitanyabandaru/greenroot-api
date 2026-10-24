@@ -1,5 +1,7 @@
 package attachments
 
+import "github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+
 type ListRequest struct {
 	Page       int
 	PerPage    int
@@ -17,12 +19,7 @@ type AttachmentRequest struct {
 	FileSize   *int64  `json:"file_size"`
 }
 
-type Pagination struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-}
+type Pagination = response.Pagination
 
 type ListResponse struct {
 	Attachments []Attachment `json:"attachments"`

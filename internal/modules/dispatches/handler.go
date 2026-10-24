@@ -1,7 +1,6 @@
 package dispatches
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -77,7 +76,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateDispatchRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	dispatch, err := h.service.Create(r.Context(), actor, req)
@@ -98,7 +97,7 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req UpdateStatusRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	dispatch, err := h.service.UpdateStatus(r.Context(), actor, id, req)
@@ -138,7 +137,7 @@ func (h *Handler) Deliver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req DeliverRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	dispatch, err := h.service.Deliver(r.Context(), actor, id, req)
@@ -160,7 +159,7 @@ func (h *Handler) Receipt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ReceiptRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	dispatch, err := h.service.ConfirmReceipt(r.Context(), actor, id, req)
@@ -181,7 +180,7 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req DispatchItemRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	item, err := h.service.CreateItem(r.Context(), actor, id, req)
@@ -240,7 +239,7 @@ func (h *Handler) CreateTripEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateTripEventRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	event, err := h.service.CreateTripEvent(r.Context(), actor, id, req)
@@ -286,15 +285,6 @@ func listRequest(r *http.Request) ListDispatchesRequest {
 		SortBy:    query.Get("sort_by"),
 		SortOrder: query.Get("sort_order"),
 	}
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid JSON request body")
-		return false
-	}
-	return true
 }
 
 func pathID(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {

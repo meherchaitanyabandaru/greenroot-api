@@ -1,7 +1,6 @@
 package invites
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -27,7 +26,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateInviteRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	invite, err := h.service.Create(r.Context(), actor, req)
@@ -113,15 +112,6 @@ func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, b
 		return ActorContext{}, false
 	}
 	return ActorContext{UserID: actor.UserID, Mobile: actor.Mobile, Roles: actor.Roles, IPAddress: actor.IPAddress, UserAgent: actor.UserAgent}, true
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid JSON request body")
-		return false
-	}
-	return true
 }
 
 func writeError(w http.ResponseWriter, err error) {

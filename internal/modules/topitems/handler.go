@@ -1,7 +1,6 @@
 package topitems
 
 import (
-	"encoding/json"
 	"errors"
 	"math"
 	"net/http"
@@ -89,7 +88,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	item, err := h.service.Create(r.Context(), actor, req)
@@ -110,7 +109,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req UpdateRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	item, err := h.service.Update(r.Context(), actor, id, req)
@@ -157,15 +156,6 @@ func listRequest(r *http.Request) ListRequest {
 		SortBy:    q.Get("sort_by"),
 		SortOrder: q.Get("sort_order"),
 	}
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid JSON request body")
-		return false
-	}
-	return true
 }
 
 func pathID(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {

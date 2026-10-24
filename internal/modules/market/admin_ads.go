@@ -204,7 +204,7 @@ func (m *moderationHandler) ModerateAd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ModerateAdRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	req.Action = strings.ToUpper(strings.TrimSpace(req.Action))

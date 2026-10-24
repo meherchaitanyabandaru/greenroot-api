@@ -121,7 +121,7 @@ func (m *moderationHandler) ReviewReport(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req ReviewReportRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	req.Decision = strings.ToUpper(strings.TrimSpace(req.Decision))

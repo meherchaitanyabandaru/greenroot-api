@@ -1,7 +1,6 @@
 package notifications
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -57,7 +56,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateNotificationRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	item, err := h.service.Create(r.Context(), actor, req)
@@ -132,7 +131,7 @@ func (h *Handler) UpsertDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req DeviceRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	device, err := h.service.UpsertDevice(r.Context(), actor, req)
@@ -178,7 +177,7 @@ func (h *Handler) CreateTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req TemplateRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	t, err := h.service.CreateTemplate(r.Context(), actor, req)
@@ -199,7 +198,7 @@ func (h *Handler) UpdateTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req TemplateRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	t, err := h.service.UpdateTemplate(r.Context(), actor, id, req)
@@ -242,14 +241,6 @@ func listRequest(r *http.Request) ListNotificationsRequest {
 		req.Unread = &v
 	}
 	return req
-}
-func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid JSON request body")
-		return false
-	}
-	return true
 }
 func pathID(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {
 	id, err := strconv.ParseInt(chi.URLParam(r, key), 10, 64)

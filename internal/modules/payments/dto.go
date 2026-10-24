@@ -1,5 +1,7 @@
 package payments
 
+import "github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+
 type ListPaymentsRequest struct {
 	Page           int
 	PerPage        int
@@ -42,12 +44,7 @@ type UpdateStatusRequest struct {
 	RawResponse          map[string]any `json:"raw_response"`
 }
 
-type Pagination struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-}
+type Pagination = response.Pagination
 
 type PaymentsResponse struct {
 	Payments   []Payment  `json:"payments"`

@@ -2,7 +2,6 @@ package market
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -69,7 +68,7 @@ func (h *Handler) CreateAd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateAdRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	ad, err := h.svc.CreateAd(r.Context(), actor, req)
@@ -124,7 +123,7 @@ func (h *Handler) UpdateAd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req UpdateAdRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	ad, err := h.svc.UpdateAd(r.Context(), actor, id, req)
@@ -236,7 +235,7 @@ func (h *Handler) ReportAd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ReportAdRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	if err := h.svc.ReportAd(r.Context(), actor, id, req); err != nil {
@@ -258,7 +257,7 @@ func (h *Handler) SendEnquiry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateEnquiryRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	enquiry, err := h.svc.SendEnquiry(r.Context(), actor, id, req)
@@ -319,7 +318,7 @@ func (h *Handler) ReplyToEnquiry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ReplyEnquiryRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	msg, err := h.svc.ReplyToEnquiry(r.Context(), actor, id, req)
@@ -388,7 +387,7 @@ func (h *Handler) MakeOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req MakeOfferRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	msg, err := h.svc.MakeOffer(r.Context(), actor, id, req)
@@ -455,15 +454,6 @@ func pathID(w http.ResponseWriter, r *http.Request, param string) (int64, bool) 
 		return 0, false
 	}
 	return id, true
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid JSON request body")
-		return false
-	}
-	return true
 }
 
 func floatQueryParam(r *http.Request, key string) *float64 {

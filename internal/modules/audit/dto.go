@@ -1,5 +1,7 @@
 package audit
 
+import "github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+
 type ListRequest struct {
 	Page       int
 	PerPage    int
@@ -10,12 +12,7 @@ type ListRequest struct {
 	RecordID   int64
 }
 
-type Pagination struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-}
+type Pagination = response.Pagination
 
 type ListResponse struct {
 	AuditLogs  []AuditLog `json:"audit_logs"`

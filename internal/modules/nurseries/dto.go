@@ -1,6 +1,10 @@
 package nurseries
 
-import "time"
+import (
+	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+)
 
 type ListNurseriesRequest struct {
 	Page               int
@@ -75,12 +79,7 @@ type DriversResponse struct {
 	Drivers []NurseryDriver `json:"drivers"`
 }
 
-type Pagination struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-}
+type Pagination = response.Pagination
 
 type NurseriesResponse struct {
 	Nurseries  []Nursery  `json:"nurseries"`

@@ -1,7 +1,6 @@
 package nurseries
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -82,7 +81,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateNurseryRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	nursery, err := h.service.Create(r.Context(), actor, req)
@@ -103,7 +102,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req UpdateNurseryRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	nursery, err := h.service.Update(r.Context(), actor, nurseryID, req)
@@ -127,7 +126,7 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		Status string `json:"status"`
 		Reason string `json:"reason"`
 	}
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	nursery, err := h.service.UpdateStatus(r.Context(), actor, nurseryID, req.Status, req.Reason)
@@ -181,7 +180,7 @@ func (h *Handler) CreateAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req AddressRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	address, err := h.service.CreateAddress(r.Context(), actor, nurseryID, req)
@@ -202,7 +201,7 @@ func (h *Handler) UpdateAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req AddressRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	address, err := h.service.UpdateAddress(r.Context(), actor, addressID, req)
@@ -268,7 +267,7 @@ func (h *Handler) Resubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateNurseryRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	nursery, err := h.service.Resubmit(r.Context(), actor, req)
@@ -323,7 +322,7 @@ func (h *Handler) ConnectDriver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ConnectDriverRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	nd, err := h.service.ConnectDriver(r.Context(), actor, nurseryID, req.DriverUserID)
@@ -442,15 +441,6 @@ func listNurseriesRequest(r *http.Request) ListNurseriesRequest {
 		NurseryStatus:      query.Get("nursery_status"),
 		VerificationStatus: query.Get("verification_status"),
 	}
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid JSON request body")
-		return false
-	}
-	return true
 }
 
 func pathID(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {

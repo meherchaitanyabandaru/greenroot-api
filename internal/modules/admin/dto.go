@@ -1,5 +1,7 @@
 package admin
 
+import "github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+
 type DashboardResponse struct {
 	Summary Summary `json:"summary"`
 }
@@ -14,12 +16,7 @@ type ListUsersRequest struct {
 	SortOrder string
 }
 
-type Pagination struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-}
+type Pagination = response.Pagination
 
 type UsersResponse struct {
 	Users      []User     `json:"users"`

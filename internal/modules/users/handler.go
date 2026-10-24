@@ -1,7 +1,6 @@
 package users
 
 import (
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -56,7 +55,7 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req UpdateProfileRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	user, err := h.service.UpdateMe(r.Context(), actor, req)
@@ -74,7 +73,7 @@ func (h *Handler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CompleteOnboardingRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	user, err := h.service.CompleteOnboarding(r.Context(), actor, req)
@@ -186,7 +185,7 @@ func (h *Handler) CreateAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateAddressRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	address, err := h.service.CreateAddress(r.Context(), actor, userID, req)
@@ -207,7 +206,7 @@ func (h *Handler) UpdateAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req UpdateAddressRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	address, err := h.service.UpdateAddress(r.Context(), actor, addressID, req)
@@ -279,7 +278,7 @@ func (h *Handler) SendEmailCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req EmailCodeRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	resp, err := h.service.SendEmailCode(r.Context(), actor, req)
@@ -297,7 +296,7 @@ func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req VerifyEmailRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	user, err := h.service.VerifyEmail(r.Context(), actor, req)
@@ -315,7 +314,7 @@ func (h *Handler) SendMobileCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req MobileCodeRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	resp, err := h.service.SendMobileCode(r.Context(), actor, req)
@@ -333,7 +332,7 @@ func (h *Handler) VerifyMobile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req VerifyMobileRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	user, err := h.service.VerifyMobile(r.Context(), actor, req)
@@ -369,15 +368,6 @@ func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, b
 		TokenJTI:      actor.TokenJTI,
 		TokenExpEpoch: actor.TokenExpEpoch,
 	}, true
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid JSON request body")
-		return false
-	}
-	return true
 }
 
 func pathID(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {

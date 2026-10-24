@@ -1,6 +1,7 @@
 package dispatches
 
 import (
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
@@ -63,12 +64,7 @@ type DispatchItemRequest struct {
 	Notes       *string `json:"notes"`
 }
 
-type Pagination struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-}
+type Pagination = response.Pagination
 
 type DispatchesResponse struct {
 	Dispatches []Dispatch `json:"dispatches"`
