@@ -74,3 +74,26 @@ func TestVerifyRejectsForgeries(t *testing.T) {
 		t.Fatalf("control token rejected: %v", err)
 	}
 }
+
+func TestAdminRefreshTokensAreShortLived(t *testing.T) {
+	cfg := testCfg
+	cfg.RefreshTTL, cfg.AdminRefreshTTL = 720*time.Hour, 12*time.Hour
+	s := NewService(cfg)
+	life := func(roles []string) time.Duration {
+		tok, err := s.IssueRefreshToken("1", "1", "", roles, TokenContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := s.VerifyRefreshToken(tok)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c.ExpiresAt.Sub(c.IssuedAt.Time).Round(time.Hour)
+	}
+	if got := life([]string{"ADMIN", "SUPER_ADMIN"}); got != 12*time.Hour {
+		t.Errorf("admin refresh lives %v, want 12h", got)
+	}
+	if got := life([]string{"NURSERY_OWNER"}); got != 720*time.Hour {
+		t.Errorf("owner refresh lives %v, want 720h", got)
+	}
+}

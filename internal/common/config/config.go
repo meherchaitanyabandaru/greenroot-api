@@ -93,7 +93,10 @@ type JWTConfig struct {
 	Issuer             string
 	AccessTTL          time.Duration
 	RefreshTTL         time.Duration
-	SigningMethod      string
+	// AdminRefreshTTL: admin sessions end sooner (a stolen admin token is
+	// worth the most); they sign in again with an OTP.
+	AdminRefreshTTL time.Duration
+	SigningMethod   string
 }
 
 type StorageConfig struct {
@@ -204,6 +207,7 @@ func Load() Config {
 			Issuer:             getString("JWT_ISSUER", "greenroot-api"),
 			AccessTTL:          getDuration("JWT_ACCESS_TTL", 15*time.Minute),
 			RefreshTTL:         getDuration("JWT_REFRESH_TTL", 720*time.Hour),
+			AdminRefreshTTL:    getDuration("JWT_ADMIN_REFRESH_TTL", 12*time.Hour),
 			SigningMethod:      getString("JWT_SIGNING_METHOD", "HS256"),
 		},
 		Storage: StorageConfig{
