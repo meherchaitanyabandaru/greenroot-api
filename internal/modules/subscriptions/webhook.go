@@ -3,6 +3,7 @@ package subscriptions
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -57,6 +58,12 @@ func (s *Service) HandleRazorpayWebhook(ctx context.Context, body []byte, signat
 			return http.StatusOK
 		}
 		ok, err := s.ApplyGatewayPayment(ctx, p.OrderID, p.ID)
+		if errors.Is(err, razorpay.ErrRejected) {
+			// Razorpay refused the lookup (unknown or invalid id): a retry can
+			// never succeed, so acknowledge instead of retrying for days.
+			slog.Warn("razorpay webhook: ignored, Razorpay rejected the lookup", "event", ev.Event, "order_id", p.OrderID, "payment_id", p.ID, "error", err)
+			return http.StatusOK
+		}
 		if err != nil {
 			slog.Error("razorpay webhook: will retry", "event", ev.Event, "order_id", p.OrderID, "payment_id", p.ID, "error", err)
 			return http.StatusInternalServerError

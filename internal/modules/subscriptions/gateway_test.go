@@ -51,6 +51,9 @@ func (g *fakeGateway) CreateOrder(_ context.Context, paise int64, receipt string
 
 func (g *fakeGateway) FetchOrder(_ context.Context, id string) (razorpay.Order, error) {
 	o, ok := g.orders[id]
+	if id == "order_invalid" { // Razorpay answers 4xx: "... is not a valid id"
+		return razorpay.Order{}, fmt.Errorf("%w: invalid is not a valid id", razorpay.ErrRejected)
+	}
 	if !ok {
 		return razorpay.Order{}, razorpay.ErrGateway
 	}

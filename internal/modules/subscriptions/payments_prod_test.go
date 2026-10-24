@@ -152,6 +152,16 @@ func TestWebhook_IgnoresForeignOrdersAndTracksRefunds(t *testing.T) {
 	if got := s.HandleRazorpayWebhook(ctx, refund, sign(refund, "wh-secret")); got != http.StatusOK || repo.refundStatus["rfnd_1"] != "processed" {
 		t.Fatalf("refund status not recorded: %d %v", got, repo.refundStatus)
 	}
+	// Razorpay rejects the lookup (4xx): acknowledged, not retried for days.
+	bad := webhookBody("payment.captured", "order_invalid", "pay_bad")
+	if got := s.HandleRazorpayWebhook(ctx, bad, sign(bad, "wh-secret")); got != http.StatusOK || len(repo.recorded) != 0 {
+		t.Fatalf("rejected lookup: status %d, %d payments; want 200 and nothing recorded", got, len(repo.recorded))
+	}
+	// Razorpay unreachable (gateway error): 500 so Razorpay retries.
+	down := webhookBody("payment.captured", "order_unknown", "pay_down")
+	if got := s.HandleRazorpayWebhook(ctx, down, sign(down, "wh-secret")); got != http.StatusInternalServerError {
+		t.Fatalf("gateway error: status %d, want 500 (retry)", got)
+	}
 	// Without a gateway (mock mode) the webhook is off.
 	if got := svc(repo).HandleRazorpayWebhook(ctx, refund, sign(refund, "wh-secret")); got != http.StatusServiceUnavailable {
 		t.Fatalf("mock mode: want 503, got %d", got)
