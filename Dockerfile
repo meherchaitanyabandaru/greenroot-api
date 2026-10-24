@@ -9,7 +9,11 @@
 # Configuration comes from the environment; in production AWS_SECRETS_ID names
 # the Secrets Manager secret with every key (see greenroot-infra/deploy).
 
-FROM golang:1.26.10-bookworm AS build
+# Builds natively for the target (amd64 or arm64/Graviton) via buildx:
+#   docker buildx build --platform linux/arm64 ...
+FROM --platform=$BUILDPLATFORM golang:1.26.10-bookworm AS build
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
@@ -17,10 +21,10 @@ COPY . .
 ARG VERSION=dev
 # timetzdata embeds the zone database (Asia/Kolkata) into the binaries.
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -tags timetzdata \
-      -ldflags="-s -w" -o /out/greenroot-api ./cmd/api && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -tags timetzdata -ldflags="-s -w" -o /out/migrate ./cmd/migrate && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./cmd/healthcheck
+    export CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH && \
+    go build -trimpath -tags timetzdata -ldflags="-s -w" -o /out/greenroot-api ./cmd/api && \
+    go build -trimpath -tags timetzdata -ldflags="-s -w" -o /out/migrate ./cmd/migrate && \
+    go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./cmd/healthcheck
 
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
