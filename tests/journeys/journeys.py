@@ -1644,16 +1644,27 @@ def journey_access():
     time.sleep(1.1)
     expect("owner renewing the free trial is refused", "POST", f"/subscriptions/{sub['id']}/renew", owner.refresh() and owner.token,
            {"billing_cycle": "SIX_MONTH", "payment_method": "UPI"}, status=400)
-    # Razorpay off (no keys): the app falls back to mock payments on 503.
-    expect("no Razorpay keys: payment order says payments unavailable", "POST", "/subscriptions/payment-order", owner.token,
-           {"subscription_id": sub["id"], "plan_id": plan_ids.get("GROWTH"), "billing_cycle": "YEARLY"}, status=503)
+    # Razorpay on or off: the suite checks whichever mode this API runs in.
+    upgrade = {"plan_id": plan_ids.get("GROWTH"), "billing_cycle": "YEARLY", "payment_method": "UPI"}
+    code, po = call("POST", "/subscriptions/payment-order", owner.token,
+                    {"subscription_id": sub["id"], "plan_id": plan_ids.get("GROWTH"), "billing_cycle": "YEARLY"})
     expect("only admins refund", "POST", f"/subscriptions/{sub['id']}/payments/1/refund", owner.token,
            {"reason": "please refund"}, status=403)
-    out = expect("owner upgrades to GROWTH", "POST", f"/subscriptions/{sub['id']}/renew", owner.token,
-                 {"plan_id": plan_ids.get("GROWTH"), "billing_cycle": "YEARLY", "payment_method": "UPI"})
+    if code == 503:
+        # No keys: payments unavailable, the app falls back to mock payments.
+        check("no Razorpay keys: payment order says payments unavailable", True)
+        out = expect("owner upgrades to GROWTH", "POST", f"/subscriptions/{sub['id']}/renew", owner.token, upgrade)
+    else:
+        # Keys set (no money moves: the order is only created, never paid).
+        order = po.get("payment_order", {}) if isinstance(po, dict) else {}
+        check("Razorpay on: the server creates and prices the order (₹3,999 a year, in paise)",
+              code in (200, 201) and order.get("order_id", "").startswith("order_") and order.get("amount") == 399900, po)
+        expect("Razorpay on: an owner cannot renew without a verified payment", "POST", f"/subscriptions/{sub['id']}/renew", owner.token, upgrade, status=400)
+        out = expect("admin records an offline payment to upgrade to GROWTH", "POST", f"/subscriptions/{sub['id']}/renew", boss.token,
+                     dict(upgrade, payment_method="CASH"))
     check("…plan switched", out.get("subscription", {}).get("plan_code") == "GROWTH", out)
-    expect("renewing again while paid > 1 year ahead is refused", "POST", f"/subscriptions/{sub['id']}/renew", owner.token,
-           {"plan_id": plan_ids.get("GROWTH"), "billing_cycle": "YEARLY", "payment_method": "UPI"}, status=409)
+    expect("renewing again while paid > 1 year ahead is refused", "POST", f"/subscriptions/{sub['id']}/renew", boss.token,
+           dict(upgrade, payment_method="CASH"), status=409)
     owner.refresh()
     expect("upgraded owner creates", "POST", "/quotations", owner.token, q, status=201)
 
