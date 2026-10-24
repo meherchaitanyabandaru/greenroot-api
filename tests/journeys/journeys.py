@@ -1039,6 +1039,12 @@ def journey_payments():
     expect("a refund is final", "PUT", f"/payments/{p['id']}/status", owner.token, {"payment_status": "SUCCESS"}, status=409)
     out = expect("payments of the order", "GET", f"/orders/{o['id']}/payments", buyer.token)
     check("…listed for the buyer", p["id"] in [x["id"] for x in out.get("payments", [])], out)
+    q = expect("a payment with a gateway payload", "POST", "/payments/manual", owner.token,
+               pay(payment_method="UPI", provider_signature="sig-abc", raw_response={"email": "payer@example.com", "vpa": "payer@upi"}), status=201)["payment"]
+    shown = json.dumps([q, expect("…read back", "GET", f"/payments/{q['id']}", buyer.token),
+                        expect("…in the list", "GET", f"/orders/{o['id']}/payments", buyer.token)])
+    check("…never returns the signature or the raw payload (payer email, UPI id)",
+          "sig-abc" not in shown and "payer@" not in shown and "raw_response" not in shown and "provider_signature" not in shown, shown[:300])
     expect("cancel the order", "POST", f"/orders/{o['id']}/cancel", owner.token, {"reason": "journey"})
     expect("a cancelled order takes no payments", "POST", "/payments/manual", owner.token, pay(), status=409)
     sub = expect("owner's subscription", "GET", "/subscriptions/me", owner.token)["subscriptions"][0]

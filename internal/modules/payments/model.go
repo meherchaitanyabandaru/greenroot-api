@@ -36,10 +36,12 @@ type Payment struct {
 	Provider             *string    `json:"provider,omitempty"`
 	ProviderPaymentID    *string    `json:"provider_payment_id,omitempty"`
 	ProviderOrderID      *string    `json:"provider_order_id,omitempty"`
-	ProviderSignature    *string    `json:"provider_signature,omitempty"`
-	RawResponse          *string    `json:"raw_response,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at"`
+	// Kept for verification and audits; never sent to clients (the raw
+	// gateway payload can hold the payer's email, phone, card or UPI id).
+	ProviderSignature *string   `json:"-"`
+	RawResponse       *string   `json:"-"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 	// Version changes on every update; send it back as If-Match.
 	Version int64 `json:"version"`
 }
