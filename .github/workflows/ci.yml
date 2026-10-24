@@ -49,7 +49,18 @@ jobs:
       # Unit tests. ./tests/... needs a running API and runs in the
       # integration job. internal/app includes the OpenAPI drift test.
       - name: Unit tests
-        run: go test -race $(go list ./... | grep -v '/tests/')
+        run: go test -race -coverprofile=coverage.out $(go list ./... | grep -v '/tests/')
+
+      # Unit-test coverage on the run, with a floor just under today's level
+      # (27.7% on 2026-10-24). The journeys cover business rules end to end
+      # and are not counted here.
+      - name: Coverage
+        env:
+          MIN_COVERAGE: '27'
+        run: |
+          pct=$(go tool cover -func=coverage.out | awk '/^total:/ {sub("%","",$NF); print $NF}')
+          echo "### API unit-test coverage: ${pct}% (floor ${MIN_COVERAGE}%)" >> "$GITHUB_STEP_SUMMARY"
+          awk -v p="$pct" -v m="$MIN_COVERAGE" 'BEGIN {exit !(p >= m)}' || { echo "coverage ${pct}% fell below ${MIN_COVERAGE}%"; exit 1; }
 
       - name: Build
         run: |
