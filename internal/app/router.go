@@ -84,6 +84,10 @@ func NewRouter(deps Dependencies) chi.Router {
 		}
 		r.Use(appmiddleware.AuditContext) // must come after EnrichActorMiddleware
 		r.Use(rowversion.Middleware)      // If-Match → expected row version (409 on stale writes)
+		if deps.Redis != nil {
+			// Idempotency-Key on POST: a retry after a lost response replays it.
+			r.Use(appmiddleware.Idempotency(deps.Redis))
+		}
 
 		// Messaging: each channel registers its admin routes; the notifier fans
 		// business events out to every channel (SMS to mobile, email to a

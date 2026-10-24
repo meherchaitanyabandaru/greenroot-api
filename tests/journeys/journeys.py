@@ -870,6 +870,18 @@ def journey_dispatch():
     check("…PENDING with a code and tracking link", d["dispatch_status"] == "PENDING" and code and d.get("trip_uuid"), d)
     expect("only one active dispatch per order", "POST", "/dispatches", owner.token, {"order_id": o["id"]}, status=409)
 
+    # A retry after a lost response (weak network) must not create a second order
+    body = {"seller_nursery_id": nid, "buyer_mobile": buyer.mobile, "delivery": address,
+            "items": [{"plant_id": plants[0], "quantity": 2, "unit_price": 100, "total_price": 200}]}
+    key = {"Idempotency-Key": "journey-" + str(random.randint(10**8, 10**9))}
+    a = expect("create an order with an Idempotency-Key", "POST", "/orders", owner.token, body, status=201, headers=key)["order"]
+    b = expect("…the same request again (retry)", "POST", "/orders", owner.token, body, status=201, headers=key)["order"]
+    check("…replays the first order instead of creating a second", a["id"] == b["id"], (a["id"], b["id"]))
+    c = expect("…a new key is a new order", "POST", "/orders", owner.token, body, status=201,
+               headers={"Idempotency-Key": key["Idempotency-Key"] + "x"})["order"]
+    check("…different id", c["id"] != a["id"], c["id"])
+    expect("…the same key from another user is theirs alone", "POST", "/orders", rival.token, dict(body, seller_nursery_id=rival.nursery_id), status=(201, 400, 403), headers=key)
+
     # QR lookup and accept
     expect("the order's buyer can look up the trip", "GET", f"/dispatches/code/{code}", buyer.token)
     expect("an unrelated buyer cannot look up a trip by code", "GET", f"/dispatches/code/{code}", User(first="Nosy", activity="CUSTOMER").token, status=403)
