@@ -30,7 +30,11 @@ func main() {
 		slog.Error("failed to bootstrap api", slog.Any("error", err))
 		os.Exit(1)
 	}
-	defer application.Close()
+	defer func() {
+		if err := application.Close(); err != nil {
+			slog.Error("api shutdown", slog.Any("error", err))
+		}
+	}()
 
 	if err := application.Run(ctx); err != nil {
 		slog.Error("api server failed", slog.Any("error", err))

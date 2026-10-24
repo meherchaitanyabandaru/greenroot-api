@@ -259,7 +259,7 @@ func check(url string, stmts []statement, verbose bool) ([]string, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }() // CLI exit: nothing left to flush
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 

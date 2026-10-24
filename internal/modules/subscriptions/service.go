@@ -777,7 +777,7 @@ func computeDiscount(base float64, discountType string, value float64, cap *floa
 }
 
 func buildBlastMessage(promo *SubscriptionPromo) string {
-	discountStr := ""
+	var discountStr string
 	if promo.DiscountType == "PERCENTAGE" {
 		discountStr = fmt.Sprintf("%.0f%% off", promo.DiscountValue)
 	} else {

@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/phone"
@@ -1162,14 +1161,6 @@ func (s *Service) audit(ctx context.Context, actor ActorContext, entityType stri
 		IPAddress:   actor.IPAddress,
 		DeviceInfo:  actor.UserAgent,
 	})
-}
-
-func mustJSON(value any) string {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return fmt.Sprintf(`{"error":%q}`, err.Error())
-	}
-	return string(data)
 }
 
 // checkIfMatch enforces the client's If-Match precondition against the order

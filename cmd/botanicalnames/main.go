@@ -93,7 +93,7 @@ func cleanFile(inPath, outPath string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }() // read-only
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o750); err != nil {
 		return 0, err
 	}
@@ -101,7 +101,7 @@ func cleanFile(inPath, outPath string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer os.Remove(tmp.Name()) // no-op after the rename
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op after the rename
 	n, err := clean(in, tmp)
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
@@ -215,7 +215,7 @@ func withDB(fn func(context.Context, *sql.DB) error) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }() // CLI exit: nothing left to flush
 	return fn(ctx, db)
 }
 
@@ -233,7 +233,7 @@ func loadFile(ctx context.Context, db *sql.DB, path string, batchSize int, resta
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only
 	cr := csv.NewReader(f)
 	header, err := cr.Read()
 	if err != nil {

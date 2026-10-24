@@ -50,7 +50,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }() // CLI exit: nothing left to flush
 	all, err := migrate.Load(migrations.FS)
 	if err != nil {
 		return err

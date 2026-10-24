@@ -31,8 +31,6 @@ var (
 	ErrAccountDeletionBlocked = errors.New("account deletion blocked by active business records")
 )
 
-const defaultUserFirstName = "GreenRoot"
-
 type Service struct {
 	repository Repository
 	storage    *platformstorage.Client
@@ -118,11 +116,6 @@ func (s *Service) CompleteOnboarding(ctx context.Context, actor ActorContext, in
 	})
 
 	return *user, nil
-}
-
-func isLockedName(name string) bool {
-	name = strings.TrimSpace(name)
-	return name != "" && !strings.EqualFold(name, defaultUserFirstName)
 }
 
 func isAllowedInitialActivity(activity string) bool {

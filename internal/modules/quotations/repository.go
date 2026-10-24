@@ -1041,13 +1041,6 @@ func nullableInt64(v sql.NullInt64) *int64 {
 	return &v.Int64
 }
 
-func nullableInt64FromPtr(v *int64) sql.NullInt64 {
-	if v == nil {
-		return sql.NullInt64{}
-	}
-	return sql.NullInt64{Int64: *v, Valid: true}
-}
-
 func stringOrEmpty(v *string) string {
 	if v == nil {
 		return ""

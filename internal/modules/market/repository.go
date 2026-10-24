@@ -351,9 +351,7 @@ func (r *PostgresRepository) UpdateAd(ctx context.Context, id, userID int64, req
 	}
 	addExpr := func(expr string, values ...any) {
 		start := len(args) + 1
-		for _, v := range values {
-			args = append(args, v)
-		}
+		args = append(args, values...)
 		for i := range values {
 			expr = strings.ReplaceAll(expr, fmt.Sprintf("$%d", i+1), fmt.Sprintf("$%d", start+i))
 		}

@@ -1133,7 +1133,7 @@ func daysRemaining(expiresAt *time.Time) *int {
 	if expiresAt == nil {
 		return nil
 	}
-	days := int(expiresAt.Sub(time.Now()).Hours() / 24)
+	days := int(time.Until(*expiresAt).Hours() / 24)
 	if expiresAt.After(time.Now()) && days == 0 {
 		days = 1
 	}

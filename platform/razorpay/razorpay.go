@@ -166,7 +166,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, out a
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrGateway, err)
+		return fmt.Errorf("%w: %w", ErrGateway, err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -187,7 +187,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, out a
 		return fmt.Errorf("%w: %s %s: %d %s", ErrGateway, method, path, resp.StatusCode, raw)
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
-		return fmt.Errorf("%w: decode %s: %v", ErrGateway, path, err)
+		return fmt.Errorf("%w: decode %s: %w", ErrGateway, path, err)
 	}
 	return nil
 }

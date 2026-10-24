@@ -38,7 +38,7 @@ func AcquireLock(ctx context.Context, client redis.Cmdable, log *slog.Logger, mo
 		// unlocked is exactly when parallel requests double-apply. The caller
 		// answers "busy, try again".
 		logger(log).Error("redis lock unavailable; refusing to run unlocked", "key", key, "error", err)
-		return nil, fmt.Errorf("%w: redis unavailable: %v", ErrLockBusy, err)
+		return nil, fmt.Errorf("%w: redis unavailable: %w", ErrLockBusy, err)
 	}
 	if !ok {
 		return nil, ErrLockBusy

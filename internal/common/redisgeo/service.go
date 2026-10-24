@@ -199,7 +199,7 @@ func (s *Service) lastSeen(ctx context.Context, driverID int64) (time.Time, bool
 	if err != nil {
 		_ = s.redis.Del(ctx, lastSeenKey(driverID)).Err()
 		_ = s.redis.ZRem(ctx, KeyDriverLiveGeo, memberName(driverID)).Err()
-		return time.Time{}, false, nil
+		return time.Time{}, false, nil //nolint:nilerr // a corrupt entry is removed and treated as absent, not an error
 	}
 	return seen, true, nil
 }

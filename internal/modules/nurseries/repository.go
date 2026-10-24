@@ -370,25 +370,10 @@ func (r *PostgresRepository) Delete(ctx context.Context, actorID int64, nurseryI
 	if err != nil {
 		return err
 	}
-	var managerIDs []int64
-	rows, err := tx.QueryContext(ctx, `
+	managerIDs, err := queryIDs(ctx, tx, `
 		UPDATE public.nursery_users SET is_active = false, status = 'INACTIVE', updated_at = CURRENT_TIMESTAMP
 		WHERE nursery_id = $1 AND status = 'ACTIVE' RETURNING user_id`, nurseryID)
 	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close() // the scan error is the one to report
-			return err
-		}
-		managerIDs = append(managerIDs, id)
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	if err := rows.Err(); err != nil {
 		return err
 	}
 	steps := []struct {
@@ -1043,30 +1028,6 @@ func (r *PostgresRepository) scanNursery(ctx context.Context, where string, args
 	return nursery, err
 }
 
-func (r *PostgresRepository) findUserLink(ctx context.Context, nurseryUserID int64) (*UserLink, error) {
-	return r.findManagerLink(ctx, nurseryUserID)
-}
-
-func (r *PostgresRepository) findManagerLink(ctx context.Context, nurseryUserID int64) (*UserLink, error) {
-	const query = `
-		SELECT nu.nursery_user_id, nu.nursery_id, nu.user_id,
-			u.first_name, u.last_name,
-			NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''),
-			u.mobile, u.email,
-			COALESCE(nu.role, 'MANAGER'), COALESCE(nu.role, 'MANAGER'),
-			COALESCE(nu.role, 'MANAGER'), COALESCE(nu.status, 'ACTIVE'),
-			nu.joined_at, COALESCE(nu.is_active, true)
-		FROM public.nursery_users nu
-		JOIN public.users u ON u.user_id = nu.user_id
-		WHERE nu.nursery_user_id = $1
-	`
-	user, err := scanManagerLinkRow(r.db.QueryRowContext(ctx, query, nurseryUserID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	return user, err
-}
-
 func scanNurseryRow(row interface{ Scan(dest ...any) error }) (*Nursery, error) {
 	nursery, err := scanNursery(row)
 	if err != nil {
@@ -1180,22 +1141,6 @@ func scanAddress(row interface{ Scan(dest ...any) error }) (Address, error) {
 	return address, nil
 }
 
-func scanUserLinkRow(row interface{ Scan(dest ...any) error }) (*UserLink, error) {
-	return scanManagerLinkRow(row)
-}
-
-func scanUserLinkRows(rows *sql.Rows) (UserLink, error) {
-	return scanManagerLink(rows)
-}
-
-func scanManagerLinkRow(row interface{ Scan(dest ...any) error }) (*UserLink, error) {
-	user, err := scanManagerLink(row)
-	if err != nil {
-		return nil, err
-	}
-	return &user, nil
-}
-
 func scanManagerLinkRows(rows *sql.Rows) (UserLink, error) {
 	return scanManagerLink(rows)
 }
@@ -1291,4 +1236,23 @@ func nullOrString(value *string) any {
 		return nil
 	}
 	return s
+}
+
+// queryIDs runs a query returning one bigint column and closes its rows
+// before returning, so the same transaction can run the next statement.
+func queryIDs(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
