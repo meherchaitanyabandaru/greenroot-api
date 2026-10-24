@@ -69,6 +69,9 @@ func (c Config) Validate() error {
 	if _, err := clientip.ParsePrefixes(c.HTTP.TrustedProxies); err != nil {
 		add("TRUSTED_PROXIES: %v", err)
 	}
+	if _, err := clientip.ParsePrefixes(c.HTTP.AdminAllowedCIDRs); err != nil {
+		add("ADMIN_ALLOWED_CIDRS: %v", err)
+	}
 	// Empty keeps the server's zone; a typo must not silently do the same.
 	if tz := c.Database.TimeZone; tz != "" {
 		if _, err := time.LoadLocation(tz); err != nil {

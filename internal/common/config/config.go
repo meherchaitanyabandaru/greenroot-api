@@ -59,6 +59,8 @@ type HTTPConfig struct {
 	// TrustedProxies lists the load balancers / reverse proxies (CIDRs or IPs)
 	// whose X-Forwarded-For header is believed. Empty = trust no proxy header.
 	TrustedProxies []string
+	// AdminAllowedCIDRs: networks ADMIN accounts may be used from (empty = any).
+	AdminAllowedCIDRs []string
 }
 
 func (c HTTPConfig) Addr() string {
@@ -175,6 +177,7 @@ func Load() Config {
 			MaxBodyBytes:       int64(getInt("HTTP_MAX_BODY_BYTES", 1<<20)),    // 1 MB
 			MaxUploadBytes:     int64(getInt("HTTP_MAX_UPLOAD_BYTES", 12<<20)), // 10 MB PDF + form overhead
 			TrustedProxies:     getStringSlice("TRUSTED_PROXIES", nil),
+			AdminAllowedCIDRs:  getStringSlice("ADMIN_ALLOWED_CIDRS", nil),
 		},
 		Client: ClientAppConfig{
 			MinVersion:       getString("CLIENT_MIN_VERSION", "1.0.0"),

@@ -89,8 +89,10 @@ func NewRouter(deps Dependencies) chi.Router {
 		} else {
 			r.Use(authctx.EnrichActorMiddleware(deps.JWT))
 		}
-		r.Use(appmiddleware.AuditContext) // must come after EnrichActorMiddleware
-		r.Use(rowversion.Middleware)      // If-Match → expected row version (409 on stale writes)
+		r.Use(appmiddleware.AuditContext)                                          // must come after EnrichActorMiddleware
+		adminNets, _ := clientip.ParsePrefixes(deps.Config.HTTP.AdminAllowedCIDRs) // validated at start
+		r.Use(appmiddleware.AdminNetwork(adminNets))
+		r.Use(rowversion.Middleware) // If-Match → expected row version (409 on stale writes)
 		if deps.Redis != nil {
 			// Idempotency-Key on POST: a retry after a lost response replays it.
 			r.Use(appmiddleware.Idempotency(deps.Redis))
