@@ -1,7 +1,6 @@
 package sms
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -54,7 +53,7 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req EntityRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	entity, err := h.service.UpdateEntity(r.Context(), actor, req)
@@ -84,7 +83,7 @@ func (h *Handler) CreateHeader(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req HeaderRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	header, err := h.service.CreateHeader(r.Context(), actor, req)
@@ -105,7 +104,7 @@ func (h *Handler) UpdateHeader(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req HeaderRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	header, err := h.service.UpdateHeader(r.Context(), actor, id, req)
@@ -152,7 +151,7 @@ func (h *Handler) CreateTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req TemplateRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	template, err := h.service.CreateTemplate(r.Context(), actor, req)
@@ -173,7 +172,7 @@ func (h *Handler) UpdateTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req TemplateRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	template, err := h.service.UpdateTemplate(r.Context(), actor, id, req)
@@ -190,7 +189,7 @@ func (h *Handler) Preview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req PreviewRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	preview, err := h.service.Preview(r.Context(), actor, req)
@@ -211,7 +210,7 @@ func (h *Handler) TestSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req TestSendRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	result, err := h.service.TestSend(r.Context(), actor, id, req)
@@ -259,7 +258,7 @@ func (h *Handler) UpdateMyPreferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req PreferencesRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	prefs, err := h.service.UpdateMyPreferences(r.Context(), actor, req)
@@ -276,15 +275,6 @@ func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (ActorContext, b
 		return ActorContext{}, false
 	}
 	return actor.AsActorContext(), true
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid JSON request body")
-		return false
-	}
-	return true
 }
 
 func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {

@@ -302,6 +302,74 @@ paths:
       responses:
         "200":
           description: User sessions
+  /api/v1/payment-issues:
+    get:
+      tags:
+        - Subscriptions
+      summary: Razorpay money that needs a manual action (admin)
+      description: >
+        Captured payments a business rule refused (e.g. the subscription was
+        paused after checkout) and refunds Razorpay reported as failed. The
+        webhook records them; settle each in the Razorpay dashboard, then
+        resolve it here with a note.
+      operationId: listPaymentIssues
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [OPEN, RESOLVED]
+      responses:
+        "200":
+          description: Newest first (at most 200)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentIssuesResponse"
+        "403":
+          description: Admins only
+          $ref: '#/components/responses/Error'
+  /api/v1/payment-issues/{id}/resolve:
+    post:
+      tags:
+        - Subscriptions
+      summary: Resolve a payment issue (admin)
+      operationId: resolvePaymentIssue
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [note]
+              properties:
+                note:
+                  type: string
+                  minLength: 5
+                  description: What was done (e.g. refunded rfnd_..., or applied by hand)
+      responses:
+        "200":
+          description: Resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentIssueResponse"
+        "403":
+          $ref: '#/components/responses/Error'
+        "404":
+          description: Unknown or already resolved
+          $ref: '#/components/responses/Error'
   /api/v1/plants:
     get:
       tags: [Plants]
@@ -1242,6 +1310,11 @@ paths:
     post:
       tags: [Subscriptions]
       summary: Cancel subscription
+      description: >
+        By default a running subscription is cancelled at the end of its paid
+        period: it stays ACTIVE (cancel_requested_at set, no auto-renew) until
+        end_date, then becomes CANCELLED. cancel_immediately=true ends it now
+        without a refund. 409 when it is already cancelled or expired.
       security:
         - BearerAuth: []
       parameters:
@@ -8453,6 +8526,35 @@ components:
         raw_response:
           type: object
           nullable: true
+    PaymentIssue:
+      type: object
+      properties:
+        id: {type: integer, format: int64}
+        issue_type: {type: string, enum: [PAID_NOT_APPLIED, REFUND_FAILED]}
+        provider: {type: string}
+        provider_order_id: {type: string}
+        provider_payment_id: {type: string}
+        provider_refund_id: {type: string}
+        user_id: {type: integer, format: int64}
+        amount: {type: number}
+        reason: {type: string}
+        status: {type: string, enum: [OPEN, RESOLVED]}
+        resolution_note: {type: string}
+        resolved_by_user_id: {type: integer, format: int64}
+        resolved_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+    PaymentIssuesResponse:
+      type: object
+      properties:
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentIssue'
+    PaymentIssueResponse:
+      type: object
+      properties:
+        issue:
+          $ref: '#/components/schemas/PaymentIssue'
     SubscriptionPlan:
       type: object
       properties:
@@ -8513,6 +8615,10 @@ components:
           enum: [ACTIVE, PAUSED, CANCELLED, EXPIRED]
         auto_renew:
           type: boolean
+        cancel_requested_at:
+          type: string
+          format: date-time
+          description: The owner cancelled; the subscription stays usable until end_date, then becomes CANCELLED.
         latest_payment:
           $ref: "#/components/schemas/SubscriptionPaymentSummary"
     SubscriptionPaymentSummary:
@@ -9304,7 +9410,45 @@ components:
       type: object
       properties:
         dispatch:
-          $ref: '#/components/schemas/DispatchesDispatch'
+          $ref: '#/components/schemas/DispatchesPublicTrip'
+    DispatchesPublicTrip:
+      type: object
+      description: What an unauthenticated tracking link shows. No customer address or coordinates, phone numbers, people's names, notes or internal ids.
+      properties:
+        dispatch_code:
+          type: string
+        dispatch_status:
+          type: string
+        lifecycle:
+          type: object
+        seller_nursery_name:
+          type: string
+        vehicle_number:
+          type: string
+        dispatch_date:
+          type: string
+          format: date-time
+        trip_started_at:
+          type: string
+          format: date-time
+        delivery_date:
+          type: string
+          format: date-time
+        trip_events:
+          type: array
+          description: Only while the trip is DISPATCHED or IN_TRANSIT.
+          items:
+            type: object
+            properties:
+              event_type:
+                type: string
+              latitude:
+                type: number
+              longitude:
+                type: number
+              created_at:
+                type: string
+                format: date-time
     DispatchesTripEvent:
       type: object
       properties:

@@ -1,5 +1,7 @@
 package vehicles
 
+import "github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+
 type ListVehiclesRequest struct {
 	Page      int
 	PerPage   int
@@ -19,12 +21,7 @@ type VehicleRequest struct {
 	Status        string   `json:"status"`
 }
 
-type Pagination struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-}
+type Pagination = response.Pagination
 
 type VehiclesResponse struct {
 	Vehicles   []Vehicle  `json:"vehicles"`

@@ -34,7 +34,7 @@ func NewHandler(service *Service) *Handler {
 //	@Router			/api/v1/auth/send-otp [post]
 func (h *Handler) SendOTP(w http.ResponseWriter, r *http.Request) {
 	var req SendOTPRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	if !validateMobile(w, req.Mobile) {
@@ -63,7 +63,7 @@ func (h *Handler) SendOTP(w http.ResponseWriter, r *http.Request) {
 //	@Router			/api/v1/auth/verify-otp [post]
 func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 	var req VerifyOTPRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	if !validateMobile(w, req.Mobile) || !validateRequired(w, "otp", req.OTP) {
@@ -92,7 +92,7 @@ func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 //	@Router			/api/v1/auth/refresh-token [post]
 func (h *Handler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	var req RefreshTokenRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	if !validateRequired(w, "refresh_token", req.RefreshToken) {
@@ -197,15 +197,6 @@ func (h *Handler) OwnerDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, map[string]any{"dashboard": dashboard})
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid JSON request body")
-		return false
-	}
-	return true
 }
 
 func validateMobile(w http.ResponseWriter, mobile string) bool {

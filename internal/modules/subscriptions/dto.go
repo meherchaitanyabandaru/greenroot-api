@@ -1,5 +1,7 @@
 package subscriptions
 
+import "github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+
 type ListSubscriptionsRequest struct {
 	Page    int
 	PerPage int
@@ -118,12 +120,7 @@ type CancelSubscriptionRequest struct {
 	Reason            *string `json:"reason"`
 }
 
-type Pagination struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-}
+type Pagination = response.Pagination
 
 type PlansResponse struct {
 	Plans []SubscriptionPlan `json:"plans"`

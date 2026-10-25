@@ -17,6 +17,7 @@ const (
 	statusPaused    = "PAUSED"
 	statusCancelled = "CANCELLED"
 	statusExpired   = "EXPIRED"
+	statusTrial     = "TRIAL"
 )
 
 type SubscriptionPlan struct {
@@ -39,26 +40,28 @@ type SubscriptionPlan struct {
 }
 
 type UserSubscription struct {
-	ID               int64                           `json:"id"`
-	SubscriptionCode string                          `json:"subscription_code"`
-	UserID           int64                           `json:"user_id"`
-	PlanID           int64                           `json:"plan_id"`
-	PlanCode         string                          `json:"plan_code"`
-	PlanName         string                          `json:"plan_name"`
-	UserName         *string                         `json:"user_name,omitempty"`
-	UserMobile       *string                         `json:"user_mobile,omitempty"`
-	NurseryName      *string                         `json:"nursery_name,omitempty"` // the subscriber's owned nursery
-	StartDate        time.Time                       `json:"start_date"`
-	EndDate          *time.Time                      `json:"end_date,omitempty"`
-	Status           string                          `json:"subscription_status"`
-	AutoRenew        bool                            `json:"auto_renew"`
-	DaysRemaining    *int                            `json:"days_remaining,omitempty"`
-	CreatedAt        time.Time                       `json:"created_at"`
-	UpdatedAt        *time.Time                      `json:"updated_at,omitempty"`
-	LatestPayment    *Payment                        `json:"latest_payment,omitempty"`
-	Lifecycle        *lifecycle.SubscriptionDisplays `json:"lifecycle,omitempty"`
-	Capabilities     *SubscriptionCapabilities       `json:"capabilities,omitempty"`
-	Summary          *SubscriptionSummary            `json:"summary,omitempty"`
+	ID               int64      `json:"id"`
+	SubscriptionCode string     `json:"subscription_code"`
+	UserID           int64      `json:"user_id"`
+	PlanID           int64      `json:"plan_id"`
+	PlanCode         string     `json:"plan_code"`
+	PlanName         string     `json:"plan_name"`
+	UserName         *string    `json:"user_name,omitempty"`
+	UserMobile       *string    `json:"user_mobile,omitempty"`
+	NurseryName      *string    `json:"nursery_name,omitempty"` // the subscriber's owned nursery
+	StartDate        time.Time  `json:"start_date"`
+	EndDate          *time.Time `json:"end_date,omitempty"`
+	Status           string     `json:"subscription_status"`
+	AutoRenew        bool       `json:"auto_renew"`
+	// CancelRequestedAt: the owner cancelled; it stays usable until EndDate.
+	CancelRequestedAt *time.Time                      `json:"cancel_requested_at,omitempty"`
+	DaysRemaining     *int                            `json:"days_remaining,omitempty"`
+	CreatedAt         time.Time                       `json:"created_at"`
+	UpdatedAt         *time.Time                      `json:"updated_at,omitempty"`
+	LatestPayment     *Payment                        `json:"latest_payment,omitempty"`
+	Lifecycle         *lifecycle.SubscriptionDisplays `json:"lifecycle,omitempty"`
+	Capabilities      *SubscriptionCapabilities       `json:"capabilities,omitempty"`
+	Summary           *SubscriptionSummary            `json:"summary,omitempty"`
 }
 
 type SubscriptionCapabilities struct {

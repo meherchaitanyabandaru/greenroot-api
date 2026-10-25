@@ -11,6 +11,7 @@ import (
 
 type Module struct {
 	handler *Handler
+	service *Service
 }
 
 // codeKey is the server secret delivery codes are derived from.
@@ -27,7 +28,13 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, co
 		service = NewService(repository, audit)
 	}
 	service.SetDeliveryCodeKey(codeKey)
-	return Module{handler: NewHandler(service, jwt)}
+	return Module{handler: NewHandler(service, jwt), service: service}
+}
+
+// WithEvents sends delivery events by SMS/email too (messaging.Notifier).
+func (m Module) WithEvents(n EventNotifier) Module {
+	m.service.SetEvents(n)
+	return m
 }
 
 func (m Module) RegisterRoutes(router chi.Router) {

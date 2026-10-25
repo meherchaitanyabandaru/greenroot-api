@@ -1,8 +1,10 @@
 package sourcing
 
 import (
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 )
 
 type ActorContext = authctx.ActorContext
@@ -51,12 +53,7 @@ type TopItem struct {
 	Photos       []string `json:"photos"`
 }
 
-type Pagination struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-}
+type Pagination = response.Pagination
 
 // ---- Request DTOs ----
 

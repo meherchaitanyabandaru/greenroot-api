@@ -182,7 +182,8 @@ func expireQuotation(ctx context.Context, deps Dependencies, id int64) error {
 func expireSubscription(ctx context.Context, deps Dependencies, id int64) error {
 	result, err := deps.DB.ExecContext(ctx,
 		`UPDATE public.user_subscriptions
-		 SET status = 'EXPIRED', is_auto_renew = false, updated_at = CURRENT_TIMESTAMP
+		 SET status = CASE WHEN cancel_requested_at IS NOT NULL THEN 'CANCELLED' ELSE 'EXPIRED' END,
+		     is_auto_renew = false, updated_at = CURRENT_TIMESTAMP
 		 WHERE user_subscription_id = $1
 		   AND status IN ('ACTIVE', 'TRIAL')`,
 		id,

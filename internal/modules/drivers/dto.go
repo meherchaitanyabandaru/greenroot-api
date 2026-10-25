@@ -1,5 +1,7 @@
 package drivers
 
+import "github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+
 type ListDriversRequest struct {
 	Page    int
 	PerPage int
@@ -38,12 +40,7 @@ type LocationRequest struct {
 	Longitude float64 `json:"longitude"`
 }
 
-type Pagination struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-}
+type Pagination = response.Pagination
 
 type DriversResponse struct {
 	Drivers    []Driver   `json:"drivers"`

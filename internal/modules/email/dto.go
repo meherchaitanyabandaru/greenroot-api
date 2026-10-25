@@ -1,5 +1,7 @@
 package email
 
+import "github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+
 type SenderRequest struct {
 	FromName       string  `json:"from_name"`
 	FromAddress    *string `json:"from_address"`
@@ -46,12 +48,7 @@ type ListMessagesRequest struct {
 	ToEmail      string
 }
 
-type Pagination struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-}
+type Pagination = response.Pagination
 
 type ReadinessCheck struct {
 	Key    string `json:"key"`

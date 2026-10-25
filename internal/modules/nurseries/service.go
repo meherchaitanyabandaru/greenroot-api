@@ -443,7 +443,7 @@ func (s *Service) ListUsers(ctx context.Context, actor ActorContext, nurseryID i
 	return s.repository.ListUsers(ctx, nurseryID)
 }
 
-// GetCustomers returns buyers who accepted a CUSTOMER_INVITE for a nursery.
+// GetCustomers returns the nursery's connected customers (repository.GetCustomers).
 // ADMIN/SUPER_ADMIN see all; NURSERY_OWNER must own it; MANAGER must be a member.
 func (s *Service) GetCustomers(ctx context.Context, actor ActorContext, nurseryID int64) ([]Customer, error) {
 	if actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") {

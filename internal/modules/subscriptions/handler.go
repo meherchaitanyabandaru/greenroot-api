@@ -1,7 +1,6 @@
 package subscriptions
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -63,7 +62,7 @@ func (h *Handler) UpdatePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req UpdatePlanRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	plan, err := h.service.UpdatePlan(r.Context(), actor, planID, req)
@@ -130,7 +129,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateSubscriptionRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	subscription, err := h.service.Create(r.Context(), actor, req)
@@ -148,7 +147,7 @@ func (h *Handler) CreatePaymentOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req PaymentOrderRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	order, err := h.service.CreatePaymentOrder(r.Context(), actor, req)
@@ -169,7 +168,7 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req UpdateStatusRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	subscription, err := h.service.UpdateStatus(r.Context(), actor, subscriptionID, req)
@@ -190,7 +189,7 @@ func (h *Handler) Renew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req RenewSubscriptionRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	subscription, err := h.service.Renew(r.Context(), actor, subscriptionID, req)
@@ -233,7 +232,7 @@ func (h *Handler) RefundPayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req RefundRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	subscription, err := h.service.RefundPayment(r.Context(), actor, subscriptionID, paymentID, req)
@@ -254,7 +253,7 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CancelSubscriptionRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	subscription, err := h.service.Cancel(r.Context(), actor, subscriptionID, req)
@@ -286,7 +285,7 @@ func (h *Handler) CreatePromo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreatePromoRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	promo, err := h.service.CreatePromo(r.Context(), actor, req)
@@ -307,7 +306,7 @@ func (h *Handler) UpdatePromo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req UpdatePromoRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	promo, err := h.service.UpdatePromo(r.Context(), actor, promoID, req)
@@ -324,7 +323,7 @@ func (h *Handler) ValidatePromo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ValidatePromoRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	result := h.service.ValidatePromo(r.Context(), req)
@@ -365,15 +364,6 @@ func listRequest(r *http.Request) ListSubscriptionsRequest {
 		Status:  query.Get("subscription_status"),
 		Search:  query.Get("search"),
 	}
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid JSON request body")
-		return false
-	}
-	return true
 }
 
 func pathID(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {

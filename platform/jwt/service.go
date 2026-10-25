@@ -53,17 +53,33 @@ func (s *Service) IssueAccessToken(userID, sessionID, mobile string, roles []str
 }
 
 func (s *Service) IssueRefreshToken(userID, sessionID, mobile string, roles []string, tc TokenContext) (string, error) {
-	return s.issue(TokenTypeRefresh, userID, sessionID, mobile, roles, tc, s.cfg.RefreshTTL)
+	return s.issue(TokenTypeRefresh, userID, sessionID, mobile, roles, tc, s.refreshTTL(roles))
+}
+
+// refreshTTL: admins get the shorter AdminRefreshTTL when it is set.
+func (s *Service) refreshTTL(roles []string) time.Duration {
+	if s.cfg.AdminRefreshTTL > 0 && s.cfg.AdminRefreshTTL < s.cfg.RefreshTTL {
+		for _, r := range roles {
+			if r == "ADMIN" || r == "SUPER_ADMIN" {
+				return s.cfg.AdminRefreshTTL
+			}
+		}
+	}
+	return s.cfg.RefreshTTL
 }
 
 func (s *Service) Verify(tokenValue string) (*Claims, error) {
 	claims := &Claims{}
+	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithExpirationRequired()}
+	if s.cfg.Issuer != "" {
+		opts = append(opts, jwt.WithIssuer(s.cfg.Issuer))
+	}
 	token, err := jwt.ParseWithClaims(tokenValue, claims, func(token *jwt.Token) (any, error) {
 		if token.Method != jwt.SigningMethodHS256 {
 			return nil, errors.New("unexpected signing method")
 		}
 		return []byte(s.cfg.Secret), nil
-	})
+	}, opts...)
 	if err != nil {
 		return nil, err
 	}

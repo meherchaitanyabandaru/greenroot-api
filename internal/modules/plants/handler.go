@@ -1,7 +1,6 @@
 package plants
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -79,7 +78,7 @@ func (h *Handler) Resolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ResolvePlantRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	plant, err := h.service.Resolve(r.Context(), actor, req)
@@ -123,7 +122,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreatePlantRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	plant, err := h.service.Create(r.Context(), actor, req)
@@ -152,7 +151,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req UpdatePlantRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	plant, err := h.service.Update(r.Context(), actor, plantID, req)
@@ -210,7 +209,7 @@ func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateCategoryRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	category, err := h.service.CreateCategory(r.Context(), actor, req)
@@ -231,7 +230,7 @@ func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req UpdateCategoryRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	category, err := h.service.UpdateCategory(r.Context(), actor, categoryID, req)
@@ -268,7 +267,7 @@ func (h *Handler) CreateImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateImageRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	image, err := h.service.CreateImage(r.Context(), actor, plantID, req)
@@ -313,15 +312,6 @@ func listPlantsRequest(r *http.Request) ListPlantsRequest {
 		SortBy:           query.Get("sort_by"),
 		SortOrder:        query.Get("sort_order"),
 	}
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid JSON request body")
-		return false
-	}
-	return true
 }
 
 func pathID(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {

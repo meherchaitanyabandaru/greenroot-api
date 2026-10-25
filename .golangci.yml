@@ -1,0 +1,55 @@
+# Lint gate (CI: "Lint (golangci-lint)"). Bug-class and dead-code linters,
+# zero findings allowed. Every exception below says why it is safe.
+version: "2"
+run:
+  timeout: 5m
+  tests: false
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - errorlint
+    - bodyclose
+    - nilerr
+    - misspell
+    - unconvert
+    - wastedassign
+    - copyloopvar
+    - usestdlibvars
+    - rowserrcheck
+    - sqlclosecheck
+    - revive
+  settings:
+    revive:
+      # Every package says what it is for (doc.go).
+      rules:
+        - name: package-comments
+    errcheck:
+      # Idioms whose error is either meaningless or reported elsewhere:
+      # rows.Close errors surface through rows.Err (checked: rowserrcheck);
+      # tx.Rollback after Commit is a no-op; closing a request body or a
+      # read-only stream cannot lose data.
+      exclude-functions:
+        - (*database/sql.Rows).Close
+        - (*database/sql.Tx).Rollback
+        - (*database/sql.Stmt).Close
+        - (io.ReadCloser).Close
+        - (io.Closer).Close
+    staticcheck:
+      checks:
+        - all
+        - -QF* # optional rewrites (De Morgan, tagged switch), not defects
+        - -ST* # style; naming is enforced by review and the D13 test
+        - -S1016 # request DTOs are converted field by field on purpose (decoupled from repository inputs)
+  exclusions:
+    rules:
+      # request() reads and closes the body before returning the response.
+      - path: cmd/(smoke|integration)/main\.go
+        linters: [bodyclose]
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

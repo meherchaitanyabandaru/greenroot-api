@@ -9,6 +9,8 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisgeo"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/messaging"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sms"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -267,9 +269,12 @@ func (m *mockRepo) MarkDelivered(_ context.Context, id int64, in MarkDeliveredIn
 	return d, nil
 }
 
-func (m *mockRepo) AddWrongDeliveryCode(_ context.Context, id int64) (int, error) {
+func (m *mockRepo) UseDeliveryCodeAttempt(_ context.Context, id int64, max int) (int, bool, error) {
+	if m.dispatches[id].DeliveryCodeAttempts >= max {
+		return max, false, nil
+	}
 	m.dispatches[id].DeliveryCodeAttempts++
-	return m.dispatches[id].DeliveryCodeAttempts, nil
+	return m.dispatches[id].DeliveryCodeAttempts, true, nil
 }
 
 func (m *mockRepo) RecordReceipt(_ context.Context, id, userID int64, confirm bool, issue *string) error {
@@ -992,5 +997,40 @@ func TestOutsideTransport_NoDriverJoin(t *testing.T) {
 	in, err := normalizeCreate(CreateDispatchRequest{OrderID: 20, IsOutsideTransport: true, OutsideVehicleNumber: &v, OutsideDriverMobile: &m})
 	if err != nil || *in.OutsideVehicleNumber != "AP05 TB 1234" || *in.OutsideDriverMobile != "9876543210" {
 		t.Fatalf("normalize outside: %+v %v", in, err)
+	}
+}
+
+type recordingEvents struct{ events []messaging.Event }
+
+func (r *recordingEvents) NotifyAsync(ev messaging.Event) { r.events = append(r.events, ev) }
+
+// A nursery override must reach the customer by SMS/email too: the 48-hour
+// dispute window protects only a customer who hears about it.
+func TestDeliver_OverrideTellsTheCustomerBySMS(t *testing.T) {
+	_, s, _ := deliveryWorld("IN_TRANSIT")
+	ev := &recordingEvents{}
+	s.SetEvents(ev)
+	reason := "Customer not reachable, plants left with the watchman"
+	if _, err := s.Deliver(context.Background(), ownerActor(100), 10, DeliverRequest{OverrideReason: &reason}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ev.events) != 1 || ev.events[0].Code != sms.TemplateDeliveryUnconfirmed || ev.events[0].UserID != 300 ||
+		ev.events[0].Values["reason"] != reason {
+		t.Fatalf("events: %+v", ev.events)
+	}
+	if _, ok := ev.events[0].Values["dispatch_code"]; !ok {
+		t.Fatal("the SMS needs the dispatch code")
+	}
+
+	// Delivered with the customer's own code: nothing to dispute, no SMS.
+	_, s2, d := deliveryWorld("IN_TRANSIT")
+	ev2 := &recordingEvents{}
+	s2.SetEvents(ev2)
+	code, _ := s2.deliveryCode(d)
+	if _, err := s2.Deliver(context.Background(), driverActor(400), 10, DeliverRequest{Code: code}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ev2.events) != 0 {
+		t.Fatalf("code delivery raised %+v", ev2.events)
 	}
 }

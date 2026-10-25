@@ -1,7 +1,6 @@
 package drivers
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -57,7 +56,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req DriverRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	driver, err := h.service.Create(r.Context(), actor, req)
@@ -78,7 +77,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req DriverRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	driver, err := h.service.Update(r.Context(), actor, id, req)
@@ -112,7 +111,7 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ApplyDriverRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	driver, err := h.service.Apply(r.Context(), actor, req)
@@ -178,7 +177,7 @@ func (h *Handler) CreateLocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req LocationRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	location, err := h.service.CreateLocation(r.Context(), actor, id, req)
@@ -208,15 +207,6 @@ func listRequest(r *http.Request) ListDriversRequest {
 		SortBy:         query.Get("sort_by"),
 		SortOrder:      query.Get("sort_order"),
 	}
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid JSON request body")
-		return false
-	}
-	return true
 }
 
 func pathID(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {

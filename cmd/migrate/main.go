@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/config"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/secrets"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/database"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/database/migrate"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/database/migrations"
@@ -32,6 +33,10 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: migrate status | up | baseline <version>")
 	}
+	// In production MIGRATE_DATABASE_URL comes from AWS Secrets Manager.
+	if _, err := secrets.Load(context.Background()); err != nil {
+		return err
+	}
 	cfg := config.Load()
 	if u := os.Getenv("MIGRATE_DATABASE_URL"); u != "" {
 		cfg.Database.URL = u
@@ -45,7 +50,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }() // CLI exit: nothing left to flush
 	all, err := migrate.Load(migrations.FS)
 	if err != nil {
 		return err

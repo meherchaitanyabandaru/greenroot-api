@@ -30,7 +30,7 @@ type Repository interface {
 	UpdateStatus(ctx context.Context, dispatchID int64, input UpdateStatusInput) (*Dispatch, error)
 	CompleteOrderIfReady(ctx context.Context, orderID int64) error
 	MarkDelivered(ctx context.Context, dispatchID int64, input MarkDeliveredInput) (*Dispatch, error)
-	AddWrongDeliveryCode(ctx context.Context, dispatchID int64) (int, error)
+	UseDeliveryCodeAttempt(ctx context.Context, dispatchID int64, max int) (attempts int, allowed bool, err error)
 	RecordReceipt(ctx context.Context, dispatchID, customerUserID int64, confirm bool, issue *string) error
 	AcknowledgeDeliveryUpdate(ctx context.Context, dispatchID int64, driverUserID int64) error
 	SetDriverUser(ctx context.Context, dispatchID int64, userID int64) (*Dispatch, error)
@@ -378,13 +378,21 @@ func (r *PostgresRepository) MarkDelivered(ctx context.Context, dispatchID int64
 	return r.FindByID(ctx, dispatchID)
 }
 
-// AddWrongDeliveryCode counts a wrong code and returns the total so far.
-func (r *PostgresRepository) AddWrongDeliveryCode(ctx context.Context, dispatchID int64) (int, error) {
+// UseDeliveryCodeAttempt spends one delivery-code try atomically and returns
+// the tries used so far. allowed is false when the trip had none left.
+func (r *PostgresRepository) UseDeliveryCodeAttempt(ctx context.Context, dispatchID int64, max int) (int, bool, error) {
 	var n int
 	err := r.db.QueryRowContext(ctx, `
 		UPDATE public.dispatches SET delivery_code_attempts = delivery_code_attempts + 1
-		WHERE dispatch_id = $1 RETURNING delivery_code_attempts`, dispatchID).Scan(&n)
-	return n, err
+		WHERE dispatch_id = $1 AND delivery_code_attempts < $2
+		RETURNING delivery_code_attempts`, dispatchID, max).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return max, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return n, true, nil
 }
 
 // RecordReceipt confirms a delivered trip as the customer and/or records the

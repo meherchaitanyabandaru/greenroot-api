@@ -1,5 +1,7 @@
 package topitems
 
+import "github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+
 type ListRequest struct {
 	Page      int
 	PerPage   int
@@ -32,12 +34,7 @@ type UpdateRequest struct {
 	Photos       []string `json:"photos"`
 }
 
-type Pagination struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-}
+type Pagination = response.Pagination
 
 type ListResponse struct {
 	TopItems   []TopItem  `json:"top_items"`

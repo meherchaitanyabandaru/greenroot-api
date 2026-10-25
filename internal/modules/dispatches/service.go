@@ -20,6 +20,8 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/messaging"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sms"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -47,11 +49,20 @@ type Service struct {
 	auditSvc   *auditlog.Service
 	redis      redis.Cmdable
 	liveGeo    *redisgeo.Service
-	codeKey    []byte // derives delivery codes; see deliveryCode
+	codeKey    []byte        // derives delivery codes; see deliveryCode
+	events     EventNotifier // SMS/email events; nil = in-app only
 }
 
 // SetDeliveryCodeKey sets the server secret delivery codes are derived from.
 func (s *Service) SetDeliveryCodeKey(key []byte) { s.codeKey = key }
+
+// EventNotifier raises SMS/email events (messaging.Notifier).
+type EventNotifier interface {
+	NotifyAsync(ev messaging.Event)
+}
+
+// SetEvents turns on SMS/email for delivery events (nil = in-app only).
+func (s *Service) SetEvents(n EventNotifier) { s.events = n }
 
 func NewService(repository Repository, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
 	var rdb redis.Cmdable
@@ -365,16 +376,39 @@ func (s *Service) enqueueNotification(ctx context.Context, userID int64, notifTy
 	}
 }
 
-func (s *Service) GetPublicTracking(ctx context.Context, uuid string) (Dispatch, error) {
+func (s *Service) GetPublicTracking(ctx context.Context, uuid string) (PublicTrip, error) {
 	dispatch, err := s.repository.FindByTrackingUUID(ctx, uuid)
 	if err != nil {
-		return Dispatch{}, err
+		return PublicTrip{}, err
 	}
-	// Anyone with the link sees this: no customer, notes or delivery details.
-	d := withLifecycle(ActorContext{}, *dispatch)
-	d.CustomerNameSnapshot, d.CustomerMobileSnapshot, d.Notes = nil, nil, nil
-	d.OutsideDriverMobile, d.DeliveryOverrideReason, d.DeliveryIssue = nil, nil, nil
-	return d, nil
+	return publicTrip(withLifecycle(ActorContext{}, *dispatch)), nil
+}
+
+// publicTrip copies the allow-listed fields only, so a field added to
+// Dispatch later can never leak through the public link.
+func publicTrip(d Dispatch) PublicTrip {
+	vehicle := d.VehicleNumber
+	if vehicle == nil {
+		vehicle = d.OutsideVehicleNumber
+	}
+	t := PublicTrip{
+		DispatchCode:      d.DispatchCode,
+		Status:            d.Status,
+		Lifecycle:         d.Lifecycle,
+		SellerNurseryName: d.SellerNurseryName,
+		VehicleNumber:     vehicle,
+		DispatchDate:      d.DispatchDate,
+		TripStartedAt:     d.TripStartedAt,
+		DeliveryDate:      d.DeliveryDate,
+	}
+	if onTheWay(d.Status) {
+		for _, e := range d.TripEvents {
+			t.TripEvents = append(t.TripEvents, PublicTripEvent{
+				EventType: e.EventType, Latitude: e.Latitude, Longitude: e.Longitude, CreatedAt: e.CreatedAt,
+			})
+		}
+	}
+	return t
 }
 
 func (s *Service) scopeList(ctx context.Context, actor ActorContext, input *ListDispatchesRequest) error {
@@ -709,18 +743,21 @@ func (s *Service) Deliver(ctx context.Context, actor ActorContext, dispatchID in
 
 	confirmation, reason := ConfirmationCode, (*string)(nil)
 	if code := strings.TrimSpace(req.Code); code != "" {
-		if current.DeliveryCodeAttempts >= maxDeliveryCodeAttempts {
-			return Dispatch{}, ErrDeliveryCodeLocked
-		}
 		want, ok := s.deliveryCode(*current)
 		if !ok {
 			return Dispatch{}, ErrDeliveryCodeLocked
 		}
+		// Every try spends one of the trip's attempts in a single UPDATE
+		// before the code is compared, so parallel guesses cannot exceed the
+		// limit even if the Redis lock above is unavailable.
+		attempts, allowed, err := s.repository.UseDeliveryCodeAttempt(ctx, dispatchID, maxDeliveryCodeAttempts)
+		if err != nil {
+			return Dispatch{}, err
+		}
+		if !allowed {
+			return Dispatch{}, ErrDeliveryCodeLocked
+		}
 		if !hmac.Equal([]byte(code), []byte(want)) {
-			attempts, err := s.repository.AddWrongDeliveryCode(ctx, dispatchID)
-			if err != nil {
-				return Dispatch{}, err
-			}
 			s.audit(ctx, actor, "dispatches", dispatchID, actionUpdate, map[string]any{"wrong_delivery_code": attempts})
 			if attempts >= maxDeliveryCodeAttempts {
 				return Dispatch{}, ErrDeliveryCodeLocked
@@ -747,6 +784,16 @@ func (s *Service) Deliver(ctx context.Context, actor ActorContext, dispatchID in
 			s.enqueueNotification(ctx, *dispatch.CustomerUserID, notifyqueue.EventOrderDelivered,
 				"Delivery marked without your confirmation",
 				fmt.Sprintf("%s was marked delivered by the nursery: %s. If you did not receive your plants, report a problem in the app within 48 hours.", dispatch.DispatchCode, *reason))
+			// The dispute window only protects a customer who hears about it:
+			// also SMS and email, not just the in-app inbox and push.
+			if s.events != nil {
+				id := dispatch.ID
+				s.events.NotifyAsync(messaging.Event{
+					Code: sms.TemplateDeliveryUnconfirmed, UserID: *dispatch.CustomerUserID,
+					Values:        map[string]string{"dispatch_code": dispatch.DispatchCode, "reason": *reason},
+					ReferenceType: "DISPATCH", ReferenceID: &id,
+				})
+			}
 		} else {
 			s.enqueueNotification(ctx, *dispatch.CustomerUserID, notifyqueue.EventOrderDelivered,
 				"Order delivered", fmt.Sprintf("%s was delivered with your code.", dispatch.DispatchCode))

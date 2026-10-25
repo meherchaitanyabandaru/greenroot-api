@@ -121,7 +121,7 @@ func (m *moderationHandler) ReviewReport(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req ReviewReportRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	req.Decision = strings.ToUpper(strings.TrimSpace(req.Decision))
@@ -211,8 +211,8 @@ func removeAd(ctx context.Context, tx *sql.Tx, adID, nurseryID, adminID int64, n
 	if days := blockDays(outcome.Strikes); days > 0 {
 		if err := tx.QueryRowContext(ctx, `
 			UPDATE public.nurseries
-			SET market_blocked_until = GREATEST(COALESCE(market_blocked_until, NOW()), NOW() + make_interval(days => $2))
-			WHERE nursery_id = $1 RETURNING market_blocked_until`, nurseryID, days).Scan(&outcome.BlockedUntil); err != nil {
+			SET market_blocked_until_at = GREATEST(COALESCE(market_blocked_until_at, NOW()), NOW() + make_interval(days => $2))
+			WHERE nursery_id = $1 RETURNING market_blocked_until_at`, nurseryID, days).Scan(&outcome.BlockedUntil); err != nil {
 			return outcome, err
 		}
 	}
@@ -264,7 +264,7 @@ const reportSelect = `
 	SELECT rp.report_id, a.ad_id, a.ad_code, a.title, a.status, an.nursery_name,
 		a.description, a.photos,
 		(SELECT count(*) FROM public.market_ads x WHERE x.nursery_id = a.nursery_id AND x.status = 'REMOVED'),
-		CASE WHEN an.market_blocked_until > NOW() THEN an.market_blocked_until END,
+		CASE WHEN an.market_blocked_until_at > NOW() THEN an.market_blocked_until_at END,
 		rp.reason, rp.notes, rp.status,
 		NULLIF(TRIM(CONCAT_WS(' ', ru.first_name, ru.last_name)), ''), rn.nursery_name,
 		NULLIF(TRIM(CONCAT_WS(' ', vu.first_name, vu.last_name)), ''), rp.reviewed_at, rp.created_at

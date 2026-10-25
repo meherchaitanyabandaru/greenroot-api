@@ -14,7 +14,7 @@ func refundSetup(t *testing.T, startedDaysAgo int, paidAgo time.Duration) (*Serv
 	repo := newMock()
 	p := repo.seedPlan("GROWTH", 2499, 3999)
 	sub := repo.seedSub(101, 10, p.ID, "ACTIVE")
-	sub.StartDate = time.Now().Truncate(24*time.Hour).AddDate(0, 0, -startedDaysAgo)
+	sub.StartDate = businessDay(time.Now()).AddDate(0, 0, -startedDaysAgo)
 	end := sub.StartDate.AddDate(0, 6, -1)
 	sub.EndDate = &end
 	paid := time.Now().Add(-paidAgo)
@@ -50,12 +50,12 @@ func TestRefund_LatestRazorpayPayment(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := time.Now().Truncate(24*time.Hour).AddDate(0, 0, 29)
+		want := businessDay(time.Now()).AddDate(0, 0, 29)
 		if sub.Status != statusActive || !repo.lastRefund.EndDate.Equal(want) {
 			t.Fatalf("want ACTIVE until %s, got %s until %s", want, sub.Status, repo.lastRefund.EndDate)
 		}
 		// Back to the period the older (cash) payment bought: it starts when that was paid.
-		older := repo.payments[101][1].PaymentDate.Truncate(24 * time.Hour)
+		older := businessDay(*repo.payments[101][1].PaymentDate)
 		if !repo.lastRefund.StartDate.Equal(older) || repo.lastRefund.StartDate.After(repo.lastRefund.EndDate) {
 			t.Fatalf("start should roll back to %s, got %s", older, repo.lastRefund.StartDate)
 		}

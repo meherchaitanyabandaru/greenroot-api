@@ -230,24 +230,35 @@ func (s *Service) checkPayment(ctx context.Context, actor ActorContext, userID i
 	return &p, nil
 }
 
+// GatewayApply is the outcome of applying a webhook payment.
+type GatewayApply struct {
+	Applied bool
+	// Refusal is set when a business rule refuses a captured payment (e.g.
+	// paused since checkout): the money must be refunded or applied by hand.
+	Refusal     error
+	Ours        bool // the order was made by CreatePaymentOrder
+	UserID      int64
+	AmountPaise int64
+}
+
 // ApplyGatewayPayment applies a captured Razorpay payment for an order made by
 // CreatePaymentOrder, as its owner would have (webhook path). Already applied
-// = done. ok=false means it can't be applied (logged by the caller for a
-// manual refund); err means try again later.
-func (s *Service) ApplyGatewayPayment(ctx context.Context, orderID, paymentID string) (ok bool, err error) {
+// = done. err means try again later (database, Razorpay or lock trouble).
+func (s *Service) ApplyGatewayPayment(ctx context.Context, orderID, paymentID string) (GatewayApply, error) {
 	if s.gateway == nil {
-		return false, ErrGatewayDisabled
+		return GatewayApply{}, ErrGatewayDisabled
 	}
 	order, err := s.gateway.FetchOrder(ctx, orderID)
 	if err != nil {
-		return false, err
+		return GatewayApply{}, err
 	}
 	userID, _ := strconv.ParseInt(order.Notes["user_id"], 10, 64)
 	planID, _ := strconv.ParseInt(order.Notes["plan_id"], 10, 64)
 	subscription := order.Notes["subscription"]
 	if userID <= 0 || planID <= 0 || subscription == "" {
-		return false, nil // not an order we created
+		return GatewayApply{}, nil // not an order we created
 	}
+	out := GatewayApply{Ours: true, UserID: userID, AmountPaise: order.Amount}
 	var promo *string
 	if code := order.Notes["promo_code"]; code != "" {
 		promo = &code
@@ -267,13 +278,15 @@ func (s *Service) ApplyGatewayPayment(ctx context.Context, orderID, paymentID st
 		})
 	}
 	if err == nil {
-		return true, nil
+		out.Applied = true
+		return out, nil
 	}
 	for _, refusal := range []error{ErrPaused, ErrPaidAhead, ErrConflict, ErrInvalidInput, ErrForbidden,
 		ErrNotFound, ErrPaymentInvalid, ErrPaymentUsed, ErrPaymentRequired} {
 		if errors.Is(err, refusal) {
-			return false, nil // a business rule refuses it (e.g. paused since the order was made)
+			out.Refusal = err // a business rule refuses it (e.g. paused since the order was made)
+			return out, nil
 		}
 	}
-	return false, err // database, Razorpay or lock trouble: let Razorpay retry
+	return GatewayApply{}, err
 }

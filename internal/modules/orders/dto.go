@@ -1,6 +1,10 @@
 package orders
 
-import "time"
+import (
+	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+)
 
 type ListOrdersRequest struct {
 	Page      int
@@ -63,12 +67,7 @@ type OrderItemRequest struct {
 	Remarks    *string `json:"remarks"`
 }
 
-type Pagination struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-}
+type Pagination = response.Pagination
 
 type OrdersResponse struct {
 	Orders     []Order    `json:"orders"`

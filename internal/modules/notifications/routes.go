@@ -10,9 +10,13 @@ import (
 
 type Module struct{ handler *Handler }
 
-func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service) Module {
+// NewModule wires the notification routes; sender delivers pushes (nil = in-app only).
+func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, sender Sender) Module {
 	repository := NewRepository(db)
-	service := NewService(repository, MockSender{}, audit)
+	if sender == nil {
+		sender = MockSender{}
+	}
+	service := NewService(repository, sender, audit)
 	return Module{handler: NewHandler(service, jwt)}
 }
 

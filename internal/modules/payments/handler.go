@@ -1,7 +1,6 @@
 package payments
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -105,7 +104,7 @@ func (h *Handler) CreateManual(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ManualPaymentRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	payment, err := h.service.CreateManual(r.Context(), actor, req)
@@ -126,7 +125,7 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req UpdateStatusRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	payment, err := h.service.UpdateStatus(r.Context(), actor, paymentID, req)
@@ -160,15 +159,6 @@ func listRequest(r *http.Request) ListPaymentsRequest {
 		SortBy:         query.Get("sort_by"),
 		SortOrder:      query.Get("sort_order"),
 	}
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid JSON request body")
-		return false
-	}
-	return true
 }
 
 func pathID(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {

@@ -111,7 +111,8 @@ type UserLink struct {
 	IsActive  bool       `json:"is_active"`
 }
 
-// Customer represents a buyer who accepted a CUSTOMER_INVITE for this nursery.
+// Customer is a buyer connected to a nursery (see GetCustomers). AcceptedAt
+// is when the connection began.
 type Customer struct {
 	UserID     int64      `json:"user_id"`
 	FirstName  string     `json:"first_name"`

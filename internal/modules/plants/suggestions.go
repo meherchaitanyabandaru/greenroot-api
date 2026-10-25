@@ -289,7 +289,7 @@ func (h *Handler) CreateSuggestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateSuggestionRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	out, err := h.suggestions.Create(r.Context(), actor, req)
@@ -328,7 +328,7 @@ func (h *Handler) ReviewSuggestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ReviewSuggestionRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	sg, err := h.suggestions.Review(r.Context(), actor, id, req)

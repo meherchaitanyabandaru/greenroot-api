@@ -168,7 +168,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateOrderRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	order, err := h.service.Create(r.Context(), actor, req)
@@ -189,7 +189,7 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req UpdateStatusRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	order, err := h.service.UpdateStatus(r.Context(), actor, orderID, req)
@@ -210,7 +210,7 @@ func (h *Handler) UpdateDeliverySnapshot(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req DeliverySnapshotRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	order, err := h.service.UpdateDeliverySnapshot(r.Context(), actor, orderID, req)
@@ -264,7 +264,7 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req OrderItemRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	item, err := h.service.CreateItem(r.Context(), actor, orderID, req)
@@ -285,7 +285,7 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req OrderItemRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	item, err := h.service.UpdateItem(r.Context(), actor, itemID, req)
@@ -408,7 +408,7 @@ func (h *Handler) SetLoadedQuantity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req SetLoadedQuantityRequest
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	item, err := h.service.SetLoadedQuantity(r.Context(), actor, orderID, itemID, req.LoadedQuantity)
@@ -432,7 +432,7 @@ func (h *Handler) AssignManager(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ManagerUserID int64 `json:"manager_user_id"`
 	}
-	if !decodeJSON(w, r, &req) {
+	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
 	order, err := h.service.AssignManager(r.Context(), actor, orderID, req.ManagerUserID)
@@ -464,15 +464,6 @@ func listRequest(r *http.Request) ListOrdersRequest {
 		SortOrder: query.Get("sort_order"),
 		Buying:    query.Get("buying") == "true" || query.Get("buying") == "1",
 	}
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid JSON request body")
-		return false
-	}
-	return true
 }
 
 func pathID(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {
