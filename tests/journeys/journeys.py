@@ -794,7 +794,11 @@ def journey_order():
     # Confirm → loading → partial → complete
     out = expect("manager confirms", "POST", f"/orders/{oid}/confirm", manager.token, {})
     check("…CONFIRMED", out["order"]["order_status"] == "CONFIRMED", out["order"]["order_status"])
+    confirmed_at = out["order"].get("confirmed_at")
+    check("…with the time it was accepted (order timeline)", bool(confirmed_at), out["order"].get("confirmed_at"))
     expect("confirming twice is refused", "POST", f"/orders/{oid}/confirm", manager.token, {}, status=409)
+    out = expect("order after the refused second confirm", "GET", f"/orders/{oid}", owner.token)
+    check("…keeps its first acceptance time", out["order"].get("confirmed_at") == confirmed_at, out["order"].get("confirmed_at"))
     expect("buyer cannot cancel a confirmed order", "POST", f"/orders/{oid}/cancel", buyer.token, {"reason": "late"}, status=403)
     expect("a confirmed order cannot be deleted", "DELETE", f"/orders/{oid}", owner.token, status=409)
     expect("loaded quantity only while loading", "PUT", f"/orders/{oid}/items/{o['items'][0]['id']}/loaded-quantity", owner.token, {"loaded_quantity": 5}, status=409)

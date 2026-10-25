@@ -427,7 +427,8 @@ func (r *PostgresRepository) StartedDispatchDriverUserID(ctx context.Context, or
 
 func (r *PostgresRepository) UpdateStatus(ctx context.Context, actorID int64, orderID int64, status string, expectedVersion int64) (*Order, error) {
 	result, err := r.db.ExecContext(ctx, `
-		UPDATE public.orders SET status = $2, updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $3
+		UPDATE public.orders SET status = $2, updated_at = CURRENT_TIMESTAMP, updated_by_user_id = $3,
+			confirmed_at = CASE WHEN $2::varchar = 'CONFIRMED' THEN COALESCE(confirmed_at, CURRENT_TIMESTAMP) ELSE confirmed_at END
 		WHERE order_id = $1 AND version = $4`, orderID, status, actorID, expectedVersion)
 	if err != nil {
 		return nil, pgerr.Map(err)

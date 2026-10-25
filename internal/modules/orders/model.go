@@ -76,6 +76,7 @@ type Order struct {
 	CancelledByUserID        *int64     `json:"cancelled_by_user_id,omitempty"`
 	CancelledAt              *time.Time `json:"cancelled_at,omitempty"`
 	CancelReason             *string    `json:"cancel_reason,omitempty"`
+	ConfirmedAt              *time.Time `json:"confirmed_at,omitempty"`
 	LoadingStartedAt         *time.Time `json:"loading_started_at,omitempty"`
 	LoadingCompletedAt       *time.Time `json:"loading_completed_at,omitempty"`
 	LoadingCompletedByUserID *int64     `json:"loading_completed_by_user_id,omitempty"`
