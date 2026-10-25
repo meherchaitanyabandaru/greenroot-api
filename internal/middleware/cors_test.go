@@ -61,6 +61,13 @@ func TestCORS_Preflight(t *testing.T) {
 		!strings.Contains(rec.Header().Get("Access-Control-Allow-Headers"), "Authorization") {
 		t.Fatalf("code=%d headers=%v", rec.Code, rec.Header())
 	}
+	// The app sends Idempotency-Key on creates and If-Match on updates; a
+	// browser drops the request if the preflight does not allow them.
+	for _, h := range []string{"Idempotency-Key", "If-Match"} {
+		if !strings.Contains(rec.Header().Get("Access-Control-Allow-Headers"), h) {
+			t.Errorf("preflight does not allow %s: %q", h, rec.Header().Get("Access-Control-Allow-Headers"))
+		}
+	}
 	if rec := do(corsServer(), http.MethodOptions, "https://evil.example.com", true); rec.Code != http.StatusForbidden {
 		t.Fatalf("disallowed preflight code = %d", rec.Code)
 	}

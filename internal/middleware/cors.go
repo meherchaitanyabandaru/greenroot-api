@@ -9,7 +9,7 @@ import (
 
 const (
 	corsAllowMethods = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
-	corsAllowHeaders = "Authorization,Content-Type,If-Match,X-Requested-With,X-Request-Id"
+	corsAllowHeaders = "Authorization,Content-Type,Idempotency-Key,If-Match,X-Requested-With,X-Request-Id"
 	// Headers browser clients must be able to read: PDF filenames, the
 	// subscription grace warning and the request ID for support.
 	corsExposeHeaders = "Content-Disposition,X-Subscription-Warning,X-Request-Id"
