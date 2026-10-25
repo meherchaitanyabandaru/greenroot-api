@@ -1,4 +1,5 @@
 // Market ad validation and presentation helpers.
+
 package market
 
 import (

@@ -1,4 +1,5 @@
 // Public verification links for quotations: tokens, the public verify page and its per-IP limit.
+
 package quotations
 
 import (

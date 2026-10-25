@@ -22,7 +22,12 @@ linters:
     - usestdlibvars
     - rowserrcheck
     - sqlclosecheck
+    - revive
   settings:
+    revive:
+      # Every package says what it is for (doc.go).
+      rules:
+        - name: package-comments
     errcheck:
       # Idioms whose error is either meaningless or reported elsewhere:
       # rows.Close errors surface through rows.Err (checked: rowserrcheck);

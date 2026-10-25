@@ -1,4 +1,5 @@
 // Row scanners for the market repository.
+
 package market
 
 import (

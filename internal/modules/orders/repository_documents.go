@@ -1,4 +1,5 @@
 // Verification tokens and generated documents of an order.
+
 package orders
 
 import (

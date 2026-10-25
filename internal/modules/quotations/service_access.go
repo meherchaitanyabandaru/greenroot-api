@@ -1,4 +1,5 @@
 // Who may see and change a quotation.
+
 package quotations
 
 import (

@@ -1,4 +1,5 @@
 // SQL fragments, row scanners and NULL helpers for the quotations repository.
+
 package quotations
 
 import (
