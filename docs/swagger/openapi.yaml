@@ -11164,6 +11164,11 @@ components:
           nullable: true
         capabilities:
           $ref: '#/components/schemas/OrdersOrderCapabilities'
+        confirmed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: First time the nursery confirmed (accepted) the order
         created_at:
           type: string
           format: date-time

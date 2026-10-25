@@ -25,7 +25,7 @@ func baseSelect() string {
 			o.assigned_manager_user_id, o.created_by_user_id,
 			o.cancelled_by_user_id, o.cancelled_at, o.cancel_reason,
 			o.loading_started_at, o.loading_completed_at, o.loading_completed_by_user_id,
-			o.buyer_nursery_id, o.version,
+			o.buyer_nursery_id, o.version, o.confirmed_at,
 			mu.first_name
 		FROM public.orders o
 		LEFT JOIN public.users bu ON bu.user_id = o.buyer_user_id
@@ -149,7 +149,7 @@ func scanOrder(row interface{ Scan(dest ...any) error }) (Order, error) {
 	var customerName, customerMobile sql.NullString
 	var assignedManagerUserID, createdByUserID sql.NullInt64
 	var cancelledByUserID sql.NullInt64
-	var cancelledAt, loadingStartedAt, loadingCompletedAt sql.NullTime
+	var cancelledAt, loadingStartedAt, loadingCompletedAt, confirmedAt sql.NullTime
 	var cancelReason sql.NullString
 	var loadingCompletedByUserID sql.NullInt64
 	var buyerNurseryID sql.NullInt64
@@ -165,7 +165,7 @@ func scanOrder(row interface{ Scan(dest ...any) error }) (Order, error) {
 		&assignedManagerUserID, &createdByUserID,
 		&cancelledByUserID, &cancelledAt, &cancelReason,
 		&loadingStartedAt, &loadingCompletedAt, &loadingCompletedByUserID,
-		&buyerNurseryID, &order.Version,
+		&buyerNurseryID, &order.Version, &confirmedAt,
 		&assignedManagerName,
 	); err != nil {
 		return Order{}, err
@@ -189,6 +189,9 @@ func scanOrder(row interface{ Scan(dest ...any) error }) (Order, error) {
 		order.CancelledAt = &cancelledAt.Time
 	}
 	order.CancelReason = nullableString(cancelReason)
+	if confirmedAt.Valid {
+		order.ConfirmedAt = &confirmedAt.Time
+	}
 	if loadingStartedAt.Valid {
 		order.LoadingStartedAt = &loadingStartedAt.Time
 	}
