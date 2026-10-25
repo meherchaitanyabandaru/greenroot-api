@@ -339,7 +339,18 @@ func (s *Service) Lookup(ctx context.Context, input LookupRequest) ([]LookupResu
 	if err != nil {
 		return nil, err
 	}
+	// WFO has a few duplicate records (same name and author, two IDs); the
+	// picker would show identical rows, so the first one stands for both.
+	seen := map[string]bool{}
 	for i := range names {
+		key := names[i].ScientificName
+		if a := names[i].Authorship; a != nil {
+			key += "|" + strings.TrimSpace(*a)
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		results = append(results, LookupResult{Name: &names[i]})
 	}
 	return results, nil

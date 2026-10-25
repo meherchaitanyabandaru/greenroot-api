@@ -16,6 +16,7 @@ type mockRepo struct {
 	careGuides map[int64]*CareGuide
 
 	botanicalQueries []string
+	botanicalNames   []BotanicalName // overrides LookupBotanical's default names
 	lastBrowse       ListBotanicalRequest
 
 	nextPlantID    int64
@@ -140,6 +141,9 @@ func (m *mockRepo) BotanicalNameExists(_ context.Context, wfoID string) (bool, e
 func (m *mockRepo) LookupBotanical(_ context.Context, query string, limit int) ([]BotanicalName, error) {
 	m.botanicalQueries = append(m.botanicalQueries, query)
 	names := []BotanicalName{{WfoID: "wfo-1", ScientificName: "Syzygium cumini"}, {WfoID: "wfo-2", ScientificName: "Syzygium jambos"}}
+	if m.botanicalNames != nil {
+		names = m.botanicalNames
+	}
 	if len(names) > limit {
 		names = names[:limit]
 	}
@@ -431,6 +435,23 @@ func TestLookup_CatalogFirstThenBotanical(t *testing.T) {
 	}
 	if len(repo.botanicalQueries) != 1 || repo.botanicalQueries[0] != "syzygium" {
 		t.Fatalf("botanical query not trimmed: %q", repo.botanicalQueries)
+	}
+}
+
+func TestLookup_DuplicateWFORecordsShowOnce(t *testing.T) {
+	repo := newMock()
+	author := "É.Desv."
+	repo.botanicalNames = []BotanicalName{
+		{WfoID: "wfo-a", ScientificName: "Bromus mango", Authorship: &author},
+		{WfoID: "wfo-b", ScientificName: "Bromus mango", Authorship: &author},
+		{WfoID: "wfo-c", ScientificName: "Mangonia uruguaya"},
+	}
+	results, err := svc(repo).Lookup(context.Background(), LookupRequest{Query: "mango"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 || results[0].Name.WfoID != "wfo-a" || results[1].Name.WfoID != "wfo-c" {
+		t.Fatalf("want Bromus mango once then Mangonia, got %+v", results)
 	}
 }
 
