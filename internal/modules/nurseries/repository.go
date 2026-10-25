@@ -942,20 +942,46 @@ func (r *PostgresRepository) WorkspaceUserIDs(ctx context.Context, nurseryID int
 	return userIDs, rows.Err()
 }
 
-// GetCustomers returns all buyers who have accepted a CUSTOMER_INVITE for this nursery.
+// GetCustomers returns the nursery's connected customers, newest first: buyers
+// who accepted a customer invite, or who dealt with the nursery themselves —
+// accepted one of its quotations, placed an order, or received a delivery
+// (which needs the code from their own app). A nursery typing a mobile number
+// into an order does not connect that person. Deleted and suspended accounts
+// are left out. Keep in step with quotations.IsNurseryCustomer.
 func (r *PostgresRepository) GetCustomers(ctx context.Context, nurseryID int64) ([]Customer, error) {
 	const query = `
+		WITH links AS (
+			SELECT i.accepted_by_user_id AS user_id, i.accepted_at AS since
+			FROM public.invites i
+			WHERE i.nursery_id = $1
+			  AND i.invite_type = 'CUSTOMER_INVITE'
+			  AND i.status = 'ACCEPTED'
+			UNION ALL
+			SELECT o.buyer_user_id, o.created_at
+			FROM public.orders o
+			WHERE o.seller_nursery_id = $1
+			  AND o.deleted_at IS NULL
+			  AND (o.status = 'COMPLETED' OR o.created_by_user_id = o.buyer_user_id)
+			UNION ALL
+			SELECT u.user_id, q.customer_responded_at
+			FROM public.quotations q
+			JOIN public.users u ON u.user_id = q.customer_user_id OR u.mobile = q.recipient_mobile
+			WHERE q.nursery_id = $1
+			  AND q.deleted_at IS NULL
+			  AND q.status IN ('CUSTOMER_ACCEPTED', 'CONVERTED')
+			  AND q.customer_responded_at IS NOT NULL
+		)
 		SELECT u.user_id,
 		       u.first_name,
 		       u.last_name,
 		       NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''),
-		       u.mobile, u.email, i.accepted_at
-		FROM public.invites i
-		JOIN public.users u ON u.user_id = i.accepted_by_user_id
-		WHERE i.nursery_id = $1
-		  AND i.invite_type = 'CUSTOMER_INVITE'
-		  AND i.status = 'ACCEPTED'
-		ORDER BY i.accepted_at DESC
+		       u.mobile, u.email, MIN(l.since)
+		FROM links l
+		JOIN public.users u ON u.user_id = l.user_id
+		WHERE u.deleted_at IS NULL
+		  AND COALESCE(u.status, 'ACTIVE') = 'ACTIVE'
+		GROUP BY u.user_id, u.first_name, u.last_name, u.mobile, u.email
+		ORDER BY MAX(l.since) DESC NULLS LAST
 	`
 	rows, err := r.db.QueryContext(ctx, query, nurseryID)
 	if err != nil {

@@ -668,8 +668,21 @@ def journey_quotation():
     stranger = User(first="Nosy", activity="CUSTOMER")
     expect("another buyer cannot accept it", "POST", f"/quotations/{qid}/buyer-accept", stranger.token, {}, status=(403, 404))
     expect("owner cannot accept on the buyer's behalf", "POST", f"/quotations/{qid}/buyer-accept", owner.token, {}, status=(403, 404))
+    # A connected customer: only the buyer's own action connects them, never
+    # the nursery typing their number.
+    out = expect("customers before the buyer answers", "GET", f"/nurseries/{nid}/customers", owner.token)
+    check("…a buyer who was only sent a quotation is not a customer yet", buyer.id not in [c["user_id"] for c in out["customers"]], out)
+    expect("…so the owner cannot pick them by account", "POST", "/quotations", owner.token, quote(customer_user_id=buyer.id), status=403)
     out = expect("buyer accepts", "POST", f"/quotations/{qid}/buyer-accept", buyer.token, {})
     check("…CUSTOMER_ACCEPTED", out["quotation"]["status"] == "CUSTOMER_ACCEPTED", out["quotation"]["status"])
+    out = expect("customers after the buyer accepted", "GET", f"/nurseries/{nid}/customers", owner.token)
+    check("…the buyer is a connected customer now, no invite needed", buyer.id in [c["user_id"] for c in out["customers"]], out)
+    check("…a stranger is not", stranger.id not in [c["user_id"] for c in out["customers"]], out)
+    expect("owner quotes the connected customer by account", "POST", "/quotations", owner.token, quote(customer_user_id=buyer.id), status=201)
+    expect("owner cannot quote a stranger by account", "POST", "/quotations", owner.token, quote(customer_user_id=stranger.id), status=403)
+    expect("a rival nursery does not get the customer", "POST", "/quotations", rival.token,
+           quote(nursery_id=rival.nursery_id, customer_user_id=buyer.id), status=403)
+    expect("a rival cannot list this nursery's customers", "GET", f"/nurseries/{nid}/customers", rival.token, status=403)
     expect("accepting twice is refused", "POST", f"/quotations/{qid}/buyer-accept", buyer.token, {}, status=(400, 409))
     expect("buyer cannot reject after accepting", "POST", f"/quotations/{qid}/buyer-reject", buyer.token, {"reason": "changed mind"}, status=(400, 409))
     expect("an accepted quotation cannot be recalled", "POST", f"/quotations/{qid}/recall", owner.token, {}, status=(400, 409))

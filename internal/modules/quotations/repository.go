@@ -751,16 +751,44 @@ func (r *PostgresRepository) refreshTotalTx(ctx context.Context, tx *sql.Tx, qID
 	return err
 }
 
+// IsNurseryCustomer reports whether the user is one of the nursery's
+// connected customers, by the same rule as nurseries.GetCustomers (the list
+// the app picks from): an accepted customer invite, or the buyer's own
+// dealings with the nursery — an accepted quotation, an order they placed,
+// or a delivery they confirmed. Deleted and suspended accounts never are.
 func (r *PostgresRepository) IsNurseryCustomer(ctx context.Context, nurseryID int64, userID int64) (bool, error) {
 	var exists bool
 	err := r.db.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1
-			FROM public.invites
-			WHERE nursery_id = $1
-			  AND accepted_by_user_id = $2
-			  AND invite_type = 'CUSTOMER_INVITE'
-			  AND status = 'ACCEPTED'
+			FROM public.users u
+			WHERE u.user_id = $2
+			  AND u.deleted_at IS NULL
+			  AND COALESCE(u.status, 'ACTIVE') = 'ACTIVE'
+			  AND (
+				EXISTS (
+					SELECT 1 FROM public.invites i
+					WHERE i.nursery_id = $1
+					  AND i.accepted_by_user_id = u.user_id
+					  AND i.invite_type = 'CUSTOMER_INVITE'
+					  AND i.status = 'ACCEPTED'
+				)
+				OR EXISTS (
+					SELECT 1 FROM public.orders o
+					WHERE o.seller_nursery_id = $1
+					  AND o.buyer_user_id = u.user_id
+					  AND o.deleted_at IS NULL
+					  AND (o.status = 'COMPLETED' OR o.created_by_user_id = u.user_id)
+				)
+				OR EXISTS (
+					SELECT 1 FROM public.quotations q
+					WHERE q.nursery_id = $1
+					  AND (q.customer_user_id = u.user_id OR q.recipient_mobile = u.mobile)
+					  AND q.deleted_at IS NULL
+					  AND q.status IN ('CUSTOMER_ACCEPTED', 'CONVERTED')
+					  AND q.customer_responded_at IS NOT NULL
+				)
+			  )
 		)
 	`, nurseryID, userID).Scan(&exists)
 	return exists, err
