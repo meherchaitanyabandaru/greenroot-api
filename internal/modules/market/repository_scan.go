@@ -12,7 +12,8 @@ func scanMessage(row rowScanner) (Message, error) {
 	var m Message
 	err := row.Scan(&m.ID, &m.EnquiryID, &m.SentByUserID, &m.SentByNurseryID,
 		&m.NurseryName, &m.SenderName, &m.Type, &m.Body,
-		&m.OfferPrice, &m.OfferQuantity, &m.OfferStatus, &m.CreatedAt)
+		&m.OfferPrice, &m.OfferQuantity, &m.OfferStatus, &m.CreatedAt,
+		&m.SenderAvatarURL, &m.Receipt)
 	return m, err
 }
 

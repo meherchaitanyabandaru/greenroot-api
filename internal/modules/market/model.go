@@ -230,6 +230,8 @@ type Message struct {
 	IsMine          bool      `json:"is_mine"`
 	CanRespond      bool      `json:"can_respond"` // the viewer can accept or decline this offer
 	CreatedAt       time.Time `json:"created_at"`
+	SenderAvatarURL *string   `json:"sender_avatar_url,omitempty"`
+	Receipt         string    `json:"receipt"` // SENT, DELIVERED or READ by the other side
 }
 
 // ── Request DTOs ─────────────────────────────────────────────

@@ -104,6 +104,8 @@ func (s *Service) UnreadChats(ctx context.Context, actor ActorContext) int {
 	if err != nil {
 		return 0
 	}
+	// The app asks for this whenever it shows chats: their messages reached us.
+	_ = s.repo.MarkChatsDelivered(ctx, nurseryID)
 	n, _ := s.repo.UnreadTotal(ctx, nurseryID)
 	return n
 }

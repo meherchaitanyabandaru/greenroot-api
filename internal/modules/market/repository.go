@@ -63,6 +63,7 @@ type Repository interface {
 	EnquiryIDFor(ctx context.Context, adID, nurseryID int64) (int64, error) // 0 when the nursery has no chat on the ad
 	// MarkChatRead records that the viewer's side opened the chat now.
 	MarkChatRead(ctx context.Context, enquiryID, viewerNurseryID int64) error
+	MarkChatsDelivered(ctx context.Context, viewerNurseryID int64) error
 	// ChatSummaries fills LastMessage* and UnreadCount for the viewer.
 	ChatSummaries(ctx context.Context, enquiries []Enquiry, viewerNurseryID int64) error
 	UnreadTotal(ctx context.Context, viewerNurseryID int64) (int, error)
@@ -918,6 +919,18 @@ func (r *PostgresRepository) MarkChatRead(ctx context.Context, enquiryID, viewer
 	return err
 }
 
+// MarkChatsDelivered records that the viewer's app has fetched its open chats:
+// the other side's messages up to now show as delivered (two grey ticks).
+func (r *PostgresRepository) MarkChatsDelivered(ctx context.Context, viewerNurseryID int64) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE public.market_enquiries
+		SET ad_nursery_delivered_at = CASE WHEN ad_nursery_id = $1 THEN NOW() ELSE ad_nursery_delivered_at END,
+		    enquirer_delivered_at   = CASE WHEN enquiring_nursery_id = $1 THEN NOW() ELSE enquirer_delivered_at END
+		WHERE (ad_nursery_id = $1 OR enquiring_nursery_id = $1)
+		  AND status IN ('NEW', 'IN_PROGRESS', 'DEAL_AGREED')`, viewerNurseryID)
+	return err
+}
+
 func (r *PostgresRepository) ChatSummaries(ctx context.Context, enquiries []Enquiry, viewerNurseryID int64) error {
 	if len(enquiries) == 0 {
 		return nil
@@ -1009,8 +1022,14 @@ func (r *PostgresRepository) EnquiryIDFor(ctx context.Context, adID, nurseryID i
 const messageSelect = `
 	SELECT m.message_id, m.enquiry_id, m.sent_by_user_id, m.sent_by_nursery_id,
 	       n.nursery_name, TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')),
-	       m.message_type, m.body, m.offer_price_per_unit, m.offer_quantity, m.status, m.created_at
+	       m.message_type, m.body, m.offer_price_per_unit, m.offer_quantity, m.status, m.created_at,
+	       u.profile_image_url,
+	       -- The receiving side's read/delivered times decide the ticks.
+	       CASE WHEN m.created_at <= CASE WHEN m.sent_by_nursery_id = e.ad_nursery_id THEN e.enquirer_read_at ELSE e.ad_nursery_read_at END THEN 'READ'
+	            WHEN m.created_at <= CASE WHEN m.sent_by_nursery_id = e.ad_nursery_id THEN e.enquirer_delivered_at ELSE e.ad_nursery_delivered_at END THEN 'DELIVERED'
+	            ELSE 'SENT' END
 	FROM public.market_enquiry_messages m
+	JOIN public.market_enquiries e ON e.enquiry_id = m.enquiry_id
 	JOIN public.nurseries n ON n.nursery_id = m.sent_by_nursery_id
 	JOIN public.users u     ON u.user_id    = m.sent_by_user_id`
 

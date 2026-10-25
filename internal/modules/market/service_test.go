@@ -199,6 +199,8 @@ func (m *mockRepo) SellerProfile(_ context.Context, nurseryID int64) (SellerProf
 
 func (m *mockRepo) MarkChatRead(_ context.Context, _, _ int64) error { return nil }
 
+func (m *mockRepo) MarkChatsDelivered(_ context.Context, _ int64) error { return nil }
+
 func (m *mockRepo) ChatSummaries(_ context.Context, _ []Enquiry, _ int64) error { return nil }
 
 func (m *mockRepo) UnreadTotal(_ context.Context, _ int64) (int, error) { return 0, nil }
