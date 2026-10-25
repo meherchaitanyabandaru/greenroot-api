@@ -72,6 +72,13 @@ func TestSendAuthenticatesAndCachesToken(t *testing.T) {
 	if got["message"]["token"] != "device-1" {
 		t.Fatalf("payload: %v", got)
 	}
+	// Both platforms ring: Android's default sound, iOS's "default".
+	raw, _ := json.Marshal(got["message"])
+	for _, want := range []string{`"default_sound":true`, `"sound":"default"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("payload has no %s: %s", want, raw)
+		}
+	}
 }
 
 func TestSendReportsDeadTokens(t *testing.T) {

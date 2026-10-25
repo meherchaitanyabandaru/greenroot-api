@@ -116,8 +116,15 @@ func (c *Client) Send(ctx context.Context, m Message) error {
 		"token":        m.Token,
 		"notification": map[string]string{"title": m.Title, "body": m.Body},
 		"data":         m.Data,
-		"android":      map[string]any{"priority": "HIGH"},
-		"apns":         map[string]any{"headers": map[string]string{"apns-priority": "10"}},
+		// Ring like a message: the phone's default sound on both platforms
+		// (without "sound" iOS delivers the banner silently).
+		"android": map[string]any{"priority": "HIGH", "notification": map[string]any{
+			"default_sound": true, "notification_priority": "PRIORITY_HIGH",
+		}},
+		"apns": map[string]any{
+			"headers": map[string]string{"apns-priority": "10"},
+			"payload": map[string]any{"aps": map[string]any{"sound": "default"}},
+		},
 	}}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.sendURL, bytes.NewReader(body))
