@@ -58,11 +58,11 @@ jobs:
         run: go test -race -coverprofile=coverage.out $(go list ./... | grep -v '/tests/')
 
       # Unit-test coverage on the run, with a floor just under today's level
-      # (27.7% on 2026-10-24). The journeys cover business rules end to end
+      # (29.0% on 2026-10-25). The journeys cover business rules end to end
       # and are not counted here.
       - name: Coverage
         env:
-          MIN_COVERAGE: '27'
+          MIN_COVERAGE: '28'
         run: |
           pct=$(go tool cover -func=coverage.out | awk '/^total:/ {sub("%","",$NF); print $NF}')
           echo "### API unit-test coverage: ${pct}% (floor ${MIN_COVERAGE}%)" >> "$GITHUB_STEP_SUMMARY"
