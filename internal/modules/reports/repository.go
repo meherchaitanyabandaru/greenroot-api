@@ -87,7 +87,8 @@ func build(req Request, sc Scope) query {
 			LEFT JOIN public.users cu ON cu.user_id = d.customer_user_id
 			LEFT JOIN public.nurseries pn ON pn.nursery_id = d.nursery_id`
 		q.where, q.date = "d.deleted_at IS NULL", "d.created_at"
-		nurseryCol, mgrA, mgrB = "d.nursery_id", "d.assigned_manager_user_id", "d.dispatched_by_user_id"
+		// A manager's trips are those of orders assigned to them (the trip's own column is never filled).
+		nurseryCol, mgrA, mgrB = "d.nursery_id", "do2.assigned_manager_user_id", "d.dispatched_by_user_id"
 		buyerCols, driverCol = []string{"d.customer_user_id"}, "d.driver_user_id"
 	}
 

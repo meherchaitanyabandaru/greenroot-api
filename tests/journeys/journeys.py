@@ -1844,6 +1844,13 @@ def journey_reports():
     out = expect("manager: quotations report", "GET", f"/reports/quotations?{rng}", manager.token)
     check("…their quotation, without the customer's name or mobile (as in the quotations list)",
           len(out.get("rows", [])) == 1 and not out["rows"][0].get("party") and "mobile" not in out["rows"][0], out.get("rows"))
+    expect("the manager's order gets an address", "PUT", f"/orders/{o3['id']}/delivery", owner.token,
+           {"contact_name": "Ravi", "contact_mobile": buyer.mobile, "address_line1": "12 Lake Road", "city": "Hyderabad", "state": "Telangana", "postal_code": "500032"})
+    for step in ("confirm", "start-loading", "complete-loading"):
+        expect(step, "POST", f"/orders/{o3['id']}/{step}", owner.token, {})
+    trip = expect("the owner sends it out", "POST", "/dispatches", owner.token, {"order_id": o3["id"]}, status=201)["dispatch"]
+    out = expect("manager: deliveries report", "GET", f"/reports/deliveries?{rng}", manager.token)
+    check("…the trip of their order, though the owner created it", [r["reference"] for r in out.get("rows", [])] == [trip["dispatch_code"]], out.get("rows"))
     out = expect("customer: orders report", "GET", f"/reports/orders?{rng}", buyer.token)
     check("…their 3 purchases, named by nursery, no phone column", out["summary"].get("total") == 3 and all(r.get("party", "").startswith("Journey Nursery") and "mobile" not in r for r in out["rows"]), out.get("rows"))
     out = expect("customer: quotations report", "GET", f"/reports/quotations?{rng}", buyer.token)
