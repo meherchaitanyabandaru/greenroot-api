@@ -251,12 +251,14 @@ func connectRedis(ctx context.Context, cfg config.RedisConfig, log *slog.Logger)
 // runCronJobs runs periodic maintenance tasks:
 //   - every 15 min: clean up expired revocation entries (tiny in-memory map)
 //   - daily at 00:05: mark subscriptions whose end_date has passed as EXPIRED
+//   - daily: delete notifications read more than 90 days ago (never unread ones)
 func runCronJobs(ctx context.Context, deps Dependencies) {
 	cleanupTicker := time.NewTicker(15 * time.Minute)
 	defer cleanupTicker.Stop()
 
 	// Fire expiry job once at startup (catches any missed midnight), then daily.
 	expireSubscriptions(ctx, deps)
+	purgeOldNotifications(ctx, deps)
 	expireTicker := time.NewTicker(24 * time.Hour)
 	defer expireTicker.Stop()
 
@@ -268,6 +270,7 @@ func runCronJobs(ctx context.Context, deps Dependencies) {
 			revocation.Cleanup()
 		case <-expireTicker.C:
 			expireSubscriptions(ctx, deps)
+			purgeOldNotifications(ctx, deps)
 		}
 	}
 }
@@ -288,6 +291,17 @@ func expireSubscriptions(ctx context.Context, deps Dependencies) {
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		slog.Info("subscription expiry job: marked expired", "count", n)
+	}
+}
+
+func purgeOldNotifications(ctx context.Context, deps Dependencies) {
+	n, err := notifications.PurgeReadBefore(ctx, deps.DB, time.Now().Add(-notifications.ReadRetention))
+	if err != nil {
+		slog.Error("notification cleanup job failed", "error", err, "deleted", n)
+		return
+	}
+	if n > 0 {
+		slog.Info("notification cleanup job: deleted old read notifications", "count", n)
 	}
 }
 
