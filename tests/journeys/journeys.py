@@ -494,6 +494,13 @@ def journey_nursery():
     expect("a rejected application cannot be approved without resubmitting", "PUT", f"/nurseries/{nid}/status", boss.token, {"status": "APPROVED"}, status=409)
     out = expect("owner sees the rejection", "GET", "/nurseries/owned", owner.token)
     check("status REJECTED with reason", "REJECTED" in json.dumps(out) and "Blurry" in json.dumps(out), out)
+    titles = []
+    for _ in range(20):  # the notification worker is asynchronous
+        titles = [n.get("title") for n in call("GET", "/notifications", owner.token)[1].get("notifications", [])]
+        if "Nursery application not approved" in titles:
+            break
+        time.sleep(0.25)
+    check("…and is notified, with the reason", "Nursery application not approved" in titles, titles)
     expect("resubmit without details is refused", "POST", "/nurseries/owned/resubmit", owner.token, {}, status=400)
     expect("owner resubmits", "POST", "/nurseries/owned/resubmit", owner.token, dict(body, name=body["name"] + " (clear photo)"), status=(200, 201))
     expect("a pending application cannot be resubmitted", "POST", "/nurseries/owned/resubmit", owner.token, body, status=409)
