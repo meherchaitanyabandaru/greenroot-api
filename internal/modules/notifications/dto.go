@@ -45,6 +45,8 @@ type Pagination = response.Pagination
 type NotificationsResponse struct {
 	Notifications []Notification `json:"notifications"`
 	Pagination    Pagination     `json:"pagination"`
+	// UnreadCount is the caller's own unread total, independent of paging and filters.
+	UnreadCount int64 `json:"unread_count"`
 }
 
 type NotificationResponse struct {

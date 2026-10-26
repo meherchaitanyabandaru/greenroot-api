@@ -33,16 +33,22 @@ func NewService(repository Repository, sender Sender, auditSvc *auditlog.Service
 	return &Service{repository: repository, sender: sender, auditSvc: auditSvc}
 }
 
-func (s *Service) List(ctx context.Context, actor ActorContext, input ListNotificationsRequest) ([]Notification, Pagination, error) {
+// List returns a page of notifications and the caller's own unread total
+// (for the bell), whatever the page, filters or admin scope.
+func (s *Service) List(ctx context.Context, actor ActorContext, input ListNotificationsRequest) ([]Notification, Pagination, int64, error) {
 	input = normalizeList(input)
 	if !actor.HasRole("ADMIN") {
 		input.UserID = actor.UserID
 	}
 	items, total, err := s.repository.List(ctx, input)
 	if err != nil {
-		return nil, Pagination{}, err
+		return nil, Pagination{}, 0, err
 	}
-	return items, Pagination{Page: input.Page, PerPage: input.PerPage, Total: total, TotalPages: totalPages(total, input.PerPage)}, nil
+	unread, err := s.repository.CountUnread(ctx, actor.UserID)
+	if err != nil {
+		return nil, Pagination{}, 0, err
+	}
+	return items, Pagination{Page: input.Page, PerPage: input.PerPage, Total: total, TotalPages: totalPages(total, input.PerPage)}, unread, nil
 }
 
 func (s *Service) Get(ctx context.Context, actor ActorContext, id int64) (Notification, error) {

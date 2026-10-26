@@ -20,6 +20,7 @@ type Repository interface {
 	Create(ctx context.Context, input CreateNotificationInput) (*Notification, error)
 	MarkRead(ctx context.Context, id int64) (*Notification, error)
 	MarkAllRead(ctx context.Context, userID int64) error
+	CountUnread(ctx context.Context, userID int64) (int64, error)
 	Delete(ctx context.Context, id int64) error
 	ListDevices(ctx context.Context, userID int64) ([]Device, error)
 	UpsertDevice(ctx context.Context, userID int64, input DeviceRequest) (*Device, error)
@@ -112,6 +113,12 @@ func (r *PostgresRepository) MarkRead(ctx context.Context, id int64) (*Notificat
 func (r *PostgresRepository) MarkAllRead(ctx context.Context, userID int64) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE public.notifications SET status = 'READ', read_at = COALESCE(read_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND read_at IS NULL`, userID)
 	return err
+}
+
+func (r *PostgresRepository) CountUnread(ctx context.Context, userID int64) (int64, error) {
+	var n int64
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM public.notifications WHERE user_id = $1 AND read_at IS NULL`, userID).Scan(&n)
+	return n, err
 }
 
 func (r *PostgresRepository) Delete(ctx context.Context, id int64) error {

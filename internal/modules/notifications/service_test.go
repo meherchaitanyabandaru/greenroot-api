@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 // ─── mock repository ─────────────────────────────────────────────────────────
@@ -68,6 +69,16 @@ func (m *mockRepo) MarkRead(_ context.Context, id int64) (*Notification, error) 
 }
 
 func (m *mockRepo) MarkAllRead(_ context.Context, userID int64) error { return nil }
+
+func (m *mockRepo) CountUnread(_ context.Context, userID int64) (int64, error) {
+	var c int64
+	for _, n := range m.notifications {
+		if n.UserID != nil && *n.UserID == userID && n.ReadAt == nil {
+			c++
+		}
+	}
+	return c, nil
+}
 
 func (m *mockRepo) Delete(_ context.Context, id int64) error {
 	if _, ok := m.notifications[id]; !ok {
@@ -158,7 +169,7 @@ func TestList_NonAdminSeesOnlyOwn(t *testing.T) {
 	repo.seedNotification(1, ptr(int64(10)), "SENT")
 	repo.seedNotification(2, ptr(int64(20)), "SENT")
 
-	items, _, err := svc(repo).List(context.Background(), buyerActor(10), ListNotificationsRequest{})
+	items, _, _, err := svc(repo).List(context.Background(), buyerActor(10), ListNotificationsRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -174,12 +185,37 @@ func TestList_AdminCanSeeAll(t *testing.T) {
 	repo.seedNotification(1, ptr(int64(10)), "SENT")
 	repo.seedNotification(2, ptr(int64(20)), "SENT")
 
-	items, _, err := svc(repo).List(context.Background(), adminActor(1), ListNotificationsRequest{})
+	items, _, _, err := svc(repo).List(context.Background(), adminActor(1), ListNotificationsRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(items) != 2 {
 		t.Errorf("admin should see all 2 notifications, got %d", len(items))
+	}
+}
+
+func TestList_UnreadCountIsTheCallersOwnWhateverThePage(t *testing.T) {
+	repo := newMock()
+	read := time.Now()
+	// 200 for user 10: the 150 newest are read, the 50 oldest are not.
+	for i := int64(1); i <= 200; i++ {
+		n := repo.seedNotification(i, ptr(int64(10)), "SENT")
+		if i > 50 {
+			n.ReadAt = &read
+		}
+	}
+	repo.seedNotification(500, ptr(int64(20)), "SENT") // someone else's unread one
+
+	_, _, unread, err := svc(repo).List(context.Background(), buyerActor(10), ListNotificationsRequest{Page: 1, PerPage: 20})
+	if err != nil || unread != 50 {
+		t.Fatalf("unread for user 10: want 50, got %d (%v)", unread, err)
+	}
+	f := true
+	if _, _, unread, _ = svc(repo).List(context.Background(), buyerActor(10), ListNotificationsRequest{Unread: &f, Type: "X"}); unread != 50 {
+		t.Errorf("filters must not change the count: got %d", unread)
+	}
+	if _, _, unread, _ = svc(repo).List(context.Background(), adminActor(20), ListNotificationsRequest{}); unread != 1 {
+		t.Errorf("an admin listing everyone still gets their own count: want 1, got %d", unread)
 	}
 }
 

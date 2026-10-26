@@ -1928,6 +1928,29 @@ def journey_reports():
     check("…a formula in a customer name is neutralised (quotations CSV)", "'=HYPERLINK" in body and ',=HYPERLINK' not in body, body[:300])
 
 
+def journey_notifications():
+    """Notifications: the unread count ignores paging; read and delete stay with the owner."""
+    boss = admin()
+    u = User(first="Inbox", activity="CUSTOMER")
+    other = User(first="Nosy", activity="CUSTOMER")
+    ids = [expect("admin sends a notification", "POST", "/notifications", boss.token,
+                  {"user_id": u.id, "title": f"N{i}", "message": f"message {i}"}, status=201)["notification"]["id"]
+           for i in range(25)]
+    out = expect("first page", "GET", "/notifications?page=1&per_page=20", u.token)
+    check("…20 shown, unread_count 25", len(out["notifications"]) == 20 and out.get("unread_count") == 25, out.get("unread_count"))
+    for i in ids[5:]:  # read the 20 newest; the 5 oldest stay unread
+        call("PUT", f"/notifications/{i}/read", u.token, {})
+    out = expect("first page again", "GET", "/notifications?page=1&per_page=20", u.token)
+    check("…the newest 20 are read, yet unread_count is 5 (older ones)",
+          all(n.get("read_at") for n in out["notifications"]) and out.get("unread_count") == 5, out.get("unread_count"))
+    out = expect("unread filter", "GET", "/notifications?unread=true", u.token)
+    check("…same count whatever the filter", out.get("unread_count") == 5 and len(out["notifications"]) == 5, out.get("unread_count"))
+    check("…another user's count is their own", expect("other's list", "GET", "/notifications", other.token).get("unread_count") == 0)
+    expect("another user cannot read it", "GET", f"/notifications/{ids[0]}", other.token, status=(403, 404))
+    expect("…nor mark it read", "PUT", f"/notifications/{ids[0]}/read", other.token, {}, status=(403, 404))
+    expect("…nor delete it", "DELETE", f"/notifications/{ids[0]}", other.token, status=(403, 404))
+
+
 JOURNEYS = [
     ("auth", journey_auth),
     ("accounts", journey_accounts),
@@ -1947,6 +1970,7 @@ JOURNEYS = [
     ("roles", journey_roles),
     ("access", journey_access),
     ("reports", journey_reports),
+    ("notifications", journey_notifications),
 ]
 
 

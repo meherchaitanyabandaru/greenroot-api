@@ -25,12 +25,12 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, pagination, err := h.service.List(r.Context(), actor, listRequest(r))
+	items, pagination, unread, err := h.service.List(r.Context(), actor, listRequest(r))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	response.OK(w, NotificationsResponse{Notifications: items, Pagination: pagination})
+	response.OK(w, NotificationsResponse{Notifications: items, Pagination: pagination, UnreadCount: unread})
 }
 
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {

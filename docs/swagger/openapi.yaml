@@ -1677,7 +1677,8 @@ paths:
           in: query
           schema: { type: boolean }
       responses:
-        "200": { description: Notification list }
+        "200":
+          description: "Notification list: notifications, pagination, and unread_count (the caller's own unread total, independent of paging and filters, for the bell badge)."
     post:
       tags: [Notifications]
       summary: Create notification
