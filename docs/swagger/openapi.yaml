@@ -6089,6 +6089,24 @@ paths:
         "500":
           $ref: '#/components/responses/Error'
   /api/v1/ratings/app:
+    get:
+      tags:
+        - Ratings
+      summary: The caller's own app rating (null before they rate)
+      operationId: getMyAppRating
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+          description: OK
+        "401":
+          $ref: '#/components/responses/Error'
+        "500":
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - Ratings

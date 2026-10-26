@@ -115,6 +115,20 @@ func (h *Handler) GetMyOrderRating(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, map[string]any{"rating": rating})
 }
 
+// GetMyAppRating godoc: GET /ratings/app — the caller's own rating (null before they rate).
+func (h *Handler) GetMyAppRating(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	rating, err := h.service.GetMyAppRating(r.Context(), actor)
+	if err != nil {
+		h.writeError(w, err)
+		return
+	}
+	response.OK(w, map[string]any{"rating": rating})
+}
+
 // GetMyTripRating godoc: GET /ratings/trip/:dispatch_id
 func (h *Handler) GetMyTripRating(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)

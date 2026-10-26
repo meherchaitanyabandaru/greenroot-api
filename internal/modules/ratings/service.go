@@ -88,6 +88,15 @@ func (s *Service) GetMyRatings(ctx context.Context, actor ActorContext) (map[str
 	return result, nil
 }
 
+// GetMyAppRating is the caller's own app rating, or nil before they rate.
+func (s *Service) GetMyAppRating(ctx context.Context, actor ActorContext) (*Rating, error) {
+	r, err := s.repository.GetApp(ctx, actor.UserID)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil
+	}
+	return r, err
+}
+
 func (s *Service) GetMyOrderRating(ctx context.Context, actor ActorContext, orderID int64) (*Rating, error) {
 	r, err := s.repository.GetOrder(ctx, actor.UserID, orderID)
 	if errors.Is(err, ErrNotFound) {

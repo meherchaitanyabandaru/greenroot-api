@@ -336,6 +336,11 @@ def journey_accounts():
     u = User(first="Asha", activity="CUSTOMER")
     me = expect("read own profile", "GET", "/users/me", u.token)
     check("profile saved", me.get("user", {}).get("first_name") == "Asha", me.get("user"))
+    out = expect("own app rating before rating", "GET", "/ratings/app", u.token)
+    check("…none yet", out.get("rating") is None, out)
+    expect("rate the app", "POST", "/ratings/app", u.token, {"overall_rating": 4, "would_recommend": True, "comment": "Easy"}, status=(200, 201))
+    out = expect("own app rating after rating (the form shows it)", "GET", "/ratings/app", u.token)
+    check("…4 stars, recommended, comment kept", (out.get("rating") or {}).get("overall_rating") == 4 and out["rating"].get("would_recommend") is True and out["rating"].get("comment") == "Easy", out)
     expect("invalid onboarding activity refused", "POST", "/users/me/onboarding", u.token, {"initial_activity": "ROCKET"}, status=400)
 
     # Change the sign-in number: code to the NEW number, then switch
