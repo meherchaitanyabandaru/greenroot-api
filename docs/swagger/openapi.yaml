@@ -32,6 +32,7 @@ tags:
   - name: Sourcing
   - name: Quotations
   - name: Ratings
+  - name: Reports
   - name: Search
   - name: SMS
   - name: Storage
@@ -6046,6 +6047,86 @@ paths:
         "403":
           $ref: '#/components/responses/Error'
         "404":
+          $ref: '#/components/responses/Error'
+        "500":
+          $ref: '#/components/responses/Error'
+  /api/v1/reports/{type}:
+    get:
+      tags:
+        - Reports
+      summary: Date-range report (orders, quotations, deliveries) as JSON or CSV
+      description: >-
+        Summary and paged rows for the caller's own slice: owner = their nursery,
+        manager = work assigned to or created by them, driver = their trips
+        (deliveries only), customer = their purchases (view=buying for anyone),
+        admin = all (optional nursery_id). Dates are India days; at most 3 years.
+        Customer mobiles are masked; CSV cells are formula-safe.
+      operationId: getReport
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: type
+          required: true
+          schema:
+            type: string
+            enum: [orders, quotations, deliveries]
+        - in: query
+          name: from
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: format
+          required: false
+          schema:
+            type: string
+            enum: [json, csv]
+        - in: query
+          name: view
+          required: false
+          schema:
+            type: string
+            enum: [buying]
+        - in: query
+          name: nursery_id
+          required: false
+          description: Admin only.
+          schema:
+            type: integer
+            format: int64
+        - in: query
+          name: page
+          required: false
+          schema:
+            type: integer
+        - in: query
+          name: per_page
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+            text/csv:
+              schema:
+                type: string
+          description: Report (JSON) or CSV download
+        "400":
+          $ref: '#/components/responses/Error'
+        "401":
+          $ref: '#/components/responses/Error'
+        "403":
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
