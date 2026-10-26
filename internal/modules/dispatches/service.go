@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
@@ -302,8 +303,22 @@ func (s *Service) CreateTripEvent(ctx context.Context, actor ActorContext, dispa
 // GetByCode lets a driver preview a trip from its QR code. Codes are
 // sequential, so only a driver can open an unclaimed PENDING trip; anyone else
 // needs normal access to the dispatch.
+// tripRef reads a trip join code: "TRIP-<uuid>" from the nursery's QR, or the
+// bare uuid. Dispatch codes and ids are sequential, so they never join a trip.
+func tripRef(raw string) (string, bool) {
+	v := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(raw)), "trip-")
+	if _, err := uuid.Parse(v); err != nil || len(v) != 36 {
+		return "", false
+	}
+	return v, true
+}
+
 func (s *Service) GetByCode(ctx context.Context, actor ActorContext, code string) (Dispatch, error) {
-	dispatch, err := s.repository.FindByCode(ctx, code)
+	ref, ok := tripRef(code)
+	if !ok {
+		return Dispatch{}, ErrNotFound
+	}
+	dispatch, err := s.repository.FindByTripUUID(ctx, ref)
 	if err != nil {
 		return Dispatch{}, err
 	}
@@ -316,7 +331,7 @@ func (s *Service) GetByCode(ctx context.Context, actor ActorContext, code string
 	return s.present(actor, *dispatch), nil
 }
 
-func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispatchID int64) (Dispatch, error) {
+func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispatchID int64, tripCode string) (Dispatch, error) {
 	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "dispatches", dispatchID)
 	if err != nil {
 		return Dispatch{}, err
@@ -330,6 +345,10 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 	dispatch, err := s.repository.FindByID(ctx, dispatchID)
 	if err != nil {
 		return Dispatch{}, err
+	}
+	// Only someone holding the trip's QR code may join it: ids are guessable.
+	if ref, ok := tripRef(tripCode); !ok || dispatch.TripUUID == nil || !strings.EqualFold(*dispatch.TripUUID, ref) {
+		return Dispatch{}, ErrNotFound
 	}
 	// If already accepted by this same driver, return the dispatch (idempotent).
 	if dispatch.Status == "ACCEPTED" && dispatch.DriverUserID != nil && *dispatch.DriverUserID == actor.UserID {

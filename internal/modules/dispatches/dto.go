@@ -40,6 +40,11 @@ type CreateDispatchRequest struct {
 
 // DeliverRequest marks a trip delivered: with the customer's delivery code,
 // or (nursery staff only) without it, giving the reason.
+// AcceptRequest carries the trip code from the nursery's QR ("TRIP-<uuid>" or the uuid).
+type AcceptRequest struct {
+	TripCode string `json:"trip_code"`
+}
+
 type DeliverRequest struct {
 	Code           string  `json:"code"`
 	OverrideReason *string `json:"override_reason"`

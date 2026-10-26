@@ -22,7 +22,7 @@ var (
 type Repository interface {
 	List(ctx context.Context, input ListDispatchesRequest) ([]Dispatch, int64, error)
 	FindByID(ctx context.Context, dispatchID int64) (*Dispatch, error)
-	FindByCode(ctx context.Context, code string) (*Dispatch, error)
+	FindByTripUUID(ctx context.Context, tripUUID string) (*Dispatch, error)
 	FindByTrackingUUID(ctx context.Context, uuid string) (*Dispatch, error)
 	HasDuplicate(ctx context.Context, dispatchNumber string) (bool, error)
 	HasActiveForOrder(ctx context.Context, orderID int64) (bool, error)
@@ -185,8 +185,8 @@ func (r *PostgresRepository) FindByID(ctx context.Context, dispatchID int64) (*D
 	return &dispatch, nil
 }
 
-func (r *PostgresRepository) FindByCode(ctx context.Context, code string) (*Dispatch, error) {
-	dispatch, err := scanDispatch(r.db.QueryRowContext(ctx, baseSelect()+" WHERE UPPER(d.dispatch_code) = UPPER($1) OR LOWER(d.trip_uuid::text) = LOWER($1)", code))
+func (r *PostgresRepository) FindByTripUUID(ctx context.Context, tripUUID string) (*Dispatch, error) {
+	dispatch, err := scanDispatch(r.db.QueryRowContext(ctx, baseSelect()+" WHERE d.trip_uuid = $1::uuid", tripUUID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
