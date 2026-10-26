@@ -371,7 +371,7 @@ func (r *PostgresRepository) CreateLocation(ctx context.Context, driverID int64,
 
 func baseSelect() string {
 	return `
-		SELECT d.driver_id, d.driver_code, d.user_id, u.first_name, u.mobile, d.license_number, d.license_expiry_date,
+		SELECT d.driver_id, d.driver_code, d.user_id, NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''), u.mobile, d.license_number, d.license_expiry_date,
 			d.emergency_contact, COALESCE(d.status::text, ''), d.created_at, d.updated_at,
 			d.licence_photo_url, d.vehicle_number, d.vehicle_type,
 			COALESCE(d.profile_status, 'INCOMPLETE'), COALESCE(d.approval_status, 'PENDING'),
@@ -394,7 +394,7 @@ func buildWhere(input ListDriversRequest) (string, []any) {
 	}
 	if input.Search != "" {
 		args = append(args, "%"+input.Search+"%")
-		clauses = append(clauses, fmt.Sprintf("(d.driver_code ILIKE $%d OR u.first_name ILIKE $%d OR u.mobile ILIKE $%d OR d.license_number ILIKE $%d)", len(args), len(args), len(args), len(args)))
+		clauses = append(clauses, fmt.Sprintf("(d.driver_code ILIKE $%[1]d OR u.first_name ILIKE $%[1]d OR u.last_name ILIKE $%[1]d OR u.mobile ILIKE $%[1]d OR d.license_number ILIKE $%[1]d)", len(args)))
 	}
 	return "WHERE " + strings.Join(clauses, " AND "), args
 }
