@@ -1840,6 +1840,10 @@ def journey_reports():
 
     out = expect("manager: orders report", "GET", f"/reports/orders?{rng}", manager.token)
     check("…only the order assigned to them", [r["reference"] for r in out.get("rows", [])] == [o3["order_code"]], out.get("rows"))
+    expect("assign the quotation to the manager", "POST", f"/quotations/{q['id']}/assign-manager", owner.token, {"manager_user_id": manager.id})
+    out = expect("manager: quotations report", "GET", f"/reports/quotations?{rng}", manager.token)
+    check("…their quotation, without the customer's name or mobile (as in the quotations list)",
+          len(out.get("rows", [])) == 1 and not out["rows"][0].get("party") and "mobile" not in out["rows"][0], out.get("rows"))
     out = expect("customer: orders report", "GET", f"/reports/orders?{rng}", buyer.token)
     check("…their 3 purchases, named by nursery, no phone column", out["summary"].get("total") == 3 and all(r.get("party", "").startswith("Journey Nursery") and "mobile" not in r for r in out["rows"]), out.get("rows"))
     out = expect("customer: quotations report", "GET", f"/reports/quotations?{rng}", buyer.token)

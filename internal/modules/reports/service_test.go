@@ -135,6 +135,20 @@ func TestBuild_ScopeFiltersAreParameters(t *testing.T) {
 	}
 }
 
+func TestRowsSQL_ManagerNeverSeesQuotationCustomer(t *testing.T) {
+	req, _ := ParseRequest(TypeQuotations, vals("from", "2026-01-01", "to", "2026-01-31"))
+	mgr := Scope{Kind: ScopeManager, UserID: 7, NurseryID: 52}
+	q := build(req, mgr)
+	if sql := rowsSQL(req, mgr, &q); strings.Contains(sql, "recipient_name") || strings.Contains(sql, "recipient_mobile") {
+		t.Fatalf("manager quotation rows must not read the customer: %s", sql)
+	}
+	owner := Scope{Kind: ScopeNursery, NurseryID: 52}
+	q = build(req, owner)
+	if sql := rowsSQL(req, owner, &q); !strings.Contains(sql, "recipient_name") {
+		t.Fatalf("owner sees the customer: %s", sql)
+	}
+}
+
 func TestMaskMobileAndCSVSafety(t *testing.T) {
 	for in, want := range map[string]string{"9876543210": "98xxxxx210", "+919876543210": "+9xxxxxxxx210", "123": "xxx", "": ""} {
 		if got := MaskMobile(in); got != want {

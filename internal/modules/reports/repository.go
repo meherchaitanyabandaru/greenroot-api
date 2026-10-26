@@ -181,6 +181,11 @@ func rowsSQL(req Request, sc Scope, q *query) string {
 		if buying {
 			party, mobile = "COALESCE(pn.nursery_name, '')", "''"
 		}
+		// Same rule as the quotations module (redactCustomerContact): a
+		// manager never sees who a quotation is for.
+		if sc.Kind == ScopeManager {
+			party, mobile = "''", "''"
+		}
 		cols = "x.quotation_code, " + day + ", " + party + ", " + mobile + ", x.status, x.total_amount, NULL::numeric, ''"
 		order = q.date + " DESC, x.quotation_id DESC"
 	case TypeDeliveries:
