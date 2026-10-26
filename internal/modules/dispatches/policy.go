@@ -115,6 +115,6 @@ func BuildCapabilities(actor ActorContext, status string, buyerSide bool) Dispat
 		CanCancel:           (isOperator || isAdmin) && !terminal,
 		CanAddItems:         (isOperator || isAdmin) && !terminal,
 		CanViewTracking:     IsActive(status),
-		CanShareCode:        (isOperator || isAdmin) && !terminal,
+		CanShareCode:        (isOperator || isAdmin) && status == "PENDING", // the QR only lets a driver accept
 	}
 }

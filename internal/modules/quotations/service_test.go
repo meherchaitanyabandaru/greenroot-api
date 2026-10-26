@@ -293,7 +293,7 @@ func (m *mockRepo) IsNurseryActive(_ context.Context, nurseryID int64) (bool, er
 	return m.activeNurseries[nurseryID], nil
 }
 
-func (m *mockRepo) CreateNotification(_ context.Context, _ int64, _, _, _ string) error {
+func (m *mockRepo) CreateNotification(_ context.Context, _ int64, _, _, _ string, _ map[string]any) error {
 	return nil
 }
 

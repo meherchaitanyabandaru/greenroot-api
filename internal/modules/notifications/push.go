@@ -3,6 +3,7 @@ package notifications
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -59,7 +60,7 @@ func (p *PushSender) Send(ctx context.Context, n Notification) error {
 	}
 	msg := fcm.Message{
 		Title: deref(n.Title), Body: deref(n.Message),
-		Data: map[string]string{"notification_id": strconv.FormatInt(n.ID, 10), "type": n.Type},
+		Data: pushData(n),
 	}
 	sent, failed := 0, 0
 	var lastErr error
@@ -102,3 +103,20 @@ func deref(s *string) string {
 
 // NewPushStore is the Postgres PushStore.
 func NewPushStore(db *sql.DB) PushStore { return &PostgresRepository{db: db} }
+
+// pushData is what the app receives with a push: the notification and, when
+// the notification is about a record, which one (so a tap can open it).
+func pushData(n Notification) map[string]string {
+	out := map[string]string{"notification_id": strconv.FormatInt(n.ID, 10), "type": n.Type}
+	if n.Data == nil {
+		return out
+	}
+	var link struct {
+		Entity string `json:"entity"`
+		ID     int64  `json:"id"`
+	}
+	if json.Unmarshal([]byte(*n.Data), &link) == nil && link.Entity != "" && link.ID > 0 {
+		out["entity"], out["id"] = link.Entity, strconv.FormatInt(link.ID, 10)
+	}
+	return out
+}

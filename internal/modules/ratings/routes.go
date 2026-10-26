@@ -20,6 +20,7 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service) Module {
 func (m Module) RegisterRoutes(router chi.Router) {
 	router.Route("/ratings", func(r chi.Router) {
 		r.Get("/", m.handler.List)
+		r.Get("/app", m.handler.GetMyAppRating)
 		r.Post("/app", m.handler.SubmitApp)
 		r.Post("/order/{order_id}", m.handler.SubmitOrder)
 		r.Get("/order/{order_id}", m.handler.GetMyOrderRating)

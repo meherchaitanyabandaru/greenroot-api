@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"strings"
 	"time"
 
@@ -43,7 +44,7 @@ type Repository interface {
 	DeleteItem(ctx context.Context, itemID int64) error
 	SetLoadedQuantity(ctx context.Context, itemID int64, qty float64) (*OrderItem, error)
 	RecalculateTotalFromLoaded(ctx context.Context, orderID int64) error
-	CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error
+	CreateNotification(ctx context.Context, userID int64, notifType, title, message string, data map[string]any) error
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	GetUserNurseryIDs(ctx context.Context, userID int64) ([]int64, error)
@@ -818,11 +819,11 @@ func (r *PostgresRepository) RecalculateTotalFromLoaded(ctx context.Context, ord
 	return err
 }
 
-func (r *PostgresRepository) CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error {
+func (r *PostgresRepository) CreateNotification(ctx context.Context, userID int64, notifType, title, message string, data map[string]any) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO public.notifications (user_id, notification_type, title, message, channel, status)
-		 VALUES ($1, $2, $3, $4, 'IN_APP', 'PENDING')`,
-		userID, notifType, title, message,
+		`INSERT INTO public.notifications (user_id, notification_type, title, message, channel, status, data)
+		 VALUES ($1, $2, $3, $4, 'IN_APP', 'PENDING', $5::jsonb)`,
+		userID, notifType, title, message, notifyqueue.DataJSON(data),
 	)
 	return err
 }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"strings"
 	"time"
 
@@ -21,7 +22,7 @@ var (
 type Repository interface {
 	List(ctx context.Context, input ListDispatchesRequest) ([]Dispatch, int64, error)
 	FindByID(ctx context.Context, dispatchID int64) (*Dispatch, error)
-	FindByCode(ctx context.Context, code string) (*Dispatch, error)
+	FindByTripUUID(ctx context.Context, tripUUID string) (*Dispatch, error)
 	FindByTrackingUUID(ctx context.Context, uuid string) (*Dispatch, error)
 	HasDuplicate(ctx context.Context, dispatchNumber string) (bool, error)
 	HasActiveForOrder(ctx context.Context, orderID int64) (bool, error)
@@ -43,7 +44,7 @@ type Repository interface {
 	IsDispatchDriver(ctx context.Context, driverID int64, userID int64) (bool, error)
 	GetOwnedNurseryID(ctx context.Context, userID int64) (*int64, error)
 	GetUserNurseryIDs(ctx context.Context, userID int64) ([]int64, error)
-	CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error
+	CreateNotification(ctx context.Context, userID int64, notifType, title, message string, data map[string]any) error
 }
 
 type CreateTripEventInput struct {
@@ -184,8 +185,8 @@ func (r *PostgresRepository) FindByID(ctx context.Context, dispatchID int64) (*D
 	return &dispatch, nil
 }
 
-func (r *PostgresRepository) FindByCode(ctx context.Context, code string) (*Dispatch, error) {
-	dispatch, err := scanDispatch(r.db.QueryRowContext(ctx, baseSelect()+" WHERE UPPER(d.dispatch_code) = UPPER($1) OR LOWER(d.trip_uuid::text) = LOWER($1)", code))
+func (r *PostgresRepository) FindByTripUUID(ctx context.Context, tripUUID string) (*Dispatch, error) {
+	dispatch, err := scanDispatch(r.db.QueryRowContext(ctx, baseSelect()+" WHERE d.trip_uuid = $1::uuid", tripUUID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -666,11 +667,11 @@ func (r *PostgresRepository) ListTripEvents(ctx context.Context, dispatchID int6
 	return events, rows.Err()
 }
 
-func (r *PostgresRepository) CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error {
+func (r *PostgresRepository) CreateNotification(ctx context.Context, userID int64, notifType, title, message string, data map[string]any) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO public.notifications (user_id, notification_type, title, message, channel, status)
-		 VALUES ($1, $2, $3, $4, 'IN_APP', 'PENDING')`,
-		userID, notifType, title, message,
+		`INSERT INTO public.notifications (user_id, notification_type, title, message, channel, status, data)
+		 VALUES ($1, $2, $3, $4, 'IN_APP', 'PENDING', $5::jsonb)`,
+		userID, notifType, title, message, notifyqueue.DataJSON(data),
 	)
 	return err
 }

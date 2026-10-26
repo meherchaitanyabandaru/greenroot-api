@@ -3,6 +3,7 @@ package dispatches
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,7 +54,14 @@ func (m *mockRepo) seedNursery(nurseryID, ownerID int64, members ...int64) {
 	}
 }
 
+// testTrip is every seeded trip's QR code (trip_uuid) unless the test sets one.
+const testTrip = "0f8fad5b-d9cb-469f-a165-70867728950e"
+
 func (m *mockRepo) seedDispatch(d Dispatch) {
+	if d.TripUUID == nil {
+		u := testTrip
+		d.TripUUID = &u
+	}
 	m.dispatches[d.ID] = &d
 }
 
@@ -83,9 +91,9 @@ func (m *mockRepo) FindByID(_ context.Context, id int64) (*Dispatch, error) {
 	return d, nil
 }
 
-func (m *mockRepo) FindByCode(_ context.Context, code string) (*Dispatch, error) {
+func (m *mockRepo) FindByTripUUID(_ context.Context, tripUUID string) (*Dispatch, error) {
 	for _, d := range m.dispatches {
-		if d.DispatchCode == code {
+		if d.TripUUID != nil && *d.TripUUID == tripUUID {
 			return d, nil
 		}
 	}
@@ -172,7 +180,7 @@ func (m *mockRepo) SetDriverUser(_ context.Context, dispatchID int64, userID int
 	return d, nil
 }
 
-func (m *mockRepo) CreateNotification(_ context.Context, _ int64, _, _, _ string) error {
+func (m *mockRepo) CreateNotification(_ context.Context, _ int64, _, _, _ string, _ map[string]any) error {
 	return nil
 }
 
@@ -515,7 +523,7 @@ func TestAcceptDispatch_OnlyDriverAllowed(t *testing.T) {
 	repo := newMock()
 	nid := int64(1)
 	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
-	_, err := svc(repo).AcceptDispatch(context.Background(), ownerActor(100), 10)
+	_, err := svc(repo).AcceptDispatch(context.Background(), ownerActor(100), 10, testTrip)
 	if !errors.Is(err, ErrForbidden) {
 		t.Errorf("owner accept dispatch: want ErrForbidden, got %v", err)
 	}
@@ -525,7 +533,7 @@ func TestAcceptDispatch_ManagerForbidden(t *testing.T) {
 	repo := newMock()
 	nid := int64(1)
 	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
-	_, err := svc(repo).AcceptDispatch(context.Background(), managerActor(200), 10)
+	_, err := svc(repo).AcceptDispatch(context.Background(), managerActor(200), 10, testTrip)
 	if !errors.Is(err, ErrForbidden) {
 		t.Errorf("manager accept dispatch: want ErrForbidden, got %v", err)
 	}
@@ -535,7 +543,7 @@ func TestAcceptDispatch_BuyerForbidden(t *testing.T) {
 	repo := newMock()
 	nid := int64(1)
 	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
-	_, err := svc(repo).AcceptDispatch(context.Background(), buyerActor(300), 10)
+	_, err := svc(repo).AcceptDispatch(context.Background(), buyerActor(300), 10, testTrip)
 	if !errors.Is(err, ErrForbidden) {
 		t.Errorf("buyer accept dispatch: want ErrForbidden, got %v", err)
 	}
@@ -545,12 +553,38 @@ func TestAcceptDispatch_DriverSuccess(t *testing.T) {
 	repo := newMock()
 	nid := int64(1)
 	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
-	d, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10)
+	d, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip)
 	if err != nil {
 		t.Fatalf("driver accept dispatch: %v", err)
 	}
 	if d.Status != "ACCEPTED" {
 		t.Errorf("status after accept: want ACCEPTED, got %s", d.Status)
+	}
+}
+
+func TestAcceptDispatch_NeedsTheTripCode(t *testing.T) {
+	repo := newMock()
+	nid := int64(1)
+	repo.seedDispatch(Dispatch{ID: 10, DispatchCode: "DSP-20261026-0001", Status: "PENDING", SellerNurseryID: &nid})
+	for _, code := range []string{"", "DSP-20261026-0001", "10", "11111111-2222-3333-4444-555555555555"} {
+		if _, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, code); !errors.Is(err, ErrNotFound) {
+			t.Errorf("code %q: want ErrNotFound, got %v", code, err)
+		}
+	}
+	if _, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, "TRIP-"+strings.ToUpper(testTrip)); err != nil {
+		t.Fatalf("the QR's TRIP-<uuid> joins: %v", err)
+	}
+}
+
+func TestGetByCode_OnlyTheTripCodeFindsATrip(t *testing.T) {
+	repo := newMock()
+	nid := int64(1)
+	repo.seedDispatch(Dispatch{ID: 10, DispatchCode: "DSP-20261026-0001", Status: "PENDING", SellerNurseryID: &nid})
+	if _, err := svc(repo).GetByCode(context.Background(), driverActor(400), "DSP-20261026-0001"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a guessable dispatch code must not find the trip, got %v", err)
+	}
+	if _, err := svc(repo).GetByCode(context.Background(), driverActor(400), "TRIP-"+testTrip); err != nil {
+		t.Errorf("the QR code finds it: %v", err)
 	}
 }
 
@@ -560,7 +594,7 @@ func TestAcceptDispatch_DriverWithActiveTripRejected(t *testing.T) {
 	driverID := int64(400)
 	repo.seedDispatch(Dispatch{ID: 9, Status: "IN_TRANSIT", SellerNurseryID: &nid, DriverUserID: &driverID})
 	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
-	_, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10)
+	_, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip)
 	if !errors.Is(err, ErrActiveDriverTrip) {
 		t.Errorf("driver with active trip accept: want ErrActiveDriverTrip, got %v", err)
 	}
@@ -572,7 +606,7 @@ func TestAcceptDispatch_DriverWithTerminalTripCanAccept(t *testing.T) {
 	driverID := int64(400)
 	repo.seedDispatch(Dispatch{ID: 9, Status: "DELIVERED", SellerNurseryID: &nid, DriverUserID: &driverID})
 	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
-	d, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10)
+	d, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip)
 	if err != nil {
 		t.Fatalf("driver with terminal trip should accept: %v", err)
 	}
@@ -586,7 +620,7 @@ func TestAcceptDispatch_AlreadyAcceptedByDifferentDriver(t *testing.T) {
 	nid := int64(1)
 	existing := int64(401)
 	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", SellerNurseryID: &nid, DriverUserID: &existing})
-	_, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10)
+	_, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip)
 	if !errors.Is(err, ErrAlreadyAccepted) {
 		t.Errorf("already accepted by other driver: want ErrAlreadyAccepted, got %v", err)
 	}
@@ -596,7 +630,7 @@ func TestAcceptDispatch_NonPendingForbidden(t *testing.T) {
 	repo := newMock()
 	nid := int64(1)
 	repo.seedDispatch(Dispatch{ID: 10, Status: "IN_TRANSIT", SellerNurseryID: &nid})
-	_, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10)
+	_, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip)
 	if !errors.Is(err, ErrForbidden) {
 		t.Errorf("accept non-pending: want ErrForbidden, got %v", err)
 	}
@@ -607,7 +641,7 @@ func TestAcceptDispatch_IdempotentForSameDriver(t *testing.T) {
 	nid := int64(1)
 	uid := int64(400)
 	repo.seedDispatch(Dispatch{ID: 10, Status: "ACCEPTED", SellerNurseryID: &nid, DriverUserID: &uid})
-	d, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10)
+	d, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip)
 	if err != nil {
 		t.Errorf("idempotent accept: %v", err)
 	}
@@ -708,7 +742,7 @@ func TestCreateItem_StrangerForbidden(t *testing.T) {
 func TestGetByCode_Found(t *testing.T) {
 	repo := newMock()
 	repo.seedDispatch(Dispatch{ID: 10, DispatchCode: "DC-XYZ", Status: "IN_TRANSIT"})
-	d, err := svc(repo).GetByCode(context.Background(), adminActor(1), "DC-XYZ")
+	d, err := svc(repo).GetByCode(context.Background(), adminActor(1), testTrip)
 	if err != nil {
 		t.Fatalf("GetByCode: %v", err)
 	}
@@ -720,15 +754,15 @@ func TestGetByCode_Found(t *testing.T) {
 func TestGetByCode_OnlyDriversPreviewUnclaimedTrips(t *testing.T) {
 	repo := newMock()
 	repo.seedDispatch(Dispatch{ID: 10, DispatchCode: "DC-1", Status: "PENDING"})
-	if _, err := svc(repo).GetByCode(context.Background(), driverActor(5), "DC-1"); err != nil {
+	if _, err := svc(repo).GetByCode(context.Background(), driverActor(5), testTrip); err != nil {
 		t.Errorf("driver preview of a pending trip: %v", err)
 	}
-	if _, err := svc(repo).GetByCode(context.Background(), buyerActor(6), "DC-1"); !errors.Is(err, ErrForbidden) {
+	if _, err := svc(repo).GetByCode(context.Background(), buyerActor(6), testTrip); !errors.Is(err, ErrForbidden) {
 		t.Errorf("buyer lookup: want ErrForbidden, got %v", err)
 	}
-	mine := int64(7)
-	repo.seedDispatch(Dispatch{ID: 11, DispatchCode: "DC-2", Status: "ACCEPTED", DriverUserID: &mine})
-	if _, err := svc(repo).GetByCode(context.Background(), driverActor(5), "DC-2"); !errors.Is(err, ErrForbidden) {
+	mine, other := int64(7), "6fa459ea-ee8a-3ca4-894e-db77e160355e"
+	repo.seedDispatch(Dispatch{ID: 11, DispatchCode: "DC-2", Status: "ACCEPTED", DriverUserID: &mine, TripUUID: &other})
+	if _, err := svc(repo).GetByCode(context.Background(), driverActor(5), other); !errors.Is(err, ErrForbidden) {
 		t.Errorf("another driver's trip: want ErrForbidden, got %v", err)
 	}
 }
@@ -983,7 +1017,7 @@ func TestReceipt_ConfirmsAnOverride(t *testing.T) {
 func TestOutsideTransport_NoDriverJoin(t *testing.T) {
 	repo, s, d := deliveryWorld("PENDING")
 	repo.dispatches[10].IsOutsideTransport = true
-	if _, err := s.AcceptDispatch(context.Background(), driverActor(401), 10); !errors.Is(err, ErrOutsideTransport) {
+	if _, err := s.AcceptDispatch(context.Background(), driverActor(401), 10, *repo.dispatches[10].TripUUID); !errors.Is(err, ErrOutsideTransport) {
 		t.Fatalf("join outside trip: got %v", err)
 	}
 	if caps := s.present(ownerActor(100), *repo.dispatches[10]).Capabilities; caps.CanShareCode || caps.CanAccept {

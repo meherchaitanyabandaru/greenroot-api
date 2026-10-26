@@ -220,7 +220,11 @@ func (h *Handler) Accept(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	dispatch, err := h.service.AcceptDispatch(r.Context(), actor, id)
+	var req AcceptRequest
+	if !response.DecodeJSON(w, r, &req) {
+		return
+	}
+	dispatch, err := h.service.AcceptDispatch(r.Context(), actor, id, req.TripCode)
 	if err != nil {
 		writeError(w, err)
 		return

@@ -336,6 +336,11 @@ def journey_accounts():
     u = User(first="Asha", activity="CUSTOMER")
     me = expect("read own profile", "GET", "/users/me", u.token)
     check("profile saved", me.get("user", {}).get("first_name") == "Asha", me.get("user"))
+    out = expect("own app rating before rating", "GET", "/ratings/app", u.token)
+    check("…none yet", out.get("rating") is None, out)
+    expect("rate the app", "POST", "/ratings/app", u.token, {"overall_rating": 4, "would_recommend": True, "comment": "Easy"}, status=(200, 201))
+    out = expect("own app rating after rating (the form shows it)", "GET", "/ratings/app", u.token)
+    check("…4 stars, recommended, comment kept", (out.get("rating") or {}).get("overall_rating") == 4 and out["rating"].get("would_recommend") is True and out["rating"].get("comment") == "Easy", out)
     expect("invalid onboarding activity refused", "POST", "/users/me/onboarding", u.token, {"initial_activity": "ROCKET"}, status=400)
 
     # Change the sign-in number: code to the NEW number, then switch
@@ -489,6 +494,13 @@ def journey_nursery():
     expect("a rejected application cannot be approved without resubmitting", "PUT", f"/nurseries/{nid}/status", boss.token, {"status": "APPROVED"}, status=409)
     out = expect("owner sees the rejection", "GET", "/nurseries/owned", owner.token)
     check("status REJECTED with reason", "REJECTED" in json.dumps(out) and "Blurry" in json.dumps(out), out)
+    titles = []
+    for _ in range(20):  # the notification worker is asynchronous
+        titles = [n.get("title") for n in call("GET", "/notifications", owner.token)[1].get("notifications", [])]
+        if "Nursery application not approved" in titles:
+            break
+        time.sleep(0.25)
+    check("…and is notified, with the reason", "Nursery application not approved" in titles, titles)
     expect("resubmit without details is refused", "POST", "/nurseries/owned/resubmit", owner.token, {}, status=400)
     expect("owner resubmits", "POST", "/nurseries/owned/resubmit", owner.token, dict(body, name=body["name"] + " (clear photo)"), status=(200, 201))
     expect("a pending application cannot be resubmitted", "POST", "/nurseries/owned/resubmit", owner.token, body, status=409)
@@ -608,6 +620,14 @@ def journey_quotation():
     expect("owner cannot quote for another nursery", "POST", "/quotations", owner.token, quote(nursery_id=rival.nursery_id), status=403)
     expect("manager cannot pre-assign", "POST", "/quotations", manager.token, quote(assigned_manager_user_id=manager.id), status=403)
     expect("pre-assign to a non-member is refused", "POST", "/quotations", owner.token, quote(assigned_manager_user_id=buyer.id), status=(400, 403, 404))
+    pre = expect("owner creates a quotation already assigned to the manager", "POST", "/quotations", owner.token, quote(assigned_manager_user_id=manager.id), status=201)["quotation"]
+    titles = []
+    for _ in range(20):
+        titles = [n.get("message", "") for n in call("GET", "/notifications", manager.token)[1].get("notifications", [])]
+        if any(pre["quotation_code"] in t for t in titles):
+            break
+        time.sleep(0.25)
+    check("…the manager is notified, as with Assign Manager", any(pre["quotation_code"] in t for t in titles), titles)
     expect("a line total that is not quantity × price is refused", "POST", "/quotations", owner.token,
            quote(items=[{"plant_id": mango, "quantity": 3, "unit_price": 100, "total_price": 1}]), status=400)
 
@@ -789,7 +809,14 @@ def journey_order():
     # Manager assignment
     expect("manager cannot assign", "POST", f"/orders/{oid}/assign-manager", manager.token, {"manager_user_id": manager.id}, status=403)
     expect("assigning a non-member is refused", "POST", f"/orders/{oid}/assign-manager", owner.token, {"manager_user_id": buyer.id}, status=400)
-    expect("owner assigns the manager", "POST", f"/orders/{oid}/assign-manager", owner.token, {"manager_user_id": manager.id})
+    code = expect("owner assigns the manager", "POST", f"/orders/{oid}/assign-manager", owner.token, {"manager_user_id": manager.id})["order"]["order_code"]
+    titles = []
+    for _ in range(20):
+        titles = [n.get("message", "") for n in call("GET", "/notifications", manager.token)[1].get("notifications", [])]
+        if any(code in t for t in titles):
+            break
+        time.sleep(0.25)
+    check("…the manager is notified", any(code in t for t in titles), titles)
 
     # Confirm → loading → partial → complete
     out = expect("manager confirms", "POST", f"/orders/{oid}/confirm", manager.token, {})
@@ -884,6 +911,7 @@ def journey_dispatch():
     expect("unknown order", "POST", "/dispatches", owner.token, {"order_id": 999999999}, status=(400, 404))
     d = expect("manager creates the dispatch", "POST", "/dispatches", manager.token, {"order_id": o["id"]}, status=201)["dispatch"]
     did, code = d["id"], d["dispatch_code"]
+    trip = "TRIP-" + str(d.get("trip_uuid"))  # what the nursery's QR carries
     check("…PENDING with a code and tracking link", d["dispatch_status"] == "PENDING" and code and d.get("trip_uuid"), d)
     expect("only one active dispatch per order", "POST", "/dispatches", owner.token, {"order_id": o["id"]}, status=409)
 
@@ -900,25 +928,29 @@ def journey_dispatch():
     expect("…the same key from another user is theirs alone", "POST", "/orders", rival.token, dict(body, seller_nursery_id=rival.nursery_id), status=(201, 400, 403), headers=key)
 
     # QR lookup and accept
-    expect("the order's buyer can look up the trip", "GET", f"/dispatches/code/{code}", buyer.token)
-    expect("an unrelated buyer cannot look up a trip by code", "GET", f"/dispatches/code/{code}", User(first="Nosy", activity="CUSTOMER").token, status=403)
-    expect("a rival owner cannot look up a trip by code", "GET", f"/dispatches/code/{code}", rival.token, status=403)
-    expect("a driver previews the unclaimed trip", "GET", f"/dispatches/code/{code}", driver.token)
-    expect("a buyer cannot accept a trip", "POST", f"/dispatches/{did}/accept", buyer.token, {}, status=403)
-    expect("an owner cannot accept a trip", "POST", f"/dispatches/{did}/accept", owner.token, {}, status=403)
-    out = expect("driver accepts", "POST", f"/dispatches/{did}/accept", driver.token, {})
+    expect("the order's buyer can look up the trip", "GET", f"/dispatches/code/{trip}", buyer.token)
+    expect("an unrelated buyer cannot look up a trip by code", "GET", f"/dispatches/code/{trip}", User(first="Nosy", activity="CUSTOMER").token, status=403)
+    expect("a rival owner cannot look up a trip by code", "GET", f"/dispatches/code/{trip}", rival.token, status=403)
+    expect("a driver previews the unclaimed trip", "GET", f"/dispatches/code/{trip}", driver.token)
+    expect("…but a guessed dispatch code finds nothing", "GET", f"/dispatches/code/{code}", driver.token, status=404)
+    expect("…nor a bare id", "GET", f"/dispatches/code/{did}", driver.token, status=404)
+    expect("a driver cannot accept by id alone", "POST", f"/dispatches/{did}/accept", driver.token, {}, status=404)
+    expect("…nor with the dispatch code", "POST", f"/dispatches/{did}/accept", driver.token, {"trip_code": code}, status=404)
+    expect("a buyer cannot accept a trip", "POST", f"/dispatches/{did}/accept", buyer.token, {"trip_code": trip}, status=403)
+    expect("an owner cannot accept a trip", "POST", f"/dispatches/{did}/accept", owner.token, {"trip_code": trip}, status=403)
+    out = expect("driver accepts with the QR's trip code", "POST", f"/dispatches/{did}/accept", driver.token, {"trip_code": trip})
     check("…ACCEPTED by this driver", out["dispatch"]["dispatch_status"] == "ACCEPTED" and out["dispatch"].get("driver_user_id") == driver.id, out["dispatch"])
     check("…the driver sees which nursery to pick up from", bool(out["dispatch"].get("seller_nursery_name")), out["dispatch"])
-    expect("accepting again is idempotent", "POST", f"/dispatches/{did}/accept", driver.token, {})
-    expect("another driver cannot take an accepted trip", "POST", f"/dispatches/{did}/accept", second_driver.token, {}, status=(403, 409))
-    expect("another driver cannot look it up any more", "GET", f"/dispatches/code/{code}", second_driver.token, status=403)
+    expect("accepting again is idempotent", "POST", f"/dispatches/{did}/accept", driver.token, {"trip_code": trip})
+    expect("another driver cannot take an accepted trip", "POST", f"/dispatches/{did}/accept", second_driver.token, {"trip_code": trip}, status=(403, 409))
+    expect("another driver cannot look it up any more", "GET", f"/dispatches/code/{trip}", second_driver.token, status=403)
 
     # One active trip per driver
     o2 = loaded_order()
     expect("start loading", "POST", f"/orders/{o2['id']}/start-loading", owner.token, {})
     expect("complete loading", "POST", f"/orders/{o2['id']}/complete-loading", owner.token, {})
     d2 = expect("second dispatch", "POST", "/dispatches", owner.token, {"order_id": o2["id"]}, status=201)["dispatch"]
-    expect("a driver with an active trip cannot accept another", "POST", f"/dispatches/{d2['id']}/accept", driver.token, {}, status=409)
+    expect("a driver with an active trip cannot accept another", "POST", f"/dispatches/{d2['id']}/accept", driver.token, {"trip_code": d2["trip_uuid"]}, status=409)
 
     # Moving the trip
     st = lambda who, status, code=200: expect(f"{who[0]} sets {status}", "PUT", f"/dispatches/{did}/status", who[1].token, {"dispatch_status": status}, status=code)
@@ -977,6 +1009,13 @@ def journey_dispatch():
     deliver("a rival owner cannot deliver", rival, {"code": code4}, 403)
     out = deliver("driver delivers with the customer's code", driver, {"code": code4})["dispatch"]
     check("…DELIVERED, confirmed by code", out["dispatch_status"] == "DELIVERED" and out.get("delivery_confirmation") == "CUSTOMER_CODE", out)
+    titles = []
+    for _ in range(20):
+        titles = [n.get("message", "") for n in call("GET", "/notifications", owner.token)[1].get("notifications", [])]
+        if any(out["dispatch_code"] in t and "delivered" in t for t in titles):
+            break
+        time.sleep(0.25)
+    check("…the owner is told it was delivered", any(out["dispatch_code"] in t and "delivered" in t for t in titles), titles)
     deliver("delivering twice is refused", owner, {"code": code4}, 422)
     bd = expect("buyer opens the delivered trip", "GET", f"/dispatches/{did}", buyer.token)["dispatch"]
     check("…the code is gone; the customer can report a problem", "delivery_code" not in bd and bd["capabilities"]["can_report_issue"], bd)
@@ -989,7 +1028,7 @@ def journey_dispatch():
     check("…delivery completed the order", out["order"]["order_status"] == "COMPLETED", out["order"]["order_status"])
     st(("owner", owner), "CANCELLED", 422)
     expect("no trip events after delivery", "POST", f"/dispatches/{did}/trip-events", driver.token, {"event_type": "LATE"}, status=422)
-    expect("second driver is free to accept the other trip", "POST", f"/dispatches/{d2['id']}/accept", second_driver.token, {})
+    expect("second driver is free to accept the other trip", "POST", f"/dispatches/{d2['id']}/accept", second_driver.token, {"trip_code": d2["trip_uuid"]})
     expect("owner cancels the other trip", "PUT", f"/dispatches/{d2['id']}/status", owner.token, {"dispatch_status": "CANCELLED"})
 
     # Outside lorry (driver without the app): the nursery confirms with the customer's code
@@ -1001,7 +1040,7 @@ def journey_dispatch():
                 "outside_vehicle_number": "ap05 tb 1234", "outside_driver_name": "Ramesh", "outside_driver_mobile": "+91 98765 01234"}, status=201)["dispatch"]
     check("…no QR to share, vehicle and driver recorded", d3["is_outside_transport"] and not d3["capabilities"]["can_share_code"]
           and d3.get("outside_vehicle_number") == "AP05 TB 1234" and d3.get("outside_driver_mobile") == "9876501234", d3)
-    expect("no app driver can join an outside lorry", "POST", f"/dispatches/{d3['id']}/accept", second_driver.token, {}, status=409)
+    expect("no app driver can join an outside lorry", "POST", f"/dispatches/{d3['id']}/accept", second_driver.token, {"trip_code": d3["trip_uuid"]}, status=409)
     expect("owner marks it dispatched", "PUT", f"/dispatches/{d3['id']}/status", owner.token, {"dispatch_status": "DISPATCHED"})
     code3 = expect("buyer opens it", "GET", f"/dispatches/{d3['id']}", buyer.token)["dispatch"].get("delivery_code") or ""
     wrong3 = "0000" if code3 != "0000" else "1111"

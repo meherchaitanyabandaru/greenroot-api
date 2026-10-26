@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"log/slog"
 	"strings"
 	"time"
@@ -346,8 +347,27 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, nurseryI
 		_ = s.repository.GrantOwnerRole(ctx, *nursery.OwnerUserID, actor.UserID)
 	}
 
+	s.notifyReview(ctx, nursery, status, reason)
 	s.invalidateNurseryWorkspaceUsers(ctx, nurseryID, actor.UserID)
 	return enrichNursery(actorFromContext(actor), *nursery), nil
+}
+
+// notifyReview tells the owner how the admin decided (in-app and push); the
+// approve dialog promises it, and until now the owner only found out by
+// tapping "Check Status".
+func (s *Service) notifyReview(ctx context.Context, n *Nursery, status, reason string) {
+	if n.OwnerUserID == nil {
+		return
+	}
+	ev := notifyqueue.Event{UserID: *n.OwnerUserID, Type: "NURSERY_APPROVED", Title: "Nursery approved",
+		Message: fmt.Sprintf("%s is approved. You can now quote, take orders and deliver on GreenRoot.", n.Name)}
+	if status == "REJECTED" {
+		ev.Type, ev.Title = "NURSERY_REJECTED", "Nursery application not approved"
+		ev.Message = fmt.Sprintf("%s was not approved. Reason: %s", n.Name, reason)
+	}
+	if err := notifyqueue.Enqueue(ctx, s.redis, ev); err != nil {
+		slog.Warn("nursery review notification not queued", "nursery_id", n.ID, "error", err)
+	}
 }
 
 func (s *Service) Delete(ctx context.Context, actor ActorContext, nurseryID int64) error {

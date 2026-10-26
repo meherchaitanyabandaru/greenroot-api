@@ -44,7 +44,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 	router.Route("/dispatches", func(r chi.Router) {
 		r.Get("/", m.handler.List)
 		r.Post("/", m.handler.Create)
-		r.Get("/code/{code}", m.handler.GetByCode) // look up by dispatch_code (for driver join flow)
+		r.Get("/code/{code}", m.handler.GetByCode) // driver join preview: the trip code from the QR, never the dispatch code
 		r.Get("/{id}", m.handler.Get)
 		r.Put("/{id}/status", m.handler.UpdateStatus)
 		r.Post("/{id}/ack-delivery-update", m.handler.AcknowledgeDeliveryUpdate)

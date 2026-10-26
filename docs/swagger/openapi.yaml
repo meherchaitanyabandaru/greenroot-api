@@ -2091,7 +2091,8 @@ paths:
     get:
       tags:
         - Dispatches
-      summary: Get by code
+      summary: Driver join preview by trip code
+      description: "The trip code from the nursery's QR: TRIP-<trip_uuid> or the bare trip_uuid. Dispatch codes are sequential, so they never find a trip (404)."
       operationId: getDispatchesCodeBycode
       security:
         - BearerAuth: []
@@ -2101,6 +2102,7 @@ paths:
           required: true
           schema:
             type: string
+            example: TRIP-0f8fad5b-d9cb-469f-a165-70867728950e
       responses:
         "200":
           content:
@@ -2123,6 +2125,7 @@ paths:
       tags:
         - Dispatches
       summary: Accept
+      description: "Driver joins the trip. trip_code must be the trip's QR code (TRIP-<trip_uuid> or the trip_uuid); anything else is 404, so ids cannot be guessed."
       operationId: postDispatchesByidAccept
       security:
         - BearerAuth: []
@@ -2133,6 +2136,17 @@ paths:
           schema:
             type: integer
             format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [trip_code]
+              properties:
+                trip_code:
+                  type: string
+                  example: TRIP-0f8fad5b-d9cb-469f-a165-70867728950e
       responses:
         "200":
           content:
@@ -6170,6 +6184,24 @@ paths:
         "500":
           $ref: '#/components/responses/Error'
   /api/v1/ratings/app:
+    get:
+      tags:
+        - Ratings
+      summary: The caller's own app rating (null before they rate)
+      operationId: getMyAppRating
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+          description: OK
+        "401":
+          $ref: '#/components/responses/Error'
+        "500":
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - Ratings
