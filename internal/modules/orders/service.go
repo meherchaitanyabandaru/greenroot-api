@@ -527,6 +527,8 @@ func (s *Service) AssignManager(ctx context.Context, actor ActorContext, orderID
 		fmt.Sprintf("Order #%d manager assigned", orderID),
 		map[string]any{"assigned_manager_user_id": order.AssignedManagerUserID},
 		map[string]any{"assigned_manager_user_id": managerUserID})
+	_ = s.repository.CreateNotification(ctx, managerUserID, "ORDER_ASSIGNED", "Order Assigned to You",
+		fmt.Sprintf("You have been assigned to order %s.", updated.OrderCode), notifyqueue.Link("order", orderID))
 	s.enrichOrder(ctx, actor, updated)
 	return *updated, nil
 }

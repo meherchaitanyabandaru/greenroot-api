@@ -809,7 +809,14 @@ def journey_order():
     # Manager assignment
     expect("manager cannot assign", "POST", f"/orders/{oid}/assign-manager", manager.token, {"manager_user_id": manager.id}, status=403)
     expect("assigning a non-member is refused", "POST", f"/orders/{oid}/assign-manager", owner.token, {"manager_user_id": buyer.id}, status=400)
-    expect("owner assigns the manager", "POST", f"/orders/{oid}/assign-manager", owner.token, {"manager_user_id": manager.id})
+    code = expect("owner assigns the manager", "POST", f"/orders/{oid}/assign-manager", owner.token, {"manager_user_id": manager.id})["order"]["order_code"]
+    titles = []
+    for _ in range(20):
+        titles = [n.get("message", "") for n in call("GET", "/notifications", manager.token)[1].get("notifications", [])]
+        if any(code in t for t in titles):
+            break
+        time.sleep(0.25)
+    check("…the manager is notified", any(code in t for t in titles), titles)
 
     # Confirm → loading → partial → complete
     out = expect("manager confirms", "POST", f"/orders/{oid}/confirm", manager.token, {})
