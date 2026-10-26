@@ -323,7 +323,7 @@ func (m *mockRepo) RecalculateTotalFromLoaded(_ context.Context, orderID int64) 
 	return nil
 }
 
-func (m *mockRepo) CreateNotification(_ context.Context, userID int64, _, _, _ string) error {
+func (m *mockRepo) CreateNotification(_ context.Context, userID int64, _, _, _ string, _ map[string]any) error {
 	m.notifications = append(m.notifications, userID)
 	return nil
 }

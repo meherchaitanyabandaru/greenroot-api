@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"strings"
 	"time"
 
@@ -318,7 +319,7 @@ func (s *Service) UpdateDeliverySnapshot(ctx context.Context, actor ActorContext
 	if input.EmergencyUpdate {
 		if driverUserID, err := s.repository.StartedDispatchDriverUserID(ctx, orderID); err == nil && driverUserID != nil {
 			msg := fmt.Sprintf("Delivery address changed for order %s. Please review and acknowledge the update.", updated.OrderCode)
-			_ = s.repository.CreateNotification(ctx, *driverUserID, "DELIVERY_ADDRESS_UPDATED", "Delivery Address Updated", msg)
+			_ = s.repository.CreateNotification(ctx, *driverUserID, "DELIVERY_ADDRESS_UPDATED", "Delivery Address Updated", msg, nil)
 		}
 	}
 	s.audit(ctx, actor, auditlog.EntityOrder, orderID, auditlog.ActionUpdate,
@@ -406,7 +407,7 @@ func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, order
 	}
 	if finalStatus == "PARTIALLY_FULFILLED" && order.BuyerUserID != nil {
 		msg := fmt.Sprintf("Order %s was loaded with reduced quantities. Please review your updated order.", updated.OrderCode)
-		_ = s.repository.CreateNotification(ctx, *order.BuyerUserID, "ORDER_PARTIAL", "Partial Delivery Notice", msg)
+		_ = s.repository.CreateNotification(ctx, *order.BuyerUserID, "ORDER_PARTIAL", "Partial Delivery Notice", msg, notifyqueue.Link("order", orderID))
 	}
 	s.audit(ctx, actor, auditlog.EntityOrder, orderID, auditlog.ActionUpdate,
 		fmt.Sprintf("Order #%d status LOADING → %s", orderID, finalStatus),

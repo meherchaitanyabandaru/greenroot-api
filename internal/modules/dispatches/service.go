@@ -203,7 +203,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 		s.enqueueNotification(ctx, *dispatch.CustomerUserID,
 			notifyqueue.EventOrderDispatched,
 			"Order Dispatched",
-			fmt.Sprintf("Your order dispatch %s is on the way.", dispatch.DispatchCode))
+			fmt.Sprintf("Your order dispatch %s is on the way.", dispatch.DispatchCode), notifyqueue.Link("dispatch", dispatch.ID))
 	}
 	if IsLiveTrackingTerminal(status) {
 		s.removeLiveDriverLocation(ctx, *dispatch)
@@ -359,20 +359,21 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 		s.enqueueNotification(ctx, *updated.OwnerUserIDSnapshot,
 			notifyqueue.EventDispatchAccepted,
 			"Dispatch Accepted",
-			fmt.Sprintf("Dispatch %s was accepted by the driver.", updated.DispatchCode))
+			fmt.Sprintf("Dispatch %s was accepted by the driver.", updated.DispatchCode), notifyqueue.Link("dispatch", updated.ID))
 	}
 	return s.present(actor, *updated), nil
 }
 
-func (s *Service) enqueueNotification(ctx context.Context, userID int64, notifType, title, message string) {
+func (s *Service) enqueueNotification(ctx context.Context, userID int64, notifType, title, message string, data map[string]any) {
 	if err := notifyqueue.Enqueue(ctx, s.redis, notifyqueue.Event{
 		UserID:  userID,
 		Type:    notifType,
 		Title:   title,
 		Message: message,
+		Data:    data,
 	}); err != nil {
 		slog.Warn("notification queue enqueue failed; falling back to direct notification", "type", notifType, "user_id", userID, "error", err)
-		_ = s.repository.CreateNotification(ctx, userID, notifType, title, message)
+		_ = s.repository.CreateNotification(ctx, userID, notifType, title, message, data)
 	}
 }
 
@@ -783,7 +784,7 @@ func (s *Service) Deliver(ctx context.Context, actor ActorContext, dispatchID in
 		if confirmation == ConfirmationUnconfirmed {
 			s.enqueueNotification(ctx, *dispatch.CustomerUserID, notifyqueue.EventOrderDelivered,
 				"Delivery marked without your confirmation",
-				fmt.Sprintf("%s was marked delivered by the nursery: %s. If you did not receive your plants, report a problem in the app within 48 hours.", dispatch.DispatchCode, *reason))
+				fmt.Sprintf("%s was marked delivered by the nursery: %s. If you did not receive your plants, report a problem in the app within 48 hours.", dispatch.DispatchCode, *reason), notifyqueue.Link("dispatch", dispatch.ID))
 			// The dispute window only protects a customer who hears about it:
 			// also SMS and email, not just the in-app inbox and push.
 			if s.events != nil {
@@ -796,7 +797,7 @@ func (s *Service) Deliver(ctx context.Context, actor ActorContext, dispatchID in
 			}
 		} else {
 			s.enqueueNotification(ctx, *dispatch.CustomerUserID, notifyqueue.EventOrderDelivered,
-				"Order delivered", fmt.Sprintf("%s was delivered with your code.", dispatch.DispatchCode))
+				"Order delivered", fmt.Sprintf("%s was delivered with your code.", dispatch.DispatchCode), notifyqueue.Link("dispatch", dispatch.ID))
 		}
 	}
 	s.audit(ctx, actor, "dispatches", dispatch.ID, actionUpdate, map[string]any{"delivered": confirmation, "override_reason": reason})
@@ -859,7 +860,7 @@ func (s *Service) ConfirmReceipt(ctx context.Context, actor ActorContext, dispat
 	if issuePtr != nil && dispatch.OwnerUserIDSnapshot != nil {
 		s.enqueueNotification(ctx, *dispatch.OwnerUserIDSnapshot, notifyqueue.EventDeliveryIssue,
 			"Customer reported a delivery problem",
-			fmt.Sprintf("%s: %s", dispatch.DispatchCode, issue))
+			fmt.Sprintf("%s: %s", dispatch.DispatchCode, issue), notifyqueue.Link("dispatch", dispatch.ID))
 	}
 	s.audit(ctx, actor, "dispatches", dispatchID, actionUpdate, map[string]any{"receipt_confirmed": true, "issue": issuePtr})
 	return s.present(actor, dispatch), nil

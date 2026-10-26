@@ -410,7 +410,7 @@ func (s *Service) SendToCustomer(ctx context.Context, actor ActorContext, quotat
 		s.enqueueNotification(ctx, *approved.CustomerUserID,
 			notifyqueue.EventQuotationSent,
 			"Quotation Ready for Review",
-			fmt.Sprintf("Quotation %s from %s is ready for your review.", approved.QuotationCode, nurseryName))
+			fmt.Sprintf("Quotation %s from %s is ready for your review.", approved.QuotationCode, nurseryName), notifyqueue.Link("quotation", approved.ID))
 	}
 	return enrichQuotation(actor, *approved), nil
 }
@@ -519,7 +519,8 @@ func (s *Service) AssignManager(ctx context.Context, actor ActorContext, quotati
 	_ = s.repository.CreateNotification(ctx, req.ManagerUserID,
 		"QUOTATION_ASSIGNED",
 		"Quotation Assigned to You",
-		fmt.Sprintf("You have been assigned to quotation %s.", updated.QuotationCode))
+		fmt.Sprintf("You have been assigned to quotation %s.", updated.QuotationCode),
+		notifyqueue.Link("quotation", quotationID))
 	return enrichQuotation(actor, *updated), nil
 }
 
@@ -573,7 +574,7 @@ func (s *Service) BuyerAccept(ctx context.Context, actor ActorContext, quotation
 		s.enqueueNotification(ctx, ownerID,
 			notifyqueue.EventQuotationAccepted,
 			"Quotation Accepted",
-			fmt.Sprintf("Buyer accepted quotation %s.", updated.QuotationCode))
+			fmt.Sprintf("Buyer accepted quotation %s.", updated.QuotationCode), notifyqueue.Link("quotation", quotationID))
 	}
 	return enrichQuotation(actor, *updated), nil
 }
@@ -613,23 +614,24 @@ func (s *Service) BuyerReject(ctx context.Context, actor ActorContext, quotation
 		_ = s.repository.CreateNotification(ctx, ownerID,
 			"QUOTATION_REJECTED",
 			"Quotation Rejected",
-			msg)
+			msg, notifyqueue.Link("quotation", quotationID))
 	}
 	return enrichQuotation(actor, *updated), nil
 }
 
-func (s *Service) enqueueNotification(ctx context.Context, userID int64, notifType, title, message string) {
+func (s *Service) enqueueNotification(ctx context.Context, userID int64, notifType, title, message string, data map[string]any) {
 	err := notifyqueue.Enqueue(ctx, s.redis, notifyqueue.Event{
 		UserID:  userID,
 		Type:    notifType,
 		Title:   title,
 		Message: message,
+		Data:    data,
 	})
 	if err == nil {
 		return
 	}
 	slog.Warn("notification queue enqueue failed; falling back to direct notification", "type", notifType, "user_id", userID, "error", err)
-	_ = s.repository.CreateNotification(ctx, userID, notifType, title, message)
+	_ = s.repository.CreateNotification(ctx, userID, notifType, title, message, data)
 }
 
 // RecordDownload records a quotation PDF generation/download event in the audit log.

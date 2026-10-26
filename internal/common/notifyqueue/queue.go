@@ -22,6 +22,13 @@ const (
 
 var ErrUnavailable = errors.New("notification queue unavailable")
 
+// Link is a notification's data pointing at the record it is about; the app
+// opens that record when the notification is tapped. entity is "quotation",
+// "order" or "dispatch".
+func Link(entity string, id int64) map[string]any {
+	return map[string]any{"entity": entity, "id": id}
+}
+
 type Event struct {
 	UserID  int64
 	Type    string
@@ -30,18 +37,23 @@ type Event struct {
 	Data    map[string]any
 }
 
+// DataJSON is data as stored in notifications.data ("{}" when empty).
+func DataJSON(data map[string]any) string {
+	if len(data) == 0 {
+		return "{}"
+	}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return "{}"
+	}
+	return string(raw)
+}
+
 func Enqueue(ctx context.Context, rdb redis.Cmdable, event Event) error {
 	if rdb == nil {
 		return ErrUnavailable
 	}
-	data := "{}"
-	if len(event.Data) > 0 {
-		raw, err := json.Marshal(event.Data)
-		if err != nil {
-			return err
-		}
-		data = string(raw)
-	}
+	data := DataJSON(event.Data)
 	return rdb.XAdd(ctx, &redis.XAddArgs{
 		Stream: redisutil.KeyNotifications,
 		// The worker deletes what it delivers; the cap only bounds a backlog

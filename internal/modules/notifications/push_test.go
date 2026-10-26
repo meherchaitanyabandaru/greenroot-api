@@ -74,3 +74,17 @@ func TestPushSenderOutcomes(t *testing.T) {
 		t.Fatalf("no recipient: inbox only, got %v %q", err, store.delivery)
 	}
 }
+
+func TestPushData_CarriesTheLinkedRecord(t *testing.T) {
+	data := `{"entity":"order","id":41}`
+	got := pushData(Notification{ID: 7, Type: "ORDER_PARTIAL", Data: &data})
+	if got["entity"] != "order" || got["id"] != "41" || got["notification_id"] != "7" || got["type"] != "ORDER_PARTIAL" {
+		t.Fatalf("push data: %v", got)
+	}
+	empty := `{}`
+	for _, n := range []Notification{{ID: 1}, {ID: 2, Data: &empty}} {
+		if got := pushData(n); len(got) != 2 {
+			t.Fatalf("no link → only notification_id and type: %v", got)
+		}
+	}
+}

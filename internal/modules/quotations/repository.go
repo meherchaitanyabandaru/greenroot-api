@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"time"
 
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
@@ -47,7 +48,7 @@ type Repository interface {
 	IsNurseryActive(ctx context.Context, nurseryID int64) (bool, error)
 	GetOwnedNurseryID(ctx context.Context, userID int64) (*int64, error)
 	GetManagerNurseryID(ctx context.Context, userID int64) (*int64, error)
-	CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error
+	CreateNotification(ctx context.Context, userID int64, notifType, title, message string, data map[string]any) error
 	// Document methods
 	CreateDocument(ctx context.Context, doc QuotationDocument) (*QuotationDocument, error)
 	GetCurrentDocument(ctx context.Context, quotationID int64) (*QuotationDocument, error)
@@ -938,11 +939,11 @@ func (r *PostgresRepository) MarkDocumentsNotCurrent(ctx context.Context, quotat
 	return err
 }
 
-func (r *PostgresRepository) CreateNotification(ctx context.Context, userID int64, notifType, title, message string) error {
+func (r *PostgresRepository) CreateNotification(ctx context.Context, userID int64, notifType, title, message string, data map[string]any) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO public.notifications (user_id, notification_type, title, message, channel, status)
-		 VALUES ($1, $2, $3, $4, 'IN_APP', 'PENDING')`,
-		userID, notifType, title, message,
+		`INSERT INTO public.notifications (user_id, notification_type, title, message, channel, status, data)
+		 VALUES ($1, $2, $3, $4, 'IN_APP', 'PENDING', $5::jsonb)`,
+		userID, notifType, title, message, notifyqueue.DataJSON(data),
 	)
 	return err
 }

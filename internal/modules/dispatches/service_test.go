@@ -172,7 +172,7 @@ func (m *mockRepo) SetDriverUser(_ context.Context, dispatchID int64, userID int
 	return d, nil
 }
 
-func (m *mockRepo) CreateNotification(_ context.Context, _ int64, _, _, _ string) error {
+func (m *mockRepo) CreateNotification(_ context.Context, _ int64, _, _, _ string, _ map[string]any) error {
 	return nil
 }
 
