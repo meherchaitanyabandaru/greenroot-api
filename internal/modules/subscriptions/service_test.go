@@ -380,10 +380,9 @@ func TestUpdatePlan_InvalidatesRedisCache(t *testing.T) {
 	}
 
 	_, err := service.UpdatePlan(ctx, adminActor(1), plan.ID, UpdatePlanRequest{
-		Name:          "Updated",
-		SixMonthPrice: 1200,
-		YearlyPrice:   12000,
-		IsActive:      true,
+		Name:         "Updated",
+		MonthlyPrice: 1200,
+		IsActive:     true,
 	})
 	if err != nil {
 		t.Fatalf("update plan failed: %v", err)
@@ -630,7 +629,7 @@ func TestCreate_InvalidBillingCycle(t *testing.T) {
 
 	_, err := svc(repo).Create(context.Background(), ownerActor(10), CreateSubscriptionRequest{
 		PlanID:       p.ID,
-		BillingCycle: "QUARTERLY", // not supported
+		BillingCycle: "WEEKLY", // not a cycle
 	})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("want ErrInvalidInput, got %v", err)
@@ -825,12 +824,20 @@ func TestCreateTrialForOwner_Success(t *testing.T) {
 	repo := newMock()
 	repo.seedPlan("TRIAL", 0, 0)
 
-	err := svc(repo).CreateTrialForOwner(context.Background(), 10, time.Now())
+	// One month free: approved on 10 March, the trial runs until 9 April.
+	err := svc(repo).CreateTrialForOwner(context.Background(), 10, time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := repo.activeByUser[10]; !ok {
-		t.Error("expected TRIAL sub created for user 10")
+	sub, ok := repo.activeByUser[10]
+	if !ok {
+		t.Fatal("expected TRIAL sub created for user 10")
+	}
+	if sub.StartDate.Format(time.DateOnly) != "2026-03-10" || sub.EndDate.Format(time.DateOnly) != "2026-04-09" {
+		t.Fatalf("trial %s – %s, want 2026-03-10 – 2026-04-09", sub.StartDate.Format(time.DateOnly), sub.EndDate.Format(time.DateOnly))
+	}
+	if repo.lastPayment != nil {
+		t.Fatal("a free trial records no payment")
 	}
 }
 
@@ -1043,19 +1050,19 @@ func TestUpdatePlan_NonAdminForbidden(t *testing.T) {
 
 func TestCycleEndAndAmount(t *testing.T) {
 	monthly := 1000.0
-	yearly := 10000.0
-	plan := SubscriptionPlan{MonthlyPrice: &monthly, YearlyPrice: &yearly}
+	plan := SubscriptionPlan{MonthlyPrice: &monthly}
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	cases := []struct {
 		cycle      string
 		wantAmount float64
-		wantMonths int
+		wantEnd    string
 	}{
-		{"SIX_MONTH", 1000, 6},
-		{"YEARLY", 10000, 12},
-		{"TRIAL", 0, 6},
-		{"MONTHLY", 1000, 6},
+		{"MONTHLY", 1000, "2026-01-31"},   // 1 month, no discount
+		{"QUARTERLY", 2850, "2026-03-31"}, // 3000 − 5%
+		{"SIX_MONTH", 5400, "2026-06-30"}, // 6000 − 10%
+		{"YEARLY", 10200, "2026-12-31"},   // 12000 − 15%
+		{"TRIAL", 0, "2026-01-31"},        // one month free
 	}
 	for _, c := range cases {
 		t.Run(c.cycle, func(t *testing.T) {
@@ -1063,15 +1070,61 @@ func TestCycleEndAndAmount(t *testing.T) {
 			if err != nil {
 				t.Fatalf("cycle %s: unexpected error: %v", c.cycle, err)
 			}
-			if amount != c.wantAmount {
-				t.Errorf("cycle %s: want amount %.0f, got %.0f", c.cycle, c.wantAmount, amount)
-			}
-			months := int(end.Sub(start).Hours()/24/30) + 1
-			_ = months
-			if end.Before(start) {
-				t.Errorf("cycle %s: end date before start", c.cycle)
+			if amount != c.wantAmount || end.Format(time.DateOnly) != c.wantEnd {
+				t.Errorf("cycle %s: got %.2f until %s, want %.2f until %s", c.cycle, amount, end.Format(time.DateOnly), c.wantAmount, c.wantEnd)
 			}
 		})
+	}
+	if _, _, err := cycleEndAndAmount(start, "WEEKLY", plan); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("unknown cycle: want ErrInvalidInput, got %v", err)
+	}
+}
+
+// The published prices, to the paisa, for every plan and cycle.
+func TestPublishedPrices(t *testing.T) {
+	want := map[float64][4]float64{ // monthly → MONTHLY, QUARTERLY, SIX_MONTH, YEARLY
+		299: {299, 852.15, 1614.60, 3049.80},
+		499: {499, 1422.15, 2694.60, 5089.80},
+		999: {999, 2847.15, 5394.60, 10189.80},
+	}
+	for monthly, prices := range want {
+		for i, term := range cycleTerms {
+			if got := cyclePrice(monthly, term); got != prices[i] {
+				t.Errorf("₹%.0f %s: got %.2f, want %.2f", monthly, term.Code, got, prices[i])
+			}
+		}
+	}
+}
+
+func TestCanonicalCycle(t *testing.T) {
+	for in, want := range map[string]string{
+		"monthly": "MONTHLY", " QUARTERLY ": "QUARTERLY", "SIX_MONTH": "SIX_MONTH", "SEMI_ANNUAL": "SIX_MONTH",
+		"HALF_YEARLY": "SIX_MONTH", "": "SIX_MONTH", "YEARLY": "YEARLY", "ANNUAL": "YEARLY", "TRIAL": "TRIAL",
+	} {
+		if got, ok := canonicalCycle(in); !ok || got != want {
+			t.Errorf("canonicalCycle(%q) = %q, %v; want %q", in, got, ok, want)
+		}
+	}
+	if _, ok := canonicalCycle("WEEKLY"); ok {
+		t.Error("WEEKLY must be refused")
+	}
+}
+
+func TestWithPrices_ListsEveryCycleAndKeepsOldFields(t *testing.T) {
+	monthly := 499.0
+	p := SubscriptionPlan{MonthlyPrice: &monthly}
+	withPrices(&p)
+	if len(p.CyclePrices) != 4 || *p.SixMonthPrice != 2694.60 || *p.YearlyPrice != 5089.80 {
+		t.Fatalf("got %+v six=%v yearly=%v", p.CyclePrices, *p.SixMonthPrice, *p.YearlyPrice)
+	}
+	q := p.CyclePrices[1]
+	if q.BillingCycle != "QUARTERLY" || q.Months != 3 || q.DiscountPercent != 5 || q.ListAmount != 1497 || q.Amount != 1422.15 || q.PerMonth != 474.05 {
+		t.Fatalf("quarterly: %+v", q)
+	}
+	free := SubscriptionPlan{}
+	withPrices(&free)
+	if free.CyclePrices != nil {
+		t.Fatal("a free plan lists no prices")
 	}
 }
 

@@ -111,7 +111,10 @@ func (s *Service) CreatePaymentOrder(ctx context.Context, actor ActorContext, re
 	if !plan.IsActive || isFreePlan(plan.Code) {
 		return PaymentOrder{}, ErrInvalidInput
 	}
-	cycle := strings.ToUpper(strings.TrimSpace(req.BillingCycle))
+	cycle, ok := canonicalCycle(req.BillingCycle)
+	if !ok || cycle == "TRIAL" {
+		return PaymentOrder{}, ErrInvalidInput
+	}
 	_, amount, err := cycleEndAndAmount(time.Now(), cycle, *plan)
 	if err != nil {
 		return PaymentOrder{}, ErrInvalidInput

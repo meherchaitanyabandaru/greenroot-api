@@ -17,7 +17,7 @@ import (
 func renewSetup(t *testing.T) (*Service, *fakeGateway, *mockRepo, string) {
 	t.Helper()
 	repo := newMock()
-	p := repo.seedPlan("GROWTH", 2499, 3999)
+	p := repo.seedPlan("GROWTH", 499, 0) // yearly: 499 × 12 − 15% = ₹5,089.80
 	repo.seedSub(101, 10, p.ID, "ACTIVE")
 	s, g := gatewaySvc(repo)
 	order, err := s.CreatePaymentOrder(context.Background(), ownerActor(10), PaymentOrderRequest{SubscriptionID: ptr(int64(101)), BillingCycle: "YEARLY"})
@@ -29,7 +29,7 @@ func renewSetup(t *testing.T) (*Service, *fakeGateway, *mockRepo, string) {
 
 func TestCheckout_AuthorizedPaymentIsCapturedFirst(t *testing.T) {
 	s, g, repo, orderID := renewSetup(t)
-	g.payments["pay_1"] = razorpay.Payment{ID: "pay_1", OrderID: orderID, Amount: 399900, Status: "authorized", Method: "card"}
+	g.payments["pay_1"] = razorpay.Payment{ID: "pay_1", OrderID: orderID, Amount: 508980, Status: "authorized", Method: "card"}
 	if _, err := s.Renew(context.Background(), ownerActor(10), 101, paidRenew(orderID, "pay_1")); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestCheckout_FailedOrForeignPaymentRefused(t *testing.T) {
 				p.OrderID = orderID
 			}
 			if p.Amount == 0 {
-				p.Amount = 399900
+				p.Amount = 508980
 			}
 			g.payments["pay_1"] = p
 			if _, err := s.Renew(context.Background(), ownerActor(10), 101, paidRenew(orderID, "pay_1")); !errors.Is(err, ErrPaymentInvalid) {
@@ -124,7 +124,7 @@ func TestWebhook_AppliesPaymentTheAppNeverConfirmed(t *testing.T) {
 
 func TestWebhook_NewSubscription(t *testing.T) {
 	repo := newMock()
-	p := repo.seedPlan("GROWTH", 2499, 3999)
+	p := repo.seedPlan("GROWTH", 499, 0) // yearly: 499 × 12 − 15% = ₹5,089.80
 	s, _ := gatewaySvc(repo)
 	ctx := context.Background()
 	order, err := s.CreatePaymentOrder(ctx, ownerActor(10), PaymentOrderRequest{PlanID: ptr(p.ID), BillingCycle: "SIX_MONTH"})

@@ -91,13 +91,13 @@ type BulkNotificationInput struct {
 }
 
 type UpdatePlanInput struct {
-	Name          string
-	Description   *string
-	SixMonthPrice float64
-	YearlyPrice   float64
-	MaxManagers   *int
-	IsActive      bool
-	Features      map[string]any
+	Name         string
+	Description  *string
+	MonthlyPrice float64
+	YearlyPrice  float64 // derived from MonthlyPrice by the service
+	MaxManagers  *int
+	IsActive     bool
+	Features     map[string]any
 }
 
 type CreateSubscriptionInput struct {
@@ -213,7 +213,7 @@ func (r *PostgresRepository) UpdatePlan(ctx context.Context, planID int64, input
 			plan_name = $1, description = $2, monthly_price = $3, yearly_price = $4,
 			max_managers = $5, is_active = $6, features = $7, updated_at = NOW()
 		WHERE plan_id = $8
-	`, input.Name, input.Description, input.SixMonthPrice, input.YearlyPrice,
+	`, input.Name, input.Description, input.MonthlyPrice, input.YearlyPrice,
 		maxManagers, input.IsActive, featuresJSON, planID)
 	if err != nil {
 		return nil, err
@@ -533,9 +533,9 @@ func scanPlan(row interface{ Scan(dest ...any) error }) (*SubscriptionPlan, erro
 	plan.PlanID = plan.ID
 	plan.PlanType = plan.Code
 	plan.Description = nullableString(description)
-	plan.MonthlyPrice = nullableFloat64(monthlyPrice)  // kept for cycleEndAndAmount
-	plan.SixMonthPrice = nullableFloat64(monthlyPrice) // API-facing field
+	plan.MonthlyPrice = nullableFloat64(monthlyPrice)
 	plan.YearlyPrice = nullableFloat64(yearlyPrice)
+	withPrices(&plan) // six-month and yearly fields follow the monthly price
 	plan.MaxManagers = nullableInt(maxManagers)
 	plan.MaxNurseries = nullableInt(maxNurseries)
 	if updatedAt.Valid {

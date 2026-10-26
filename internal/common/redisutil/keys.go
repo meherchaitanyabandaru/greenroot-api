@@ -5,7 +5,7 @@ const (
 	KeyOTP                = "otp:"
 	KeyBlocklist          = "blocklist:"
 	KeyWorkspace          = "workspace:"
-	KeySubscriptionPlans  = "cache:subscription_plans"
+	KeySubscriptionPlans  = "cache:subscription_plans:v2" // v2: monthly pricing; never read v1 lists
 	KeyAdViews            = "ad:views:"
 	KeyAdSaves            = "ad:saves:"
 	KeyNotifications      = "notifications"

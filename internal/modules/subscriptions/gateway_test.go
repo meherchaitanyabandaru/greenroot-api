@@ -98,8 +98,8 @@ func TestPaymentOrder_PricedByServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if order.Amount != 1_000_000 || order.KeyID != "rzp_test_key" || order.OrderID == "" {
-		t.Fatalf("got %+v, want ₹10000 = 1000000 paise", order)
+	if order.Amount != 1_020_000 || order.KeyID != "rzp_test_key" || order.OrderID == "" {
+		t.Fatalf("got %+v, want ₹1000 × 12 − 15%% = ₹10,200 = 1020000 paise", order)
 	}
 	// Someone else's subscription.
 	if _, err := s.CreatePaymentOrder(context.Background(), ownerActor(11), PaymentOrderRequest{SubscriptionID: ptr(int64(101)), BillingCycle: "YEARLY"}); !errors.Is(err, ErrForbidden) {
@@ -115,7 +115,7 @@ func TestPaymentOrder_BelowMinimum(t *testing.T) {
 	repo := newMock()
 	p := repo.seedPlan("STANDARD", 0.5, 0.5) // 50 paise
 	s, _ := gatewaySvc(repo)
-	if _, err := s.CreatePaymentOrder(context.Background(), ownerActor(10), PaymentOrderRequest{PlanID: ptr(p.ID), BillingCycle: "YEARLY"}); !errors.Is(err, ErrInvalidInput) {
+	if _, err := s.CreatePaymentOrder(context.Background(), ownerActor(10), PaymentOrderRequest{PlanID: ptr(p.ID), BillingCycle: "MONTHLY"}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("want invalid input under 100 paise, got %v", err)
 	}
 }

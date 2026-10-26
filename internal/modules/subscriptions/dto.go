@@ -144,13 +144,13 @@ type PaymentsResponse struct {
 }
 
 type UpdatePlanRequest struct {
-	Name          string         `json:"plan_name"`
-	Description   *string        `json:"description"`
-	SixMonthPrice float64        `json:"six_month_price"`
-	YearlyPrice   float64        `json:"yearly_price"`
-	MaxManagers   *int           `json:"max_managers"`
-	IsActive      bool           `json:"is_active"`
-	Features      map[string]any `json:"features"`
+	Name        string  `json:"plan_name"`
+	Description *string `json:"description"`
+	// MonthlyPrice is the base; quarterly, half-yearly and yearly follow from it.
+	MonthlyPrice float64        `json:"monthly_price"`
+	MaxManagers  *int           `json:"max_managers"`
+	IsActive     bool           `json:"is_active"`
+	Features     map[string]any `json:"features"`
 }
 
 type MessageResponse struct {

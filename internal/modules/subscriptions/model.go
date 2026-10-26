@@ -35,8 +35,9 @@ type SubscriptionPlan struct {
 	Features      map[string]any `json:"features,omitempty"`
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     *time.Time     `json:"updated_at,omitempty"`
-	// keep for backward compat with existing subscription create/renew logic
-	MonthlyPrice *float64 `json:"-"`
+	// MonthlyPrice is the base price; every cycle is priced from it.
+	MonthlyPrice *float64     `json:"monthly_price,omitempty"`
+	CyclePrices  []CyclePrice `json:"cycle_prices,omitempty"`
 }
 
 type UserSubscription struct {

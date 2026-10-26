@@ -27,7 +27,7 @@ func TestWebhook_PaidButRefusedBecomesAPaymentIssue(t *testing.T) {
 		t.Fatalf("want one payment issue, got %+v", repo.issues)
 	}
 	is := repo.issues[0]
-	if is.IssueType != IssuePaidNotApplied || is.ProviderPaymentID != "pay_paused" || *is.UserID != 10 || *is.Amount != 3999 || is.Reason == "" {
+	if is.IssueType != IssuePaidNotApplied || is.ProviderPaymentID != "pay_paused" || *is.UserID != 10 || *is.Amount != 5089.8 || is.Reason == "" {
 		t.Fatalf("issue: %+v", is)
 	}
 }

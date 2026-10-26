@@ -181,7 +181,10 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateSu
 	if err != nil {
 		return UserSubscription{}, ErrInvalidInput
 	}
-	cycle := strings.ToUpper(strings.TrimSpace(input.BillingCycle))
+	cycle, ok := canonicalCycle(input.BillingCycle)
+	if !ok {
+		return UserSubscription{}, ErrInvalidInput
+	}
 	endDate, amount, err := cycleEndAndAmount(startDate, cycle, *plan)
 	if err != nil {
 		return UserSubscription{}, ErrInvalidInput
@@ -314,7 +317,10 @@ func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID 
 	if current.EndDate != nil && current.EndDate.After(startDate) {
 		startDate = current.EndDate.AddDate(0, 0, 1)
 	}
-	cycle := strings.ToUpper(strings.TrimSpace(input.BillingCycle))
+	cycle, ok := canonicalCycle(input.BillingCycle)
+	if !ok {
+		return UserSubscription{}, ErrInvalidInput
+	}
 	endDate, amount, err := cycleEndAndAmount(startDate, cycle, *plan)
 	if err != nil {
 		return UserSubscription{}, ErrInvalidInput
@@ -416,7 +422,7 @@ func (s *Service) ListPayments(ctx context.Context, actor ActorContext, subscrip
 	return s.repository.ListPaymentsBySubscription(ctx, subscriptionID)
 }
 
-// CreateTrialForOwner auto-creates a 6-month TRIAL subscription when a nursery is approved.
+// CreateTrialForOwner auto-creates the free TRIAL subscription (TrialMonths) when a nursery is approved.
 // Silently succeeds if the owner already has an active subscription or if TRIAL plan is not seeded.
 func (s *Service) CreateTrialForOwner(ctx context.Context, ownerUserID int64, approvalDate time.Time) error {
 	if _, err := s.repository.FindActiveByUser(ctx, ownerUserID); err == nil {
@@ -560,19 +566,17 @@ func parseStartDate(value *string) (time.Time, error) {
 	return time.Parse(time.DateOnly, strings.TrimSpace(*value))
 }
 
+// cycleEndAndAmount: the period a cycle buys from startDate and its price.
+// cycle must be canonical (canonicalCycle).
 func cycleEndAndAmount(startDate time.Time, cycle string, plan SubscriptionPlan) (time.Time, float64, error) {
-	switch cycle {
-	case "SIX_MONTH", "SEMI_ANNUAL", "", "MONTHLY": // MONTHLY/empty kept for backward compat
-		amount := float64OrZero(plan.MonthlyPrice)
-		return startDate.AddDate(0, 6, -1), amount, nil
-	case "YEARLY", "ANNUAL":
-		amount := float64OrZero(plan.YearlyPrice)
-		return startDate.AddDate(1, 0, -1), amount, nil
-	case "TRIAL":
-		return startDate.AddDate(0, 6, -1), 0, nil
-	default:
+	if cycle == "TRIAL" {
+		return startDate.AddDate(0, TrialMonths, -1), 0, nil
+	}
+	t, ok := termFor(cycle)
+	if !ok {
 		return time.Time{}, 0, ErrInvalidInput
 	}
+	return startDate.AddDate(0, t.Months, -1), cyclePrice(float64OrZero(plan.MonthlyPrice), t), nil
 }
 
 // ── Promo service methods ─────────────────────────────────────────────────────
@@ -657,7 +661,10 @@ func (s *Service) ValidatePromo(ctx context.Context, req ValidatePromoRequest) P
 	if len(promo.ApplicablePlans) > 0 && !containsStr(promo.ApplicablePlans, strings.ToUpper(req.PlanCode)) {
 		return invalid("Promo not applicable to this plan")
 	}
-	cycle := strings.ToUpper(req.BillingCycle)
+	cycle, ok := canonicalCycle(req.BillingCycle)
+	if !ok || cycle == "TRIAL" {
+		return invalid("Unknown billing cycle")
+	}
 	if len(promo.ApplicableCycles) > 0 && !containsStr(promo.ApplicableCycles, cycle) {
 		return invalid("Promo not applicable to this billing cycle")
 	}
@@ -666,12 +673,7 @@ func (s *Service) ValidatePromo(ctx context.Context, req ValidatePromoRequest) P
 	if err != nil {
 		return invalid("Plan not found")
 	}
-	var basePrice float64
-	if cycle == "YEARLY" || cycle == "ANNUAL" {
-		basePrice = float64OrZero(plan.YearlyPrice)
-	} else {
-		basePrice = float64OrZero(plan.MonthlyPrice)
-	}
+	_, basePrice, _ := cycleEndAndAmount(time.Now(), cycle, *plan)
 	savings := computeDiscount(basePrice, promo.DiscountType, promo.DiscountValue, promo.MaxDiscountCap)
 	final := basePrice - savings
 	if final < 0 {
@@ -816,14 +818,18 @@ func (s *Service) UpdatePlan(ctx context.Context, actor ActorContext, planID int
 	if !actor.HasRole("ADMIN") {
 		return SubscriptionPlan{}, ErrForbidden
 	}
+	if input.MonthlyPrice < 0 {
+		return SubscriptionPlan{}, ErrInvalidInput
+	}
+	yearly, _ := termFor("YEARLY")
 	plan, err := s.repository.UpdatePlan(ctx, planID, UpdatePlanInput{
-		Name:          input.Name,
-		Description:   input.Description,
-		SixMonthPrice: input.SixMonthPrice,
-		YearlyPrice:   input.YearlyPrice,
-		MaxManagers:   input.MaxManagers,
-		IsActive:      input.IsActive,
-		Features:      input.Features,
+		Name:         input.Name,
+		Description:  input.Description,
+		MonthlyPrice: input.MonthlyPrice,
+		YearlyPrice:  cyclePrice(input.MonthlyPrice, yearly), // kept in step for reports
+		MaxManagers:  input.MaxManagers,
+		IsActive:     input.IsActive,
+		Features:     input.Features,
 	})
 	if err != nil {
 		return SubscriptionPlan{}, err

@@ -337,7 +337,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, nurseryI
 		map[string]any{"status": oldStatus},
 		map[string]any{"status": status})
 
-	// Auto-create 6-month TRIAL subscription when admin approves a nursery.
+	// Auto-create the free TRIAL subscription (one month) when admin approves a nursery.
 	if status == "APPROVED" && nursery.OwnerUserID != nil {
 		if s.trialSvc != nil {
 			_ = s.trialSvc.CreateTrialForOwner(ctx, *nursery.OwnerUserID, time.Now())
