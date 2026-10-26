@@ -80,16 +80,6 @@ func (m *mockRepo) ListByNursery(_ context.Context, nurseryID int64) ([]Invite, 
 	return result, nil
 }
 
-func (m *mockRepo) ListPendingForMobile(_ context.Context, mobile string) ([]Invite, error) {
-	out := []Invite{}
-	for _, inv := range m.invites {
-		if inv.TargetMobile != nil && *inv.TargetMobile == mobile && inv.Status == "PENDING" {
-			out = append(out, *inv)
-		}
-	}
-	return out, nil
-}
-
 func (m *mockRepo) ListAcceptedByUser(_ context.Context, userID int64) ([]Invite, error) {
 	var result []Invite
 	for _, inv := range m.invites {
@@ -342,24 +332,5 @@ func TestGetByUUID_NotFound(t *testing.T) {
 	_, err := svc(newMock()).GetByUUID(context.Background(), "missing")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
-	}
-}
-
-func TestMine_ListsOpenInvitesForTheCallersMobile(t *testing.T) {
-	repo := newMock()
-	s := svc(repo)
-	mobile := "9811200002"
-	if _, err := s.Create(context.Background(), ownerActor(10), CreateInviteRequest{
-		InviteType: "MANAGER_INVITE", TargetMobile: &mobile,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	mine, err := s.Mine(context.Background(), ActorContext{UserID: 20, Mobile: mobile, Roles: []string{"BUYER"}})
-	if err != nil || len(mine) != 1 || mine[0].InviteType != "MANAGER_INVITE" {
-		t.Fatalf("want the manager invite, got %+v %v", mine, err)
-	}
-	other, _ := s.Mine(context.Background(), ActorContext{UserID: 21, Mobile: "9811299999"})
-	if len(other) != 0 {
-		t.Fatalf("someone else's invite leaked: %+v", other)
 	}
 }

@@ -16,7 +16,6 @@ type Repository interface {
 	Cancel(ctx context.Context, uuid string, actorID int64) (*Invite, error)
 	ListByNursery(ctx context.Context, nurseryID int64) ([]Invite, error)
 	ListAcceptedByUser(ctx context.Context, userID int64) ([]Invite, error)
-	ListPendingForMobile(ctx context.Context, mobile string) ([]Invite, error)
 	UserOwnsNursery(ctx context.Context, userID int64) (bool, error)
 	IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	UserIsManager(ctx context.Context, userID int64) (bool, error)
@@ -115,28 +114,6 @@ func (r *PostgresRepository) ListAcceptedByUser(ctx context.Context, userID int6
 	rows, err := r.db.QueryContext(ctx,
 		baseSelect()+` WHERE i.accepted_by_user_id = $1 AND i.invite_type = 'CUSTOMER_INVITE' AND i.status = 'ACCEPTED' ORDER BY i.invite_id DESC`,
 		userID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	invites := make([]Invite, 0)
-	for rows.Next() {
-		invite, err := scanInviteRows(rows)
-		if err != nil {
-			return nil, err
-		}
-		invites = append(invites, invite)
-	}
-	return invites, rows.Err()
-}
-
-// ListPendingForMobile is every open, unexpired invite addressed to mobile.
-func (r *PostgresRepository) ListPendingForMobile(ctx context.Context, mobile string) ([]Invite, error) {
-	rows, err := r.db.QueryContext(ctx,
-		baseSelect()+` WHERE i.target_mobile = $1 AND i.status = 'PENDING'
-			AND (i.expires_at IS NULL OR i.expires_at > NOW()) ORDER BY i.invite_id DESC`,
-		mobile,
 	)
 	if err != nil {
 		return nil, err

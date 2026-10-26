@@ -31,7 +31,6 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, re
 func (m Module) RegisterRoutes(router chi.Router) {
 	router.Route("/invites", func(r chi.Router) {
 		r.Post("/", m.handler.Create)
-		r.Get("/mine", m.handler.Mine)
 		r.Get("/{uuid}", m.handler.GetByUUID)
 		r.Post("/{uuid}/accept", m.handler.Accept)
 		r.Post("/{uuid}/cancel", m.handler.Cancel)

@@ -89,15 +89,6 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateInvi
 	return *invite, nil
 }
 
-// Mine lists invites waiting for the caller: someone invited their mobile
-// number, possibly before they had an account, so the app can offer them.
-func (s *Service) Mine(ctx context.Context, actor ActorContext) ([]Invite, error) {
-	if actor.Mobile == "" {
-		return []Invite{}, nil
-	}
-	return s.repository.ListPendingForMobile(ctx, actor.Mobile)
-}
-
 func (s *Service) GetByUUID(ctx context.Context, uuid string) (Invite, error) {
 	invite, err := s.repository.FindByUUID(ctx, uuid)
 	if err != nil {
