@@ -221,9 +221,22 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQu
 		return Quotation{}, err
 	}
 	s.scheduleQuotationExpiry(ctx, q)
+	// Assigned while creating: the manager is told, as with Assign Manager.
+	if input.AssignedManagerUserID != nil && *input.AssignedManagerUserID > 0 {
+		s.notifyAssigned(ctx, *input.AssignedManagerUserID, q)
+	}
 	s.audit(ctx, actor, auditlog.EntityQuotation, q.ID, actionInsert, input)
 	s.bumpQuotationsSearchCache(ctx, actor.UserID)
 	return enrichQuotation(actor, *q), nil
+}
+
+// notifyAssigned tells a manager a quotation is now theirs to handle.
+func (s *Service) notifyAssigned(ctx context.Context, managerID int64, q *Quotation) {
+	_ = s.repository.CreateNotification(ctx, managerID,
+		"QUOTATION_ASSIGNED",
+		"Quotation Assigned to You",
+		fmt.Sprintf("You have been assigned to quotation %s.", q.QuotationCode),
+		notifyqueue.Link("quotation", q.ID))
 }
 
 // bumpQuotationsSearchCache invalidates the acting user's previously-cached
@@ -516,11 +529,7 @@ func (s *Service) AssignManager(ctx context.Context, actor ActorContext, quotati
 		return Quotation{}, err
 	}
 	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, actionUpdate, req)
-	_ = s.repository.CreateNotification(ctx, req.ManagerUserID,
-		"QUOTATION_ASSIGNED",
-		"Quotation Assigned to You",
-		fmt.Sprintf("You have been assigned to quotation %s.", updated.QuotationCode),
-		notifyqueue.Link("quotation", quotationID))
+	s.notifyAssigned(ctx, req.ManagerUserID, updated)
 	return enrichQuotation(actor, *updated), nil
 }
 

@@ -625,6 +625,14 @@ def journey_quotation():
     expect("owner cannot quote for another nursery", "POST", "/quotations", owner.token, quote(nursery_id=rival.nursery_id), status=403)
     expect("manager cannot pre-assign", "POST", "/quotations", manager.token, quote(assigned_manager_user_id=manager.id), status=403)
     expect("pre-assign to a non-member is refused", "POST", "/quotations", owner.token, quote(assigned_manager_user_id=buyer.id), status=(400, 403, 404))
+    pre = expect("owner creates a quotation already assigned to the manager", "POST", "/quotations", owner.token, quote(assigned_manager_user_id=manager.id), status=201)["quotation"]
+    titles = []
+    for _ in range(20):
+        titles = [n.get("message", "") for n in call("GET", "/notifications", manager.token)[1].get("notifications", [])]
+        if any(pre["quotation_code"] in t for t in titles):
+            break
+        time.sleep(0.25)
+    check("…the manager is notified, as with Assign Manager", any(pre["quotation_code"] in t for t in titles), titles)
     expect("a line total that is not quantity × price is refused", "POST", "/quotations", owner.token,
            quote(items=[{"plant_id": mango, "quantity": 3, "unit_price": 100, "total_price": 1}]), status=400)
 
