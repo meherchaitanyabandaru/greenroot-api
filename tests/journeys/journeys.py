@@ -1004,6 +1004,13 @@ def journey_dispatch():
     deliver("a rival owner cannot deliver", rival, {"code": code4}, 403)
     out = deliver("driver delivers with the customer's code", driver, {"code": code4})["dispatch"]
     check("…DELIVERED, confirmed by code", out["dispatch_status"] == "DELIVERED" and out.get("delivery_confirmation") == "CUSTOMER_CODE", out)
+    titles = []
+    for _ in range(20):
+        titles = [n.get("message", "") for n in call("GET", "/notifications", owner.token)[1].get("notifications", [])]
+        if any(out["dispatch_code"] in t and "delivered" in t for t in titles):
+            break
+        time.sleep(0.25)
+    check("…the owner is told it was delivered", any(out["dispatch_code"] in t and "delivered" in t for t in titles), titles)
     deliver("delivering twice is refused", owner, {"code": code4}, 422)
     bd = expect("buyer opens the delivered trip", "GET", f"/dispatches/{did}", buyer.token)["dispatch"]
     check("…the code is gone; the customer can report a problem", "delivery_code" not in bd and bd["capabilities"]["can_report_issue"], bd)

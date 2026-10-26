@@ -880,6 +880,11 @@ func (s *Service) markDelivered(ctx context.Context, actor ActorContext, current
 		updated = refreshed
 	}
 	s.removeLiveDriverLocation(ctx, *updated)
+	if updated.OwnerUserIDSnapshot != nil && *updated.OwnerUserIDSnapshot != actor.UserID {
+		s.enqueueNotification(ctx, *updated.OwnerUserIDSnapshot, notifyqueue.EventOrderDelivered,
+			"Order delivered", fmt.Sprintf("%s for order %s was delivered.", updated.DispatchCode, stringOrEmpty(updated.OrderNumber)),
+			notifyqueue.Link("dispatch", updated.ID))
+	}
 	return *updated, nil
 }
 
