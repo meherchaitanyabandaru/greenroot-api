@@ -103,6 +103,16 @@ func (s *Service) MarkAllRead(ctx context.Context, actor ActorContext) error {
 	return nil
 }
 
+// ClearRead deletes the caller's own read notifications (admins too: only theirs).
+func (s *Service) ClearRead(ctx context.Context, actor ActorContext) (int64, error) {
+	n, err := s.repository.DeleteRead(ctx, actor.UserID)
+	if err != nil {
+		return 0, err
+	}
+	s.audit(ctx, actor, "notifications", actor.UserID, actionDelete, map[string]any{"cleared_read": n})
+	return n, nil
+}
+
 func (s *Service) Delete(ctx context.Context, actor ActorContext, id int64) error {
 	current, err := s.repository.FindByID(ctx, id)
 	if err != nil {

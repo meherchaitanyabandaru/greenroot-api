@@ -1729,6 +1729,15 @@ paths:
         - BearerAuth: []
       responses:
         "200": { description: Notifications marked read }
+  /api/v1/notifications/read:
+    delete:
+      tags: [Notifications]
+      summary: Clear read notifications
+      description: "Deletes the caller's own read notifications (admins too: only their own). Unread ones are never deleted. Returns {deleted: n}."
+      security:
+        - BearerAuth: []
+      responses:
+        "200": { description: "Read notifications cleared; body {deleted: n}" }
   /api/v1/notifications/devices:
     get:
       tags: [Notifications]

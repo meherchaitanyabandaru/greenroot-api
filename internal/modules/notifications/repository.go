@@ -21,6 +21,7 @@ type Repository interface {
 	MarkRead(ctx context.Context, id int64) (*Notification, error)
 	MarkAllRead(ctx context.Context, userID int64) error
 	CountUnread(ctx context.Context, userID int64) (int64, error)
+	DeleteRead(ctx context.Context, userID int64) (int64, error)
 	Delete(ctx context.Context, id int64) error
 	ListDevices(ctx context.Context, userID int64) ([]Device, error)
 	UpsertDevice(ctx context.Context, userID int64, input DeviceRequest) (*Device, error)
@@ -119,6 +120,15 @@ func (r *PostgresRepository) CountUnread(ctx context.Context, userID int64) (int
 	var n int64
 	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM public.notifications WHERE user_id = $1 AND read_at IS NULL`, userID).Scan(&n)
 	return n, err
+}
+
+// DeleteRead removes one user's read notifications; unread ones are never touched.
+func (r *PostgresRepository) DeleteRead(ctx context.Context, userID int64) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM public.notifications WHERE user_id = $1 AND read_at IS NOT NULL`, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (r *PostgresRepository) Delete(ctx context.Context, id int64) error {

@@ -1950,6 +1950,20 @@ def journey_notifications():
     expect("…nor mark it read", "PUT", f"/notifications/{ids[0]}/read", other.token, {}, status=(403, 404))
     expect("…nor delete it", "DELETE", f"/notifications/{ids[0]}", other.token, status=(403, 404))
 
+    # Clear read: only the caller's read ones; unread and other people's stay
+    expect("admin sends the other user one", "POST", "/notifications", boss.token, {"user_id": other.id, "title": "theirs"}, status=201)
+    out = expect("the other user clears their read ones", "DELETE", "/notifications/read", other.token)
+    check("…none of theirs is read, and none of the inbox user's is touched", out.get("deleted") == 0, out)
+    out = expect("clear read", "DELETE", "/notifications/read", u.token)
+    check("…the 20 read ones deleted", out.get("deleted") == 20, out)
+    out = expect("what is left", "GET", "/notifications?per_page=100", u.token)
+    check("…exactly the 5 unread remain", len(out["notifications"]) == 5 and all(not n.get("read_at") for n in out["notifications"]) and out.get("unread_count") == 5,
+          [n.get("id") for n in out["notifications"]])
+    out = expect("the other user still has theirs", "GET", "/notifications", other.token)
+    check("…unread, untouched", out.get("unread_count") == 1, out.get("unread_count"))
+    out = expect("clearing again", "DELETE", "/notifications/read", u.token)
+    check("…deletes nothing (unread are kept)", out.get("deleted") == 0, out)
+
 
 JOURNEYS = [
     ("auth", journey_auth),

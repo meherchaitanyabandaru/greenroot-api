@@ -49,6 +49,10 @@ type NotificationsResponse struct {
 	UnreadCount int64 `json:"unread_count"`
 }
 
+type ClearReadResponse struct {
+	Deleted int64 `json:"deleted"`
+}
+
 type NotificationResponse struct {
 	Notification Notification `json:"notification"`
 }

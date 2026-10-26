@@ -25,6 +25,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Get("/", m.handler.List)
 		r.Post("/", m.handler.Create)
 		r.Put("/read-all", m.handler.MarkAllRead)
+		r.Delete("/read", m.handler.ClearRead) // the caller's read ones only
 		r.Get("/devices", m.handler.ListDevices)
 		r.Post("/devices", m.handler.UpsertDevice)
 		r.Delete("/devices/{id}", m.handler.DeleteDevice)

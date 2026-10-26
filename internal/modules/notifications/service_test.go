@@ -70,6 +70,17 @@ func (m *mockRepo) MarkRead(_ context.Context, id int64) (*Notification, error) 
 
 func (m *mockRepo) MarkAllRead(_ context.Context, userID int64) error { return nil }
 
+func (m *mockRepo) DeleteRead(_ context.Context, userID int64) (int64, error) {
+	var c int64
+	for id, n := range m.notifications {
+		if n.UserID != nil && *n.UserID == userID && n.ReadAt != nil {
+			delete(m.notifications, id)
+			c++
+		}
+	}
+	return c, nil
+}
+
 func (m *mockRepo) CountUnread(_ context.Context, userID int64) (int64, error) {
 	var c int64
 	for _, n := range m.notifications {
@@ -216,6 +227,29 @@ func TestList_UnreadCountIsTheCallersOwnWhateverThePage(t *testing.T) {
 	}
 	if _, _, unread, _ = svc(repo).List(context.Background(), adminActor(20), ListNotificationsRequest{}); unread != 1 {
 		t.Errorf("an admin listing everyone still gets their own count: want 1, got %d", unread)
+	}
+}
+
+func TestClearRead_OnlyTheCallersReadOnes(t *testing.T) {
+	repo := newMock()
+	read := time.Now()
+	repo.seedNotification(1, ptr(int64(10)), "READ").ReadAt = &read
+	repo.seedNotification(2, ptr(int64(10)), "READ").ReadAt = &read
+	repo.seedNotification(3, ptr(int64(10)), "SENT")                // unread: stays
+	repo.seedNotification(4, ptr(int64(20)), "READ").ReadAt = &read // someone else's: stays
+	repo.seedNotification(5, nil, "READ").ReadAt = &read            // broadcast: stays
+
+	n, err := svc(repo).ClearRead(context.Background(), buyerActor(10))
+	if err != nil || n != 2 {
+		t.Fatalf("want 2 cleared, got %d (%v)", n, err)
+	}
+	for _, id := range []int64{3, 4, 5} {
+		if _, ok := repo.notifications[id]; !ok {
+			t.Errorf("notification %d must not be deleted", id)
+		}
+	}
+	if n, _ := svc(repo).ClearRead(context.Background(), adminActor(30)); n != 0 {
+		t.Errorf("an admin clears only their own: got %d", n)
 	}
 }
 

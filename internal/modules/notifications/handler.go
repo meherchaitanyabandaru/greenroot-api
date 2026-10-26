@@ -96,6 +96,20 @@ func (h *Handler) MarkAllRead(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, MessageResponse{Message: "Notifications marked as read"})
 }
 
+// ClearRead is DELETE /notifications/read: the caller's read notifications.
+func (h *Handler) ClearRead(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	n, err := h.service.ClearRead(r.Context(), actor)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, ClearReadResponse{Deleted: n})
+}
+
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
 	if !ok {
