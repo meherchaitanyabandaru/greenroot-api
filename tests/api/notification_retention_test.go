@@ -21,7 +21,7 @@ func TestNotificationRetention_OnlyOldReadOnesGo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	t.Cleanup(func() { db.Close() }) // after the row cleanups below (they run first)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

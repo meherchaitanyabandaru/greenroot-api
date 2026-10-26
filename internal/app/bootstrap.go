@@ -19,6 +19,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/database/migrations"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/market"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/notifications"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/subscriptions"
 	platformemail "github.com/meherchaitanyabandaru/greenroot-api/platform/email"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/fcm"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
@@ -252,6 +253,7 @@ func connectRedis(ctx context.Context, cfg config.RedisConfig, log *slog.Logger)
 //   - every 15 min: clean up expired revocation entries (tiny in-memory map)
 //   - daily at 00:05: mark subscriptions whose end_date has passed as EXPIRED
 //   - daily: delete notifications read more than 90 days ago (never unread ones)
+//   - daily: remind owners whose free trial ends within 2 days to choose a plan
 func runCronJobs(ctx context.Context, deps Dependencies) {
 	cleanupTicker := time.NewTicker(15 * time.Minute)
 	defer cleanupTicker.Stop()
@@ -259,6 +261,7 @@ func runCronJobs(ctx context.Context, deps Dependencies) {
 	// Fire expiry job once at startup (catches any missed midnight), then daily.
 	expireSubscriptions(ctx, deps)
 	purgeOldNotifications(ctx, deps)
+	remindEndingTrials(ctx, deps)
 	expireTicker := time.NewTicker(24 * time.Hour)
 	defer expireTicker.Stop()
 
@@ -271,6 +274,7 @@ func runCronJobs(ctx context.Context, deps Dependencies) {
 		case <-expireTicker.C:
 			expireSubscriptions(ctx, deps)
 			purgeOldNotifications(ctx, deps)
+			remindEndingTrials(ctx, deps)
 		}
 	}
 }
@@ -302,6 +306,17 @@ func purgeOldNotifications(ctx context.Context, deps Dependencies) {
 	}
 	if n > 0 {
 		slog.Info("notification cleanup job: deleted old read notifications", "count", n)
+	}
+}
+
+func remindEndingTrials(ctx context.Context, deps Dependencies) {
+	n, err := subscriptions.RemindEndingTrials(ctx, deps.DB, deps.Redis, time.Now())
+	if err != nil {
+		slog.Error("trial reminder job failed", "error", err)
+		return
+	}
+	if n > 0 {
+		slog.Info("trial reminder job: owners told their trial is ending", "count", n)
 	}
 }
 
