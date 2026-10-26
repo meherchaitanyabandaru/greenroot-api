@@ -454,7 +454,12 @@ def team(boss):
     """Approved owner + manager + buyer + approved driver + two plants listed as top items."""
     owner = approved_owner(boss)
     manager = User(first="Manager", activity="MANAGER")
-    expect("manager accepts invite", "POST", f"/invites/{invite(owner, 'MANAGER_INVITE', manager)}/accept", manager.token, {})
+    uuid = invite(owner, 'MANAGER_INVITE', manager)
+    mine = expect("the invited manager sees the invite waiting for their number", "GET", "/invites/mine", manager.token)
+    check("…listed", uuid in [i.get("invite_uuid") for i in mine.get("invites", [])], mine)
+    expect("manager accepts invite", "POST", f"/invites/{uuid}/accept", manager.token, {})
+    mine = expect("…and it is gone once accepted", "GET", "/invites/mine", manager.token)
+    check("…not listed", uuid not in [i.get("invite_uuid") for i in mine.get("invites", [])], mine)
     manager.refresh()
     upload_selfie("manager takes a profile selfie", manager)
     buyer = User(first="Buyer", activity="CUSTOMER")

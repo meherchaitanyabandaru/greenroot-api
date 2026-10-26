@@ -2793,6 +2793,25 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+  /api/v1/invites/mine:
+    get:
+      tags:
+        - Invites
+      summary: Open, unexpired invites addressed to the caller's mobile
+      operationId: getMyInvites
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+          description: OK
+        "401":
+          $ref: '#/components/responses/Error'
+        "500":
+          $ref: '#/components/responses/Error'
   /api/v1/invites/{uuid}:
     get:
       tags:

@@ -37,6 +37,20 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusCreated, InviteResponse{Invite: invite})
 }
 
+// Mine godoc: GET /invites/mine — open invites addressed to the caller's mobile.
+func (h *Handler) Mine(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	invites, err := h.service.Mine(r.Context(), actor)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, map[string]any{"invites": invites})
+}
+
 func (h *Handler) GetByUUID(w http.ResponseWriter, r *http.Request) {
 	uuid := chi.URLParam(r, "uuid")
 	invite, err := h.service.GetByUUID(r.Context(), uuid)
