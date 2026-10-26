@@ -125,6 +125,15 @@ func TestBuildCapabilities(t *testing.T) {
 		}
 	})
 
+	t.Run("trip_qr_shared_only_until_a_driver_accepts", func(t *testing.T) {
+		if !BuildCapabilities(owner, "PENDING", false).CanShareCode {
+			t.Error("owner should share the trip QR at PENDING")
+		}
+		if BuildCapabilities(owner, "ACCEPTED", false).CanShareCode {
+			t.Error("the trip QR is used up once a driver accepts")
+		}
+	})
+
 	t.Run("operator_in_transit", func(t *testing.T) {
 		caps := BuildCapabilities(owner, "IN_TRANSIT", false)
 		if !caps.CanMarkDelivered {
