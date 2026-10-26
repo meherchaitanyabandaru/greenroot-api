@@ -1792,6 +1792,92 @@ def journey_storage():
     upload_selfie("a web page posing as a profile photo is refused", u, data=b"<html><script>alert(1)</script></html>", want=400)
 
 
+def journey_reports():
+    """Reports: each role sees only its slice; summaries (sales vs open vs paid, cancelled left out); paging; CSV masked and formula-safe; validation."""
+    boss = admin()
+    owner, manager, buyer, driver, plants = team(boss)
+    rival = approved_owner(boss, "Rival")
+    nid = owner.nursery_id
+    today = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 5.5 * 3600))  # India day
+    rng = f"from={today}&to={today}"
+
+    def order(name, qty):
+        return expect("owner creates an order", "POST", "/orders", owner.token,
+                      {"seller_nursery_id": nid, "buyer_mobile": buyer.mobile, "buyer_name": name,
+                       "items": [{"plant_id": plants[0], "quantity": qty, "unit_price": 100, "total_price": qty * 100}]}, status=201)["order"]
+
+    o1 = order("Ravi", 10)                     # 1000, paid in full
+    o2 = order("Ravi", 5)                      # 500, cancelled
+    o3 = order("Ravi", 3)                      # 300, manager's, payment refunded
+    expect("cancel one order", "POST", f"/orders/{o2['id']}/cancel", owner.token, {"reason": "journey"})
+    expect("assign one to the manager", "POST", f"/orders/{o3['id']}/assign-manager", owner.token, {"manager_user_id": manager.id})
+    pay = lambda o, amt: expect("record a payment", "POST", "/payments/manual", owner.token,
+                                {"payment_for": "ORDER", "order_id": o["id"], "amount": amt, "payment_method": "UPI", "payment_status": "SUCCESS"}, status=201)["payment"]
+    pay(o1, 1000)
+    refunded = pay(o3, 300)
+    expect("refund it", "PUT", f"/payments/{refunded['id']}/status", owner.token, {"payment_status": "REFUNDED"})
+    quote = {"quotation_type": "CUSTOMER", "nursery_id": nid, "recipient_name": '=HYPERLINK("http://x")', "recipient_mobile": buyer.mobile,
+             "items": [{"plant_id": plants[0], "quantity": 2, "unit_price": 100, "total_price": 200}]}
+    q = expect("a quotation", "POST", "/quotations", owner.token, quote, status=201)["quotation"]
+    expect("…sent", "POST", f"/quotations/{q['id']}/send", owner.token, {})
+    expect("a draft (never sent)", "POST", "/quotations", owner.token, quote, status=201)
+
+    out = expect("owner: orders report", "GET", f"/reports/orders?{rng}", owner.token)
+    s = out.get("summary", {})
+    check("…3 orders, 1 cancelled, none delivered", s.get("total") == 3 and s.get("cancelled") == 1 and s.get("delivered", 0) == 0, s)
+    check("…sales counts delivered orders only (0); open value leaves the cancelled one out (1300)",
+          s.get("sales", 0) == 0 and s.get("open_value") == 1300, s)
+    check("…paid is successful payments only, the refund is not money in (1000)", s.get("paid") == 1000, s)
+    row = next((r for r in out.get("rows", []) if r["reference"] == o3["order_code"]), {})
+    check("…rows show the customer (account name) with the mobile masked", row.get("party") == "Buyer Tester" and row.get("mobile") == buyer.mobile[:2] + "xxxxx" + buyer.mobile[-3:], row)
+    page = expect("…page 2 of 2 (per_page=2)", "GET", f"/reports/orders?{rng}&per_page=2&page=2", owner.token)
+    check("…one row, 2 pages", len(page.get("rows", [])) == 1 and page.get("pagination", {}).get("total_pages") == 2, page.get("pagination"))
+
+    out = expect("owner: quotations report", "GET", f"/reports/quotations?{rng}", owner.token)
+    check("…the sent quotation is pending; the draft is not in the report", out["summary"].get("total") == 1 and out["summary"].get("pending") == 1, out["summary"])
+    out = expect("owner: deliveries report", "GET", f"/reports/deliveries?{rng}", owner.token)
+    check("…no trips yet", out["summary"].get("total") == 0 and out.get("rows") == [], out)
+
+    out = expect("manager: orders report", "GET", f"/reports/orders?{rng}", manager.token)
+    check("…only the order assigned to them", [r["reference"] for r in out.get("rows", [])] == [o3["order_code"]], out.get("rows"))
+    out = expect("customer: orders report", "GET", f"/reports/orders?{rng}", buyer.token)
+    check("…their 3 purchases, named by nursery, no phone column", out["summary"].get("total") == 3 and all(r.get("party", "").startswith("Journey Nursery") and "mobile" not in r for r in out["rows"]), out.get("rows"))
+    out = expect("customer: quotations report", "GET", f"/reports/quotations?{rng}", buyer.token)
+    check("…the quotation sent to them", out["summary"].get("total") == 1, out["summary"])
+    expect("driver: no orders report", "GET", f"/reports/orders?{rng}", driver.token, status=403)
+    expect("driver: no quotations report", "GET", f"/reports/quotations?{rng}", driver.token, status=403)
+    expect("driver: their trips report", "GET", f"/reports/deliveries?{rng}", driver.token)
+    out = expect("rival owner: orders report", "GET", f"/reports/orders?{rng}", rival.token)
+    check("…sees none of another nursery's orders", out["summary"].get("total") == 0, out["summary"])
+    out = expect("rival cannot widen with nursery_id", "GET", f"/reports/orders?{rng}&nursery_id={nid}", rival.token)
+    check("…still none", out["summary"].get("total") == 0, out["summary"])
+    out = expect("admin: one nursery", "GET", f"/reports/orders?{rng}&nursery_id={nid}", boss.token)
+    check("…all 3", out["summary"].get("total") == 3, out["summary"])
+    out = expect("an empty range", "GET", "/reports/orders?from=2020-01-01&to=2020-01-31", owner.token)
+    check("…zero and an empty list", out["summary"].get("total") == 0 and out.get("rows") == [], out)
+
+    expect("unknown report type", "GET", f"/reports/payments?{rng}", owner.token, status=400)
+    expect("dates backwards", "GET", "/reports/orders?from=2026-02-01&to=2026-01-01", owner.token, status=400)
+    expect("more than 3 years", "GET", "/reports/orders?from=2020-01-01&to=2023-01-02", owner.token, status=400)
+    expect("dates missing", "GET", "/reports/orders", owner.token, status=400)
+    expect("xlsx is not a format", "GET", f"/reports/orders?{rng}&format=xlsx", owner.token, status=400)
+    expect("signed out", "GET", f"/reports/orders?{rng}", None, status=401)
+
+    def csv_of(kind):
+        req = urllib.request.Request(API + f"/reports/{kind}?{rng}&format=csv")
+        req.add_header("Authorization", "Bearer " + owner.token)
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.headers.get("Content-Type", ""), r.headers.get("Content-Disposition", ""), r.read().decode()
+
+    ctype, disp, body = csv_of("orders")
+    lines = body.strip().splitlines()
+    check("CSV: text/csv attachment named by type and dates", ctype.startswith("text/csv") and f'greenroot-orders-{today}-to-{today}.csv' in disp, [ctype, disp])
+    check("…header and 3 rows", lines[0] == "Reference,Date,Customer,Mobile,Status,Amount (INR),Paid (INR)" and len(lines) == 4, lines)
+    check("…phone numbers masked, never in full", buyer.mobile not in body and buyer.mobile[-3:] in body, body[:300])
+    _, _, body = csv_of("quotations")
+    check("…a formula in a customer name is neutralised (quotations CSV)", "'=HYPERLINK" in body and ',=HYPERLINK' not in body, body[:300])
+
+
 JOURNEYS = [
     ("auth", journey_auth),
     ("accounts", journey_accounts),
@@ -1810,6 +1896,7 @@ JOURNEYS = [
     ("redis", journey_redis),
     ("roles", journey_roles),
     ("access", journey_access),
+    ("reports", journey_reports),
 ]
 
 
