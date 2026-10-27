@@ -238,6 +238,12 @@ func (s *Service) claimsChanged(ctx context.Context, ownerUserID int64) {
 	}
 	// Longer than any access token, so every pre-change token is caught.
 	redisutil.MarkNurseryClaimsStale(ctx, s.redis, slog.Default(), nurseryID, time.Hour)
+	// Workspaces carry the plan's state for managers: drop their cached copies.
+	people := []int64{ownerUserID}
+	if ids, err := s.repository.NurseryManagerIDs(ctx, nurseryID); err == nil {
+		people = append(people, ids...)
+	}
+	redisutil.InvalidateWorkspaces(ctx, s.redis, slog.Default(), people...)
 }
 
 func (s *Service) Me(ctx context.Context, actor ActorContext) ([]UserSubscription, Pagination, error) {

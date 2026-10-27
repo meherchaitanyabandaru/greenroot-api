@@ -28,6 +28,7 @@ type Repository interface {
 	FindByID(ctx context.Context, subscriptionID int64) (*UserSubscription, error)
 	FindActiveByUser(ctx context.Context, userID int64) (*UserSubscription, error)
 	OwnedNurseryID(ctx context.Context, ownerUserID int64) (int64, error)
+	NurseryManagerIDs(ctx context.Context, nurseryID int64) ([]int64, error)
 	Create(ctx context.Context, input CreateSubscriptionInput) (*UserSubscription, error)
 	UpdateStatus(ctx context.Context, subscriptionID int64, status string) (*UserSubscription, error)
 	Renew(ctx context.Context, subscriptionID int64, input RenewSubscriptionInput) (*UserSubscription, error)
@@ -256,6 +257,24 @@ func (r *PostgresRepository) FindByID(ctx context.Context, subscriptionID int64)
 		return nil, ErrNotFound
 	}
 	return &subscription, err
+}
+
+// NurseryManagerIDs returns the users who actively manage nurseryID.
+func (r *PostgresRepository) NurseryManagerIDs(ctx context.Context, nurseryID int64) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT user_id FROM public.nursery_users WHERE nursery_id = $1 AND status = 'ACTIVE'`, nurseryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // OwnedNurseryID returns the nursery owned by ownerUserID, or 0 if none.

@@ -452,8 +452,15 @@ func (r *PostgresRepository) GetWorkspaces(ctx context.Context, userID int64) ([
 	}
 
 	// Nurseries where this user is an active manager — V1 tracks via nursery_users.status
+	// sub_active: the owner has an ACTIVE subscription covering today (one
+	// paid ahead counts from its start: the earlier period still runs).
 	const managerQuery = `
-		SELECT n.nursery_id, n.nursery_name, nu.role
+		SELECT n.nursery_id, n.nursery_name, nu.role,
+			EXISTS (
+				SELECT 1 FROM public.user_subscriptions us
+				WHERE us.user_id = n.owner_user_id AND us.status = 'ACTIVE'
+				  AND (us.end_date IS NULL OR us.end_date >= (now() AT TIME ZONE 'Asia/Kolkata')::date)
+			) AS sub_active
 		FROM public.nursery_users nu
 		JOIN public.nurseries n ON n.nursery_id = nu.nursery_id
 		WHERE nu.user_id = $1
@@ -469,14 +476,16 @@ func (r *PostgresRepository) GetWorkspaces(ctx context.Context, userID int64) ([
 	for rows.Next() {
 		var nid int64
 		var nname, role string
-		if err := rows.Scan(&nid, &nname, &role); err != nil {
+		var subActive bool
+		if err := rows.Scan(&nid, &nname, &role, &subActive); err != nil {
 			return nil, err
 		}
 		workspaces = append(workspaces, Workspace{
-			Type:        "MANAGER_NURSERY",
-			Role:        role,
-			NurseryID:   &nid,
-			NurseryName: &nname,
+			Type:               "MANAGER_NURSERY",
+			Role:               role,
+			NurseryID:          &nid,
+			NurseryName:        &nname,
+			SubscriptionActive: &subActive,
 		})
 	}
 	if err := rows.Err(); err != nil {

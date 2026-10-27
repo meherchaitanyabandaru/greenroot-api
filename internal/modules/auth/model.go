@@ -61,6 +61,9 @@ type Workspace struct {
 	NurseryID     *int64  `json:"nursery_id,omitempty"`
 	NurseryName   *string `json:"nursery_name,omitempty"`
 	NurseryStatus *string `json:"nursery_status,omitempty"` // only for OWNED_NURSERY
+	// SubscriptionActive: for MANAGER_NURSERY, whether the owner's plan lets the
+	// nursery work today (false when paused, cancelled, expired or none).
+	SubscriptionActive *bool `json:"subscription_active,omitempty"`
 }
 
 // OwnerDashboard aggregates all key metrics for a nursery owner.

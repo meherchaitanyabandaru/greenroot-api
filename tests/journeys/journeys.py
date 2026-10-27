@@ -1722,9 +1722,13 @@ def journey_access():
     owner.refresh(); mgr.refresh()
     expect("paused: owner can't create", "POST", "/quotations", owner.token, q, status=402)
     expect("paused: manager can't create", "POST", "/quotations", mgr.token, q, status=402)
+    ws = [w for w in call("GET", "/me/workspaces", mgr.token)[1] if w.get("type") == "MANAGER_NURSERY"]
+    check("…the manager's workspace says the nursery's plan is not active", ws and ws[0].get("subscription_active") is False, ws)
     expect("owner can't pay past an admin pause", "POST", f"/subscriptions/{sub['id']}/renew", owner.token,
            {"plan_id": plan_ids.get("GROWTH"), "billing_cycle": "YEARLY", "payment_method": "UPI"}, status=409)
     expect("admin resumes", "PUT", f"/subscriptions/{sub['id']}/status", boss.token, {"subscription_status": "ACTIVE"})
+    ws = [w for w in call("GET", "/me/workspaces", mgr.token)[1] if w.get("type") == "MANAGER_NURSERY"]
+    check("…active again for the manager", ws and ws[0].get("subscription_active") is True, ws)
     time.sleep(1.1)
     expect("owner renewing the free trial is refused", "POST", f"/subscriptions/{sub['id']}/renew", owner.refresh() and owner.token,
            {"billing_cycle": "SIX_MONTH", "payment_method": "UPI"}, status=400)

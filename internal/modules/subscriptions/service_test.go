@@ -148,6 +148,8 @@ func (m *mockRepo) FindByID(_ context.Context, id int64) (*UserSubscription, err
 	return s, nil
 }
 
+func (m *mockRepo) NurseryManagerIDs(context.Context, int64) ([]int64, error) { return nil, nil }
+
 func (m *mockRepo) OwnedNurseryID(context.Context, int64) (int64, error) { return 0, nil }
 
 func (m *mockRepo) FindActiveByUser(_ context.Context, userID int64) (*UserSubscription, error) {
