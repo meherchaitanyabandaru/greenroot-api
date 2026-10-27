@@ -28,6 +28,7 @@ type Payment struct {
 	PayerUserID          *int64     `json:"payer_user_id,omitempty"`
 	PayerName            *string    `json:"payer_name,omitempty"`
 	Amount               float64    `json:"amount"`
+	GSTAmount            *float64   `json:"gst_amount,omitempty"` // subscriptions: GST inside amount
 	PaymentMethod        *string    `json:"payment_method,omitempty"`
 	TransactionReference *string    `json:"transaction_reference,omitempty"`
 	Status               string     `json:"payment_status"`
