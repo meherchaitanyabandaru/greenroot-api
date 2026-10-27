@@ -149,6 +149,7 @@ See `BUSINESS_RULES.md` for the full rule set. Key enforcements:
 - **Order state machine.** `PENDING → CONFIRMED → LOADING → LOADED/PARTIALLY_FULFILLED → COMPLETED`. Cancel goes via `POST /orders/:id/cancel` (not a status update). Invalid direct transitions are blocked.
 - **Order item editing window.** Items (add/edit/remove) allowed in `PENDING`, `CONFIRMED`, `LOADING`. Locked at `LOADED`, `PARTIALLY_FULFILLED`, `COMPLETED`.
 - **Loaded quantities.** `PUT /orders/:id/items/:itemId/loaded-quantity` sets actual loaded amount during `LOADING`. If any item is under-loaded at `complete-loading`, order moves to `PARTIALLY_FULFILLED` and invoice is recalculated.
+- **Loading declaration.** `complete-loading` needs `{"declared_no_prohibited_items": true}` (else 400 `loading_declaration_required`); recorded in the audit log. Up to 3 loading photos are attachments with `entity_type=ORDER_LOADING`.
 - **Cancel guards.** `LOADED` and `PARTIALLY_FULFILLED` orders cannot be cancelled. Buyers can cancel their own `PENDING` orders without management access.
 - **Delete guards.** Only `PENDING` orders can be hard-deleted.
 - **Nursery registration.** Any authenticated user (except drivers) may register a nursery. Drivers get `403`.

@@ -39,6 +39,8 @@ parser.add_argument("--only", default="", help="comma-separated journey names")
 args = parser.parse_args()
 API = args.api.rstrip("/")
 OTP = "123456"
+# Sellers declare the vehicle carries no prohibited items when loading is done.
+LOADED_OK = {"declared_no_prohibited_items": True}
 ADMIN_MOBILE = "9000000000"
 
 results = {"pass": 0, "fail": 0, "failures": []}
@@ -842,7 +844,8 @@ def journey_order():
     expect("an item of another order is refused", "PUT", f"/orders/{oid}/items/999999999/loaded-quantity", owner.token, {"loaded_quantity": 1}, status=(403, 404))
     expect("load fewer of the first item", "PUT", f"/orders/{oid}/items/{first['id']}/loaded-quantity", owner.token, {"loaded_quantity": first["quantity"] - 2})
     expect("load all of the second item", "PUT", f"/orders/{oid}/items/{second['id']}/loaded-quantity", owner.token, {"loaded_quantity": second["quantity"]})
-    out = expect("complete loading", "POST", f"/orders/{oid}/complete-loading", owner.token, {})
+    expect("complete loading without the no-prohibited-items declaration is refused", "POST", f"/orders/{oid}/complete-loading", owner.token, {}, status=400)
+    out = expect("complete loading", "POST", f"/orders/{oid}/complete-loading", owner.token, LOADED_OK)
     po = out["order"]
     expected_total = (first["quantity"] - 2) * first["unit_price"] + second["quantity"] * second["unit_price"]
     check("…PARTIALLY_FULFILLED and total from loaded quantities", po["order_status"] == "PARTIALLY_FULFILLED" and abs(float(po["total_amount"]) - expected_total) < 0.01,
@@ -859,7 +862,7 @@ def journey_order():
     o2 = expect("second order", "POST", "/orders", owner.token, order(delivery=address), status=201)["order"]
     expect("confirm", "POST", f"/orders/{o2['id']}/confirm", owner.token, {})
     expect("start loading", "POST", f"/orders/{o2['id']}/start-loading", owner.token, {})
-    out = expect("complete loading with nothing short", "POST", f"/orders/{o2['id']}/complete-loading", owner.token, {})
+    out = expect("complete loading with nothing short", "POST", f"/orders/{o2['id']}/complete-loading", owner.token, LOADED_OK)
     check("…LOADED, total unchanged", out["order"]["order_status"] == "LOADED" and float(out["order"]["total_amount"]) == 1820, out["order"])
     expect("a loaded order cannot be cancelled", "POST", f"/orders/{o2['id']}/cancel", owner.token, {"reason": "x"}, status=409)
 
@@ -908,7 +911,7 @@ def journey_dispatch():
     o = loaded_order()
     expect("no dispatch before loading is done", "POST", "/dispatches", owner.token, {"order_id": o["id"]}, status=422)
     expect("start loading", "POST", f"/orders/{o['id']}/start-loading", owner.token, {})
-    expect("complete loading", "POST", f"/orders/{o['id']}/complete-loading", owner.token, {})
+    expect("complete loading", "POST", f"/orders/{o['id']}/complete-loading", owner.token, LOADED_OK)
     expect("buyer cannot create a dispatch", "POST", "/dispatches", buyer.token, {"order_id": o["id"]}, status=403)
     expect("driver cannot create a dispatch", "POST", "/dispatches", driver.token, {"order_id": o["id"]}, status=403)
     expect("a rival owner cannot dispatch this order", "POST", "/dispatches", rival.token, {"order_id": o["id"]}, status=403)
@@ -952,7 +955,7 @@ def journey_dispatch():
     # One active trip per driver
     o2 = loaded_order()
     expect("start loading", "POST", f"/orders/{o2['id']}/start-loading", owner.token, {})
-    expect("complete loading", "POST", f"/orders/{o2['id']}/complete-loading", owner.token, {})
+    expect("complete loading", "POST", f"/orders/{o2['id']}/complete-loading", owner.token, LOADED_OK)
     d2 = expect("second dispatch", "POST", "/dispatches", owner.token, {"order_id": o2["id"]}, status=201)["dispatch"]
     expect("a driver with an active trip cannot accept another", "POST", f"/dispatches/{d2['id']}/accept", driver.token, {"trip_code": d2["trip_uuid"]}, status=409)
 
@@ -1038,7 +1041,7 @@ def journey_dispatch():
     # Outside lorry (driver without the app): the nursery confirms with the customer's code
     o3 = loaded_order()
     expect("start loading", "POST", f"/orders/{o3['id']}/start-loading", owner.token, {})
-    expect("complete loading", "POST", f"/orders/{o3['id']}/complete-loading", owner.token, {})
+    expect("complete loading", "POST", f"/orders/{o3['id']}/complete-loading", owner.token, LOADED_OK)
     expect("an outside lorry needs its vehicle number", "POST", "/dispatches", owner.token, {"order_id": o3["id"], "is_outside_transport": True}, status=400)
     d3 = expect("owner sends it on an outside lorry", "POST", "/dispatches", owner.token, {"order_id": o3["id"], "is_outside_transport": True,
                 "outside_vehicle_number": "ap05 tb 1234", "outside_driver_name": "Ramesh", "outside_driver_mobile": "+91 98765 01234"}, status=201)["dispatch"]
@@ -1916,7 +1919,7 @@ def journey_reports():
     expect("the manager's order gets an address", "PUT", f"/orders/{o3['id']}/delivery", owner.token,
            {"contact_name": "Ravi", "contact_mobile": buyer.mobile, "address_line1": "12 Lake Road", "city": "Hyderabad", "state": "Telangana", "postal_code": "500032"})
     for step in ("confirm", "start-loading", "complete-loading"):
-        expect(step, "POST", f"/orders/{o3['id']}/{step}", owner.token, {})
+        expect(step, "POST", f"/orders/{o3['id']}/{step}", owner.token, LOADED_OK if step == "complete-loading" else {})
     trip = expect("the owner sends it out", "POST", "/dispatches", owner.token, {"order_id": o3["id"]}, status=201)["dispatch"]
     out = expect("manager: deliveries report", "GET", f"/reports/deliveries?{rng}", manager.token)
     check("…the trip of their order, though the owner created it", [r["reference"] for r in out.get("rows", [])] == [trip["dispatch_code"]], out.get("rows"))

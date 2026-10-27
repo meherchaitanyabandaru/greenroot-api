@@ -170,7 +170,7 @@ func main() {
 		record("orders/delivery-snapshot", c.expect(ctx, http.MethodPut, fmt.Sprintf("/api/v1/orders/%d/delivery", orderID), map[string]any{"address_line1": "Integration Street", "city": "Hyderabad", "state": "Telangana", "contact_name": "Integration Buyer", "contact_mobile": "9300000000"}, nursery.AccessToken, http.StatusOK))
 		record("orders/confirm", c.expect(ctx, http.MethodPut, fmt.Sprintf("/api/v1/orders/%d/status", orderID), map[string]any{"order_status": "CONFIRMED"}, nursery.AccessToken, http.StatusOK))
 		record("orders/start-loading", c.expect(ctx, http.MethodPost, fmt.Sprintf("/api/v1/orders/%d/start-loading", orderID), nil, nursery.AccessToken, http.StatusOK))
-		record("orders/complete-loading", c.expect(ctx, http.MethodPost, fmt.Sprintf("/api/v1/orders/%d/complete-loading", orderID), nil, nursery.AccessToken, http.StatusOK))
+		record("orders/complete-loading", c.expect(ctx, http.MethodPost, fmt.Sprintf("/api/v1/orders/%d/complete-loading", orderID), map[string]any{"declared_no_prohibited_items": true}, nursery.AccessToken, http.StatusOK))
 		record("payments/manual-order", c.expect(ctx, http.MethodPost, "/api/v1/payments/manual", map[string]any{"payment_for": "ORDER", "order_id": orderID, "amount": 200, "payment_method": "UPI", "payment_status": "SUCCESS", "transaction_reference": unique("UPI")}, buyer.AccessToken, http.StatusCreated))
 	}
 

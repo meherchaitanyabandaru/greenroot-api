@@ -25,6 +25,7 @@ var (
 	ErrInvalidInput           = apperrs.ErrInvalidInput
 	ErrInvalidStatus          = errors.New("invalid status transition")
 	ErrMissingDeliveryAddress = errors.New("missing delivery address")
+	ErrLoadingNotDeclared     = errors.New("loading declaration required")
 	ErrRateLimited            = errors.New("too many requests")
 	ErrDocumentNotFound       = errors.New("no verification token found for this order")
 )
@@ -368,7 +369,12 @@ func (s *Service) StartLoading(ctx context.Context, actor ActorContext, orderID 
 
 // CompleteLoading marks an order as LOADED or PARTIALLY_FULFILLED based on
 // whether any item's loaded_quantity is less than its ordered quantity.
-func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, orderID int64) (Order, error) {
+// The seller must declare the vehicle carries no prohibited items; the
+// declaration is kept in the audit log against who completed loading.
+func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, orderID int64, declaredNoProhibitedItems bool) (Order, error) {
+	if !declaredNoProhibitedItems {
+		return Order{}, ErrLoadingNotDeclared
+	}
 	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "orders", orderID)
 	if err != nil {
 		return Order{}, err
@@ -412,7 +418,7 @@ func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, order
 	s.audit(ctx, actor, auditlog.EntityOrder, orderID, auditlog.ActionUpdate,
 		fmt.Sprintf("Order #%d status LOADING → %s", orderID, finalStatus),
 		map[string]any{"status": "LOADING"},
-		map[string]any{"status": finalStatus})
+		map[string]any{"status": finalStatus, "declared_no_prohibited_items": true})
 	s.enrichOrder(ctx, actor, updated)
 	return *updated, nil
 }

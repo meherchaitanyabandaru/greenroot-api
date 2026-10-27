@@ -4401,7 +4401,23 @@ paths:
       tags:
         - Orders
       summary: Complete loading
+      description: >-
+        The seller declares the vehicle carries no drugs, illegal or unauthorised items
+        (kept in the audit log); without it the call is refused with
+        `loading_declaration_required`. Loading photos (up to 3) are uploaded as
+        attachments with entity_type ORDER_LOADING.
       operationId: postOrdersByidCompleteLoading
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [declared_no_prohibited_items]
+              properties:
+                declared_no_prohibited_items:
+                  type: boolean
+                  enum: [true]
       security:
         - BearerAuth: []
       parameters:

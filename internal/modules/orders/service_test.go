@@ -768,7 +768,7 @@ func TestCompleteLoading_AllFullBecomesLoaded(t *testing.T) {
 	repo.seedOrder(Order{ID: 10, Status: "LOADING", SellerNurseryID: &nid})
 	full := float64(10)
 	repo.seedItem(OrderItem{ID: 1, OrderID: 10, Quantity: 10, LoadedQuantity: &full})
-	o, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10)
+	o, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10, true)
 	if err != nil {
 		t.Fatalf("CompleteLoading all full: %v", err)
 	}
@@ -784,7 +784,7 @@ func TestCompleteLoading_ShortBecomesPartiallyFulfilled(t *testing.T) {
 	repo.seedOrder(Order{ID: 10, Status: "LOADING", SellerNurseryID: &nid})
 	partial := float64(5) // ordered 10, loaded only 5
 	repo.seedItem(OrderItem{ID: 1, OrderID: 10, Quantity: 10, LoadedQuantity: &partial})
-	o, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10)
+	o, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10, true)
 	if err != nil {
 		t.Fatalf("CompleteLoading partial: %v", err)
 	}
@@ -803,7 +803,7 @@ func TestCompleteLoading_PartialReturnsRecalculatedTotal(t *testing.T) {
 	repo.seedOrder(Order{ID: 10, Status: "LOADING", SellerNurseryID: &nid, TotalAmount: 500})
 	partial := float64(7) // ordered 10 @ 50/unit, loaded only 7 -> should recalc to 350
 	repo.seedItem(OrderItem{ID: 1, OrderID: 10, Quantity: 10, UnitPrice: 50, LoadedQuantity: &partial})
-	o, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10)
+	o, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10, true)
 	if err != nil {
 		t.Fatalf("CompleteLoading partial: %v", err)
 	}
@@ -820,9 +820,23 @@ func TestCompleteLoading_NotInLoading(t *testing.T) {
 	repo.seedNursery(1, 100)
 	nid := int64(1)
 	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", SellerNurseryID: &nid})
-	_, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10)
+	_, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10, true)
 	if !errors.Is(err, ErrInvalidStatus) {
 		t.Errorf("CompleteLoading not in LOADING: want ErrInvalidStatus, got %v", err)
+	}
+}
+
+func TestCompleteLoading_NeedsDeclaration(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, 100)
+	nid := int64(1)
+	repo.seedOrder(Order{ID: 10, Status: "LOADING", SellerNurseryID: &nid})
+	_, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10, false)
+	if !errors.Is(err, ErrLoadingNotDeclared) {
+		t.Errorf("CompleteLoading without declaration: want ErrLoadingNotDeclared, got %v", err)
+	}
+	if o, _ := repo.FindByID(context.Background(), 10); o.Status != "LOADING" {
+		t.Errorf("status: want LOADING untouched, got %s", o.Status)
 	}
 }
 

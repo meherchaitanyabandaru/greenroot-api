@@ -132,7 +132,7 @@ func TestOrderLifecycle_AllRoles(t *testing.T) {
 		assertOrderStatus(t, post(t, fmt.Sprintf("/api/v1/orders/%d/start-loading", orderID), nil, managerToken), http.StatusOK, "LOADING")
 		assertStatus(t, putReq(t, fmt.Sprintf("/api/v1/orders/%d/items/%d/loaded-quantity", orderID, itemID), map[string]any{"loaded_quantity": 2}, buyerToken), http.StatusForbidden)
 		assertStatus(t, putReq(t, fmt.Sprintf("/api/v1/orders/%d/items/%d/loaded-quantity", orderID, itemID), map[string]any{"loaded_quantity": 2}, managerToken), http.StatusOK)
-		assertOrderStatus(t, post(t, fmt.Sprintf("/api/v1/orders/%d/complete-loading", orderID), nil, managerToken), http.StatusOK, "LOADED")
+		assertOrderStatus(t, post(t, fmt.Sprintf("/api/v1/orders/%d/complete-loading", orderID), map[string]any{"declared_no_prohibited_items": true}, managerToken), http.StatusOK, "LOADED")
 		assertStatus(t, post(t, fmt.Sprintf("/api/v1/orders/%d/cancel", orderID), map[string]any{"reason": "too late"}, ownerToken), http.StatusConflict)
 		assertStatus(t, putReq(t, fmt.Sprintf("/api/v1/orders/%d/status", orderID), map[string]any{"order_status": "COMPLETED"}, driverToken), http.StatusForbidden)
 		assertOrderStatus(t, putReq(t, fmt.Sprintf("/api/v1/orders/%d/status", orderID), map[string]any{"order_status": "COMPLETED"}, ownerToken), http.StatusOK, "COMPLETED")

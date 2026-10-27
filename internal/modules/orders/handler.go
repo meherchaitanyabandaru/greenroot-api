@@ -358,7 +358,14 @@ func (h *Handler) CompleteLoading(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	order, err := h.service.CompleteLoading(r.Context(), actor, orderID)
+	var req struct {
+		DeclaredNoProhibitedItems bool `json:"declared_no_prohibited_items"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid request body")
+		return
+	}
+	order, err := h.service.CompleteLoading(r.Context(), actor, orderID, req.DeclaredNoProhibitedItems)
 	if err != nil {
 		writeOrdersError(w, err)
 		return
@@ -495,6 +502,8 @@ func writeOrdersError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusConflict, "version_conflict", "order was changed by someone else; reload and retry")
 	case errors.Is(err, ErrMissingDeliveryAddress):
 		response.Error(w, http.StatusBadRequest, "missing_delivery_address", "Add a delivery address before confirming this order.")
+	case errors.Is(err, ErrLoadingNotDeclared):
+		response.Error(w, http.StatusBadRequest, "loading_declaration_required", "Confirm the vehicle carries no drugs, illegal or unauthorised items before completing loading.")
 	case errors.Is(err, ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_input", "invalid order input")
 	case errors.Is(err, ErrInvalidStatus):
