@@ -23,36 +23,8 @@ const trialEndingType = "TRIAL_ENDING"
 // Safe to run often and on several API instances. Returns how many were told.
 func RemindEndingTrials(ctx context.Context, db *sql.DB, rdb *redis.Client, now time.Time) (int, error) {
 	today := businessDay(now)
-	rows, err := db.QueryContext(ctx, `
-		SELECT s.user_subscription_id, s.user_id, s.end_date
-		FROM public.user_subscriptions s
-		JOIN public.subscription_plans p ON p.plan_id = s.plan_id
-		WHERE p.plan_code = 'TRIAL'
-		  AND s.status IN ('ACTIVE', 'TRIAL')
-		  AND s.end_date BETWEEN $1::date AND $1::date + $2::int
-		  AND NOT EXISTS (
-		      SELECT 1 FROM public.notifications n
-		      WHERE n.user_id = s.user_id AND n.notification_type = $3
-		        AND n.data->>'id' = s.user_subscription_id::text)`,
-		today, TrialReminderDays, trialEndingType)
-	if err != nil {
-		return 0, err
-	}
-	type due struct {
-		subID, userID int64
-		end           time.Time
-	}
-	var list []due
-	for rows.Next() {
-		var d due
-		if err := rows.Scan(&d.subID, &d.userID, &d.end); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		list = append(list, d)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil || len(list) == 0 {
+	list, err := endingTrials(ctx, db, today)
+	if err != nil || len(list) == 0 {
 		return 0, err
 	}
 
@@ -91,6 +63,41 @@ func RemindEndingTrials(ctx context.Context, db *sql.DB, rdb *redis.Client, now 
 		sent++
 	}
 	return sent, nil
+}
+
+type endingTrial struct {
+	subID, userID int64
+	end           time.Time
+}
+
+// endingTrials: running trials ending within TrialReminderDays whose owner
+// has not been told yet.
+func endingTrials(ctx context.Context, db *sql.DB, today time.Time) ([]endingTrial, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT s.user_subscription_id, s.user_id, s.end_date
+		FROM public.user_subscriptions s
+		JOIN public.subscription_plans p ON p.plan_id = s.plan_id
+		WHERE p.plan_code = 'TRIAL'
+		  AND s.status IN ('ACTIVE', 'TRIAL')
+		  AND s.end_date BETWEEN $1::date AND $1::date + $2::int
+		  AND NOT EXISTS (
+		      SELECT 1 FROM public.notifications n
+		      WHERE n.user_id = s.user_id AND n.notification_type = $3
+		        AND n.data->>'id' = s.user_subscription_id::text)`,
+		today, TrialReminderDays, trialEndingType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []endingTrial
+	for rows.Next() {
+		var d endingTrial
+		if err := rows.Scan(&d.subID, &d.userID, &d.end); err != nil {
+			return nil, err
+		}
+		list = append(list, d)
+	}
+	return list, rows.Err()
 }
 
 func trialEndingMessage(daysLeft int, end time.Time, from sql.NullFloat64) string {
