@@ -27,6 +27,29 @@ func refundSetup(t *testing.T, startedDaysAgo int, paidAgo time.Duration) (*Serv
 	return s, g, repo
 }
 
+// A trial owner's first paid Gold period, refunded: back to the trial plan,
+// so no Gold badge without paying. With an earlier payment the plan is kept.
+func TestRefund_FirstPaymentGoesBackToTheTrialPlan(t *testing.T) {
+	ctx := context.Background()
+	s, _, repo := refundSetup(t, -30, time.Hour)
+	trial := repo.seedPlan("TRIAL", 0, 0)
+	repo.payments[101] = repo.payments[101][:1] // only the Razorpay payment
+	if _, err := s.RefundPayment(ctx, adminActor(1), 101, 2, RefundRequest{Reason: "Owner changed mind"}); err != nil {
+		t.Fatal(err)
+	}
+	if repo.lastRefund.PlanID == nil || *repo.lastRefund.PlanID != trial.ID || repo.subs[101].PlanID != trial.ID {
+		t.Fatalf("want back on the trial plan %d, got %+v", trial.ID, repo.lastRefund.PlanID)
+	}
+
+	s, _, repo = refundSetup(t, -30, time.Hour) // an older cash payment exists
+	if _, err := s.RefundPayment(ctx, adminActor(1), 101, 2, RefundRequest{Reason: "Owner changed mind"}); err != nil {
+		t.Fatal(err)
+	}
+	if repo.lastRefund.PlanID != nil {
+		t.Fatalf("after earlier payments the plan is kept, got %v", *repo.lastRefund.PlanID)
+	}
+}
+
 func TestRefund_LatestRazorpayPayment(t *testing.T) {
 	ctx := context.Background()
 

@@ -218,6 +218,9 @@ func (m *mockRepo) ApplyRefund(_ context.Context, in ApplyRefundInput) error {
 	m.lastRefund = &in
 	if sub := m.subs[in.SubscriptionID]; sub != nil {
 		sub.StartDate, sub.EndDate, sub.Status = in.StartDate, &in.EndDate, in.Status
+		if in.PlanID != nil {
+			sub.PlanID = *in.PlanID
+		}
 	}
 	return nil
 }

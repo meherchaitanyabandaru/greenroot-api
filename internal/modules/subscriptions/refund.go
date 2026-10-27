@@ -19,9 +19,11 @@ import (
 //   - within RefundWindow of payment.
 //
 // The paid period is removed: end_date goes back to the day before that
-// period started; if that day has passed the subscription expires. The plan is
-// not restored (renewals overwrite it), so an upgrade refunded during a running
-// earlier period keeps the new plan until that period ends.
+// period started; if that day has passed the subscription expires. When the
+// refunded payment was the only one, the time before it was the free trial, so
+// the trial plan comes back (a refunded first Gold month must not leave a Gold
+// badge). After earlier payments the plan is kept (it is not recorded per
+// payment), so an upgrade refunded mid-period keeps the new plan until then.
 const RefundWindow = 7 * 24 * time.Hour
 
 // RefundError says why a payment can't be refunded; Reason is shown to the admin.
@@ -41,6 +43,7 @@ type ApplyRefundInput struct {
 	StartDate      time.Time
 	EndDate        time.Time
 	Status         string
+	PlanID         *int64 // set: the plan to go back to
 }
 
 // refundable returns why p can't be refunded, or "" when it can.
@@ -127,6 +130,12 @@ func (s *Service) RefundPayment(ctx context.Context, actor ActorContext, subscri
 	if startDate.After(endDate) {
 		startDate = endDate
 	}
+	var planID *int64
+	if previous == nil { // nothing paid before: back to the free trial
+		if trial, err := s.repository.FindPlanByCode(ctx, "TRIAL"); err == nil {
+			planID = &trial.ID
+		}
+	}
 	status := current.Status
 	if endDate.Before(today) && status == statusActive {
 		status = statusExpired
@@ -140,6 +149,7 @@ func (s *Service) RefundPayment(ctx context.Context, actor ActorContext, subscri
 		StartDate:      startDate,
 		EndDate:        endDate,
 		Status:         status,
+		PlanID:         planID,
 	}); err != nil {
 		// Money already went back; make the mismatch easy to find and fix by hand.
 		slog.Error("refund done at Razorpay but not recorded", "subscription_id", subscriptionID, "payment_id", paymentID, "refund_id", refund.ID, "error", err)

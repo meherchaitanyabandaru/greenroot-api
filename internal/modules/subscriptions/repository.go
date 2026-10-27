@@ -395,9 +395,9 @@ func (r *PostgresRepository) ApplyRefund(ctx context.Context, input ApplyRefundI
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE public.user_subscriptions
-		SET start_date = $4, end_date = $2, status = $3, updated_at = CURRENT_TIMESTAMP
+		SET start_date = $4, end_date = $2, status = $3, plan_id = COALESCE($5, plan_id), updated_at = CURRENT_TIMESTAMP
 		WHERE user_subscription_id = $1
-	`, input.SubscriptionID, input.EndDate, input.Status, input.StartDate); err != nil {
+	`, input.SubscriptionID, input.EndDate, input.Status, input.StartDate, input.PlanID); err != nil {
 		return err
 	}
 	return tx.Commit()
