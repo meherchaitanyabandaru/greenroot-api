@@ -17,6 +17,7 @@ Standard library only. Exit status 1 if any check fails.
 """
 import argparse
 import base64
+import datetime
 import hashlib
 import hmac
 import json
@@ -512,6 +513,9 @@ def journey_nursery():
     sub = expect("approval created a trial subscription", "GET", "/subscriptions/me", owner.token)
     sub_json = json.dumps(sub).upper()
     check("…TRIAL and active", "TRIAL" in sub_json and "ACTIVE" in sub_json, sub)
+    trial = (sub.get("subscriptions") or [{}])[0]
+    days = (datetime.date.fromisoformat(trial.get("end_date", "")[:10]) - datetime.date.fromisoformat(trial.get("start_date", "")[:10])).days + 1 if trial.get("end_date") else 0
+    check("…a one-month free trial", 28 <= days <= 31, (trial.get("start_date"), trial.get("end_date")))
     owner.nursery_id = nid
     expect("approving twice is refused", "PUT", f"/nurseries/{nid}/status", boss.token, {"status": "APPROVED"}, status=409)
     expect("owner edits their nursery", "PUT", f"/nurseries/{nid}", owner.token, {"description": "Fruit saplings"})
@@ -1693,7 +1697,18 @@ def journey_access():
     expect("manager joins", "POST", f"/invites/{invite(owner, 'MANAGER_INVITE', mgr)}/accept", mgr.token, {})
     mgr.refresh()
     _, plans = call("GET", "/subscription-plans")
-    plan_ids = {p.get("plan_code"): p.get("id") for p in plans.get("plans", plans if isinstance(plans, list) else [])}
+    plan_list = plans.get("plans", plans if isinstance(plans, list) else [])
+    plan_ids = {p.get("plan_code"): p.get("id") for p in plan_list}
+    by_code = {p.get("plan_code"): p for p in plan_list}
+    # Monthly base prices; quarterly / half-yearly / yearly are 5 / 10 / 15 % off.
+    want = {"BASIC": (299, 5, [299, 852.15, 1614.6, 3049.8]), "GROWTH": (499, 10, [499, 1422.15, 2694.6, 5089.8]),
+            "ENTERPRISE": (999, 20, [999, 2847.15, 5394.6, 10189.8])}
+    for code_, (monthly, managers, amounts) in want.items():
+        p = by_code.get(code_, {})
+        cycles = [(c.get("billing_cycle"), c.get("amount")) for c in p.get("cycle_prices") or []]
+        check(f"plan {code_}: ₹{monthly}/month, {managers} managers, all four cycles priced",
+              p.get("monthly_price") == monthly and p.get("max_managers") == managers
+              and cycles == list(zip(["MONTHLY", "QUARTERLY", "SIX_MONTH", "YEARLY"], amounts)), p)
     sub = expect("owner's trial", "GET", "/subscriptions/me", owner.token)["subscriptions"][0]
     q = {"quotation_type": "INTERNAL", "nursery_id": owner.nursery_id, "items": [{"plant_id": 1, "quantity": 1, "unit_price": 10, "total_price": 10}]}
     time.sleep(1.1)  # tokens issued in an earlier second than the change
@@ -1723,8 +1738,13 @@ def journey_access():
     else:
         # Keys set (no money moves: the order is only created, never paid).
         order = po.get("payment_order", {}) if isinstance(po, dict) else {}
-        check("Razorpay on: the server creates and prices the order (₹3,999 a year, in paise)",
-              code in (200, 201) and order.get("order_id", "").startswith("order_") and order.get("amount") == 399900, po)
+        check("Razorpay on: the server creates and prices the order (₹499 × 12 − 15% = ₹5,089.80, in paise)",
+              code in (200, 201) and order.get("order_id", "").startswith("order_") and order.get("amount") == 508980, po)
+        _, q_po = call("POST", "/subscriptions/payment-order", owner.token,
+                       {"subscription_id": sub["id"], "plan_id": plan_ids.get("BASIC"), "billing_cycle": "QUARTERLY"})
+        check("…Basic quarterly is ₹299 × 3 − 5% = ₹852.15", (q_po.get("payment_order") or {}).get("amount") == 85215, q_po)
+        expect("…an unknown cycle is refused", "POST", "/subscriptions/payment-order", owner.token,
+               {"subscription_id": sub["id"], "plan_id": plan_ids.get("BASIC"), "billing_cycle": "WEEKLY"}, status=400)
         expect("Razorpay on: an owner cannot renew without a verified payment", "POST", f"/subscriptions/{sub['id']}/renew", owner.token, upgrade, status=400)
         out = expect("admin records an offline payment to upgrade to GROWTH", "POST", f"/subscriptions/{sub['id']}/renew", boss.token,
                      dict(upgrade, payment_method="CASH"))
