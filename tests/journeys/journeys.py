@@ -714,9 +714,12 @@ def journey_quotation():
     expect("an accepted quotation cannot be recalled", "POST", f"/quotations/{qid}/recall", owner.token, {}, status=(400, 409))
     expect("an accepted quotation cannot be deleted", "DELETE", f"/quotations/{qid}", owner.token, status=(400, 409))
     expect("buyer cannot convert", "POST", f"/quotations/{qid}/convert-to-order", buyer.token, {}, status=(403, 404))
+    expect("owner assigns the manager again", "POST", f"/quotations/{qid}/assign-manager", owner.token, {"manager_user_id": manager.id})
     out = expect("owner converts to an order", "POST", f"/quotations/{qid}/convert-to-order", owner.token, {})
     cq = out["quotation"]
     check("…CONVERTED with the order linked", cq["status"] == "CONVERTED" and cq.get("converted_order_id"), cq)
+    co = expect("…the order", "GET", f"/orders/{cq['converted_order_id']}", owner.token)["order"]
+    check("…keeps the quotation's manager", co.get("assigned_manager_user_id") == manager.id, co.get("assigned_manager_user_id"))
     expect("converting twice is refused", "POST", f"/quotations/{qid}/convert-to-order", owner.token, {}, status=(400, 409))
     for what, method, path, body in [("edit", "PUT", f"/quotations/{qid}", quote()), ("delete", "DELETE", f"/quotations/{qid}", None),
                                      ("assign", "POST", f"/quotations/{qid}/assign-manager", {"manager_user_id": manager.id}),

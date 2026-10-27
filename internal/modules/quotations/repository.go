@@ -636,10 +636,12 @@ func (r *PostgresRepository) CreateOrderAndConvert(ctx context.Context, q *Quota
 		INSERT INTO public.orders (
 			order_code, order_number, seller_nursery_id, buyer_nursery_id,
 			buyer_user_id, customer_user_id, quotation_id, status, total_amount,
-			notes, ordered_at, created_at, updated_at, created_by_user_id, updated_by_user_id
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,'PENDING',0,$8,$9,$9,$9,$10,$10)
+			notes, ordered_at, created_at, updated_at, created_by_user_id, updated_by_user_id,
+			assigned_manager_user_id
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,'PENDING',0,$8,$9,$9,$9,$10,$10,$11)
 		RETURNING order_id
 	`, orderCode, orderNumber, nurseryID, buyerNurseryID, buyerUserID, buyerUserID, q.ID, notes, now, byUserID,
+		q.AssignedManagerUserID, // the quotation's manager keeps the order
 	).Scan(&orderID); err != nil {
 		return 0, err
 	}
