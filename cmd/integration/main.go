@@ -239,7 +239,8 @@ func main() {
 	} else {
 		record("attachments/create", err)
 	}
-	record("attachments/list", c.expect(ctx, http.MethodGet, "/api/v1/attachments?page=1&per_page=5", nil, buyer.AccessToken, http.StatusOK))
+	record("attachments/list-buyer-forbidden", c.expect(ctx, http.MethodGet, "/api/v1/attachments?page=1&per_page=5", nil, buyer.AccessToken, http.StatusForbidden))
+	record("attachments/list-admin", c.expect(ctx, http.MethodGet, "/api/v1/attachments?page=1&per_page=5", nil, admin.AccessToken, http.StatusOK))
 	if attachmentID > 0 {
 		record("attachments/delete-admin", c.expect(ctx, http.MethodDelete, fmt.Sprintf("/api/v1/attachments/%d", attachmentID), nil, admin.AccessToken, http.StatusOK))
 	}

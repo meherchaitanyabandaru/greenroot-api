@@ -16,7 +16,15 @@ type Service struct{ repository Repository }
 
 func NewService(repository Repository) *Service { return &Service{repository: repository} }
 
+// Attachments span every module (licences, delivery and loading photos), so
+// browsing them is for admins; each module shows its own to the right people
+// (e.g. GET /orders/{id}/loading-proof).
+func isAdmin(actor ActorContext) bool { return actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN") }
+
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListRequest) ([]Attachment, Pagination, error) {
+	if !isAdmin(actor) {
+		return nil, Pagination{}, ErrForbidden
+	}
 	input = normalizeList(input)
 	items, total, err := s.repository.List(ctx, input)
 	if err != nil {
@@ -28,6 +36,9 @@ func (s *Service) Get(ctx context.Context, actor ActorContext, id int64) (Attach
 	item, err := s.repository.FindByID(ctx, id)
 	if err != nil {
 		return Attachment{}, err
+	}
+	if !isAdmin(actor) && (item.UploadedBy == nil || *item.UploadedBy != actor.UserID) {
+		return Attachment{}, ErrForbidden
 	}
 	return *item, nil
 }

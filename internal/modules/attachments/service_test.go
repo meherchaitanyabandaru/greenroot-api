@@ -70,29 +70,34 @@ func svc(repo *mockRepo) *Service { return NewService(repo) }
 
 // ─── List / Get ───────────────────────────────────────────────────────────────
 
-func TestList_AnyRoleCanList(t *testing.T) {
+func TestList_OnlyAdmins(t *testing.T) {
 	repo := newMock()
 	repo.seedAttachment(1, "ORDER", 5)
 
-	items, _, err := svc(repo).List(context.Background(), buyerActor(1), ListRequest{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	items, _, err := svc(repo).List(context.Background(), adminActor(1), ListRequest{})
+	if err != nil || len(items) != 1 {
+		t.Fatalf("admin: want 1 item, got %d (%v)", len(items), err)
 	}
-	if len(items) != 1 {
-		t.Errorf("want 1 item, got %d", len(items))
+	for _, a := range []ActorContext{buyerActor(2), ownerActor(3), managerActor(4), driverActor(5)} {
+		if _, _, err := svc(repo).List(context.Background(), a, ListRequest{}); !errors.Is(err, ErrForbidden) {
+			t.Errorf("%v: want ErrForbidden, got %v", a.Roles, err)
+		}
 	}
 }
 
-func TestGet_Found(t *testing.T) {
+func TestGet_AdminOrUploaderOnly(t *testing.T) {
 	repo := newMock()
-	repo.seedAttachment(1, "ORDER", 5)
+	uploader := int64(10)
+	repo.seedAttachment(1, "ORDER", 5).UploadedBy = &uploader
 
-	a, err := svc(repo).Get(context.Background(), buyerActor(1), 1)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if a, err := svc(repo).Get(context.Background(), adminActor(1), 1); err != nil || a.EntityType != "ORDER" {
+		t.Errorf("admin: got %v, %v", a.EntityType, err)
 	}
-	if a.EntityType != "ORDER" {
-		t.Errorf("want ORDER, got %s", a.EntityType)
+	if _, err := svc(repo).Get(context.Background(), ownerActor(10), 1); err != nil {
+		t.Errorf("uploader: %v", err)
+	}
+	if _, err := svc(repo).Get(context.Background(), buyerActor(11), 1); !errors.Is(err, ErrForbidden) {
+		t.Errorf("someone else: want ErrForbidden, got %v", err)
 	}
 }
 

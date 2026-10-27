@@ -852,6 +852,8 @@ def journey_order():
           {"status": po["order_status"], "total": po["total_amount"], "want": expected_total})
     out = expect("buyer: loading proof", "GET", f"/orders/{oid}/loading-proof", buyer.token)["loading_proof"]
     check("…the seller's declaration, who loaded it, no truck yet", out["declared_no_prohibited_items"] and out.get("completed_by_name") and out.get("truck") is None, out)
+    expect("a customer cannot browse attachments", "GET", "/attachments", buyer.token, status=403)
+    expect("an owner cannot browse attachments either", "GET", "/attachments", owner.token, status=403)
     expect("a stranger cannot see the loading proof", "GET", f"/orders/{oid}/loading-proof", User(first="Nosy", activity="CUSTOMER").token, status=403)
     expect("items are locked after loading", "POST", f"/orders/{oid}/items", owner.token, {"plant_id": jamun, "quantity": 1, "unit_price": 80, "total_price": 80}, status=409)
     expect("a partially fulfilled order cannot be cancelled", "POST", f"/orders/{oid}/cancel", owner.token, {"reason": "x"}, status=409)

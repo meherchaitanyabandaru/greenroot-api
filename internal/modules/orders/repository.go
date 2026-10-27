@@ -878,9 +878,17 @@ func (r *PostgresRepository) LoadingProof(ctx context.Context, orderID int64) (L
 	proof.CompletedByName = completedBy.String
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT attachment_id, file_url, uploaded_at FROM public.attachments
-		WHERE entity_type = 'ORDER_LOADING' AND entity_id = $1 AND deleted_at IS NULL
-		ORDER BY attachment_id`, orderID)
+		SELECT a.attachment_id, a.file_url, a.uploaded_at
+		FROM public.attachments a
+		JOIN public.orders o ON o.order_id = a.entity_id
+		WHERE a.entity_type = 'ORDER_LOADING' AND a.entity_id = $1 AND a.deleted_at IS NULL
+		  -- only the selling nursery's team: anyone else's upload is not proof
+		  AND (EXISTS (SELECT 1 FROM public.nurseries n
+		               WHERE n.nursery_id = o.seller_nursery_id AND n.owner_user_id = a.uploaded_by_user_id)
+		       OR EXISTS (SELECT 1 FROM public.nursery_users nu
+		                  WHERE nu.nursery_id = o.seller_nursery_id AND nu.user_id = a.uploaded_by_user_id
+		                    AND COALESCE(nu.is_active, true)))
+		ORDER BY a.attachment_id`, orderID)
 	if err != nil {
 		return proof, err
 	}
