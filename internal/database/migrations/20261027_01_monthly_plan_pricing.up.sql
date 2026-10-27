@@ -31,7 +31,9 @@ UPDATE public.subscription_plans SET
   updated_at = NOW()
 WHERE plan_code = 'ENTERPRISE';
 
+-- The trial limits nothing either: say so, as on the paid plans.
 UPDATE public.subscription_plans SET
   description = '1-month free trial for new approved nurseries.',
+  features = features || '{"unlimited_customers":true,"unlimited_trips":true}'::jsonb,
   updated_at = NOW()
 WHERE plan_code = 'TRIAL';

@@ -15,5 +15,6 @@ UPDATE public.subscription_plans SET
 WHERE plan_code = 'ENTERPRISE';
 
 UPDATE public.subscription_plans SET
-  description = '6-month free trial for new approved nurseries.', updated_at = NOW()
+  description = '6-month free trial for new approved nurseries.',
+  features = features - 'unlimited_customers' - 'unlimited_trips', updated_at = NOW()
 WHERE plan_code = 'TRIAL';
