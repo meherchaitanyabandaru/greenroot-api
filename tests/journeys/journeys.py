@@ -1701,14 +1701,17 @@ def journey_access():
     plan_ids = {p.get("plan_code"): p.get("id") for p in plan_list}
     by_code = {p.get("plan_code"): p for p in plan_list}
     # Monthly base prices; quarterly / half-yearly / yearly are 5 / 10 / 15 % off.
-    want = {"BASIC": (299, 5, [299, 852.15, 1614.6, 3049.8]), "GROWTH": (499, 10, [499, 1422.15, 2694.6, 5089.8]),
-            "ENTERPRISE": (999, 20, [999, 2847.15, 5394.6, 10189.8])}
-    for code_, (monthly, managers, amounts) in want.items():
+    want = {"BASIC": ("Silver", 299, 1, [299, 852.15, 1614.6, 3049.8]), "GROWTH": ("Gold", 499, 5, [499, 1422.15, 2694.6, 5089.8]),
+            "ENTERPRISE": ("Platinum", 999, 10, [999, 2847.15, 5394.6, 10189.8])}
+    for code_, (name, monthly, managers, amounts) in want.items():
         p = by_code.get(code_, {})
+        f = p.get("features") or {}
         cycles = [(c.get("billing_cycle"), c.get("amount")) for c in p.get("cycle_prices") or []]
-        check(f"plan {code_}: ₹{monthly}/month, {managers} managers, all four cycles priced",
-              p.get("monthly_price") == monthly and p.get("max_managers") == managers
+        check(f"plan {name}: ₹{monthly}/month, {managers} manager(s), all four cycles priced",
+              p.get("plan_name") == name and p.get("monthly_price") == monthly and p.get("max_managers") == managers
               and cycles == list(zip(["MONTHLY", "QUARTERLY", "SIX_MONTH", "YEARLY"], amounts)), p)
+        check(f"…{name}: unlimited orders and quotations, local market ads",
+              f.get("unlimited_orders") is True and f.get("unlimited_quotations") is True and f.get("local_market_ads") is True, f)
     sub = expect("owner's trial", "GET", "/subscriptions/me", owner.token)["subscriptions"][0]
     q = {"quotation_type": "INTERNAL", "nursery_id": owner.nursery_id, "items": [{"plant_id": 1, "quantity": 1, "unit_price": 10, "total_price": 10}]}
     time.sleep(1.1)  # tokens issued in an earlier second than the change
@@ -1742,7 +1745,7 @@ def journey_access():
               code in (200, 201) and order.get("order_id", "").startswith("order_") and order.get("amount") == 508980, po)
         _, q_po = call("POST", "/subscriptions/payment-order", owner.token,
                        {"subscription_id": sub["id"], "plan_id": plan_ids.get("BASIC"), "billing_cycle": "QUARTERLY"})
-        check("…Basic quarterly is ₹299 × 3 − 5% = ₹852.15", (q_po.get("payment_order") or {}).get("amount") == 85215, q_po)
+        check("…Silver quarterly is ₹299 × 3 − 5% = ₹852.15", (q_po.get("payment_order") or {}).get("amount") == 85215, q_po)
         expect("…an unknown cycle is refused", "POST", "/subscriptions/payment-order", owner.token,
                {"subscription_id": sub["id"], "plan_id": plan_ids.get("BASIC"), "billing_cycle": "WEEKLY"}, status=400)
         expect("Razorpay on: an owner cannot renew without a verified payment", "POST", f"/subscriptions/{sub['id']}/renew", owner.token, upgrade, status=400)
