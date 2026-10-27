@@ -850,6 +850,9 @@ def journey_order():
     expected_total = (first["quantity"] - 2) * first["unit_price"] + second["quantity"] * second["unit_price"]
     check("…PARTIALLY_FULFILLED and total from loaded quantities", po["order_status"] == "PARTIALLY_FULFILLED" and abs(float(po["total_amount"]) - expected_total) < 0.01,
           {"status": po["order_status"], "total": po["total_amount"], "want": expected_total})
+    out = expect("buyer: loading proof", "GET", f"/orders/{oid}/loading-proof", buyer.token)["loading_proof"]
+    check("…the seller's declaration, who loaded it, no truck yet", out["declared_no_prohibited_items"] and out.get("completed_by_name") and out.get("truck") is None, out)
+    expect("a stranger cannot see the loading proof", "GET", f"/orders/{oid}/loading-proof", User(first="Nosy", activity="CUSTOMER").token, status=403)
     expect("items are locked after loading", "POST", f"/orders/{oid}/items", owner.token, {"plant_id": jamun, "quantity": 1, "unit_price": 80, "total_price": 80}, status=409)
     expect("a partially fulfilled order cannot be cancelled", "POST", f"/orders/{oid}/cancel", owner.token, {"reason": "x"}, status=409)
     out = expect("owner completes", "PUT", f"/orders/{oid}/status", owner.token, {"order_status": "COMPLETED"})

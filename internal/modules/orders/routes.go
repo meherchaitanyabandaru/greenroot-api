@@ -43,6 +43,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		// V1 loading workflow
 		r.Post("/{id}/start-loading", m.handler.StartLoading)
 		r.Post("/{id}/complete-loading", m.handler.CompleteLoading)
+		r.Get("/{id}/loading-proof", m.handler.LoadingProof)
 		r.Post("/{id}/cancel", m.handler.CancelOrder)
 		r.Post("/{id}/assign-manager", m.handler.AssignManager)
 		// Items

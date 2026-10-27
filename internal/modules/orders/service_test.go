@@ -369,6 +369,10 @@ func (m *mockRepo) GetNurseryContactExtras(_ context.Context, _ int64) (PDFNurse
 
 func (m *mockRepo) GetUserName(_ context.Context, _ int64) (string, error) { return "", nil }
 
+func (m *mockRepo) LoadingProof(_ context.Context, _ int64) (LoadingProof, error) {
+	return LoadingProof{Photos: []LoadingPhoto{{ID: 1, URL: "http://files/delivery-photos/x.jpg"}}, Declared: true}, nil
+}
+
 func (m *mockRepo) GetActiveVerificationToken(_ context.Context, _ int64) (*OrderVerification, error) {
 	return nil, nil
 }
@@ -837,6 +841,24 @@ func TestCompleteLoading_NeedsDeclaration(t *testing.T) {
 	}
 	if o, _ := repo.FindByID(context.Background(), 10); o.Status != "LOADING" {
 		t.Errorf("status: want LOADING untouched, got %s", o.Status)
+	}
+}
+
+func TestLoadingProof_OnlyForThoseWhoSeeTheOrder(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, 100)
+	nid := int64(1)
+	repo.seedOrder(Order{ID: 10, Status: "LOADED", SellerNurseryID: &nid})
+	if _, err := svc(repo).LoadingProof(context.Background(), ownerActor(999), 10); !errors.Is(err, ErrForbidden) {
+		t.Errorf("stranger: want ErrForbidden, got %v", err)
+	}
+	proof, err := svc(repo).LoadingProof(context.Background(), ownerActor(100), 10)
+	if err != nil {
+		t.Fatalf("owner: %v", err)
+	}
+	// No storage configured: unsigned private URLs must never be returned.
+	if !proof.Declared || len(proof.Photos) != 0 {
+		t.Errorf("want declared and no unsigned photos, got %+v", proof)
 	}
 }
 

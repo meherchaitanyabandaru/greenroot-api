@@ -4396,6 +4396,36 @@ paths:
           $ref: '#/components/responses/Error'
         "409":
           $ref: "#/components/responses/VersionConflict"
+  /api/v1/orders/{id}/loading-proof:
+    get:
+      tags:
+        - Orders
+      summary: Loading photos, declaration and truck
+      description: >-
+        For anyone who can see the order (buyer, seller staff, admin): photos of the loaded
+        vehicle as 1-hour signed links, whether the no-prohibited-items declaration was made,
+        who completed loading and when, and the truck (null until a trip is assigned).
+      operationId: getOrdersByidLoadingProof
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        "403":
+          $ref: '#/components/responses/Error'
+        "404":
+          $ref: '#/components/responses/Error'
   /api/v1/orders/{id}/complete-loading:
     post:
       tags:

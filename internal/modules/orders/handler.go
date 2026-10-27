@@ -373,6 +373,24 @@ func (h *Handler) CompleteLoading(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, OrderResponse{Order: order})
 }
 
+// LoadingProof returns the loading photos, declaration and truck of an order.
+func (h *Handler) LoadingProof(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	orderID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	proof, err := h.service.LoadingProof(r.Context(), actor, orderID)
+	if err != nil {
+		writeOrdersError(w, err)
+		return
+	}
+	response.OK(w, map[string]any{"loading_proof": proof})
+}
+
 // CancelOrder cancels an order. Reason is optional — empty body is valid.
 func (h *Handler) CancelOrder(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)

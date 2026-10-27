@@ -423,6 +423,35 @@ func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, order
 	return *updated, nil
 }
 
+// LoadingProof shows anyone who can see the order the loading photos, the
+// declaration and the truck. Photos are in a private bucket: each gets a
+// signed link; without storage they are left out rather than exposed.
+func (s *Service) LoadingProof(ctx context.Context, actor ActorContext, orderID int64) (LoadingProof, error) {
+	order, err := s.repository.FindByID(ctx, orderID)
+	if err != nil {
+		return LoadingProof{}, err
+	}
+	if err := s.canView(ctx, actor, *order); err != nil {
+		return LoadingProof{}, err
+	}
+	proof, err := s.repository.LoadingProof(ctx, orderID)
+	if err != nil {
+		return LoadingProof{}, err
+	}
+	signed := proof.Photos[:0]
+	for _, p := range proof.Photos {
+		if s.storage == nil {
+			break
+		}
+		if link, err := s.storage.PresignGetURL(ctx, p.URL, time.Hour); err == nil {
+			p.URL = link
+			signed = append(signed, p)
+		}
+	}
+	proof.Photos = signed
+	return proof, nil
+}
+
 // SetLoadedQuantity records how many units were physically loaded for an item.
 // Only allowed while the order is in LOADING status.
 func (s *Service) SetLoadedQuantity(ctx context.Context, actor ActorContext, orderID int64, itemID int64, qty float64) (OrderItem, error) {

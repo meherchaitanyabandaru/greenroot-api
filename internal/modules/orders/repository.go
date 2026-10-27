@@ -53,6 +53,8 @@ type Repository interface {
 	// PDF rendering
 	GetNurseryContactExtras(ctx context.Context, nurseryID int64) (PDFNurseryExtras, error)
 	GetUserName(ctx context.Context, userID int64) (string, error)
+	// LoadingProof returns photo URLs as stored (unsigned).
+	LoadingProof(ctx context.Context, orderID int64) (LoadingProof, error)
 	// Verification token methods
 	GetActiveVerificationToken(ctx context.Context, orderID int64) (*OrderVerification, error)
 	GetVerificationByToken(ctx context.Context, token string) (*OrderVerification, error)
@@ -857,4 +859,63 @@ func (r *PostgresRepository) GetUserName(ctx context.Context, userID int64) (str
 		userID,
 	).Scan(&name)
 	return name, err
+}
+
+func (r *PostgresRepository) LoadingProof(ctx context.Context, orderID int64) (LoadingProof, error) {
+	proof := LoadingProof{Photos: []LoadingPhoto{}}
+	var completedBy sql.NullString
+	err := r.db.QueryRowContext(ctx, `
+		SELECT o.loading_completed_at, NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''),
+		       EXISTS (SELECT 1 FROM public.audit_logs a
+		               WHERE a.entity_type = 'order' AND a.record_id = o.order_id
+		                 AND a.new_data->>'declared_no_prohibited_items' = 'true')
+		FROM public.orders o
+		LEFT JOIN public.users u ON u.user_id = o.loading_completed_by_user_id
+		WHERE o.order_id = $1`, orderID).Scan(&proof.CompletedAt, &completedBy, &proof.Declared)
+	if err != nil {
+		return proof, err
+	}
+	proof.CompletedByName = completedBy.String
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT attachment_id, file_url, uploaded_at FROM public.attachments
+		WHERE entity_type = 'ORDER_LOADING' AND entity_id = $1 AND deleted_at IS NULL
+		ORDER BY attachment_id`, orderID)
+	if err != nil {
+		return proof, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p LoadingPhoto
+		if err := rows.Scan(&p.ID, &p.URL, &p.UploadedAt); err != nil {
+			return proof, err
+		}
+		proof.Photos = append(proof.Photos, p)
+	}
+	if err := rows.Err(); err != nil {
+		return proof, err
+	}
+
+	var t LoadingTruck
+	var number, vType, driver, mobile sql.NullString
+	err = r.db.QueryRowContext(ctx, `
+		SELECT COALESCE(d.outside_vehicle_number, v.vehicle_number), v.vehicle_type,
+		       COALESCE(d.outside_driver_name, NULLIF(TRIM(CONCAT_WS(' ', du.first_name, du.last_name)), '')),
+		       COALESCE(d.outside_driver_mobile, du.mobile),
+		       COALESCE(d.is_outside_transport, false), d.status::text
+		FROM public.dispatches d
+		LEFT JOIN public.vehicles v ON v.vehicle_id = d.vehicle_id
+		LEFT JOIN public.users du ON du.user_id = d.driver_user_id
+		WHERE d.order_id = $1 AND d.deleted_at IS NULL AND COALESCE(d.status::text, '') <> 'CANCELLED'
+		ORDER BY d.created_at DESC, d.dispatch_id DESC
+		LIMIT 1`, orderID).Scan(&number, &vType, &driver, &mobile, &t.OutsideTransport, &t.TripStatus)
+	if errors.Is(err, sql.ErrNoRows) {
+		return proof, nil
+	}
+	if err != nil {
+		return proof, err
+	}
+	t.VehicleNumber, t.VehicleType, t.DriverName, t.DriverMobile = number.String, vType.String, driver.String, mobile.String
+	proof.Truck = &t
+	return proof, nil
 }

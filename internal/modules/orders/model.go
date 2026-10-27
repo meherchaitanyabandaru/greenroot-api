@@ -104,6 +104,31 @@ type Order struct {
 	Capabilities         *OrderCapabilities       `json:"capabilities,omitempty"`
 }
 
+// LoadingProof is what the seller left when loading was done: photos of the
+// loaded vehicle, the no-prohibited-items declaration and the truck.
+type LoadingProof struct {
+	Photos          []LoadingPhoto `json:"photos"`
+	Declared        bool           `json:"declared_no_prohibited_items"`
+	CompletedAt     *time.Time     `json:"completed_at,omitempty"`
+	CompletedByName string         `json:"completed_by_name,omitempty"`
+	Truck           *LoadingTruck  `json:"truck,omitempty"` // nil until a trip is assigned
+}
+
+type LoadingPhoto struct {
+	ID         int64     `json:"id"`
+	URL        string    `json:"url"` // short-lived signed link (private bucket)
+	UploadedAt time.Time `json:"uploaded_at"`
+}
+
+type LoadingTruck struct {
+	VehicleNumber    string `json:"vehicle_number,omitempty"`
+	VehicleType      string `json:"vehicle_type,omitempty"`
+	DriverName       string `json:"driver_name,omitempty"`
+	DriverMobile     string `json:"driver_mobile,omitempty"`
+	OutsideTransport bool   `json:"outside_transport"`
+	TripStatus       string `json:"trip_status"`
+}
+
 type ActiveDispatchSummary struct {
 	ID     int64  `json:"id"`
 	Status string `json:"status"`
