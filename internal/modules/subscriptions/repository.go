@@ -119,7 +119,8 @@ type RenewSubscriptionInput struct {
 type CreatePaymentInput struct {
 	SubscriptionID  int64
 	PayerUserID     int64
-	Amount          float64
+	Amount          float64 // GST included
+	GSTAmount       float64
 	Method          string
 	Status          string
 	Provider        *string
@@ -379,13 +380,15 @@ func (r *PostgresRepository) CreatePayment(ctx context.Context, input CreatePaym
 	const query = `
 		INSERT INTO public.payments (
 			payment_code, payment_for, user_subscription_id, payer_user_id, amount, payment_method, status,
-			paid_at, notes, provider, provider_order_id, provider_payment_id, provider_signature, created_at, updated_at
+			paid_at, notes, provider, provider_order_id, provider_payment_id, provider_signature, created_at, updated_at,
+			gst_amount
 		)
 		VALUES ($1, 'SUBSCRIPTION', $2, $3, $4, $5, $6::text,
 			CASE WHEN $6::text = 'SUCCESS' THEN $10::timestamptz ELSE NULL::timestamptz END,
-			NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($11, ''), NULLIF($12, ''), $10, $10)
+			NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($11, ''), NULLIF($12, ''), $10, $10,
+			$13)
 	`
-	_, err = r.db.ExecContext(ctx, query, paymentCode, input.SubscriptionID, input.PayerUserID, input.Amount, input.Method, input.Status, input.Notes, stringOrEmpty(input.Provider), stringOrEmpty(input.ProviderOrderID), now, stringOrEmpty(input.ProviderPaymentID), stringOrEmpty(input.ProviderSignature))
+	_, err = r.db.ExecContext(ctx, query, paymentCode, input.SubscriptionID, input.PayerUserID, input.Amount, input.Method, input.Status, input.Notes, stringOrEmpty(input.Provider), stringOrEmpty(input.ProviderOrderID), now, stringOrEmpty(input.ProviderPaymentID), stringOrEmpty(input.ProviderSignature), input.GSTAmount)
 	return err
 }
 
@@ -444,7 +447,7 @@ func (r *PostgresRepository) UpdateRefundStatus(ctx context.Context, providerPay
 
 func (r *PostgresRepository) ListPaymentsBySubscription(ctx context.Context, subscriptionID int64) ([]Payment, error) {
 	const query = `
-		SELECT payment_id, payment_code, amount, payment_method, transaction_reference,
+		SELECT payment_id, payment_code, amount, gst_amount, payment_method, transaction_reference,
 		       status, paid_at, provider, provider_payment_id, provider_order_id, created_at
 		FROM public.payments
 		WHERE user_subscription_id = $1 AND payment_for = 'SUBSCRIPTION'
@@ -460,9 +463,11 @@ func (r *PostgresRepository) ListPaymentsBySubscription(ctx context.Context, sub
 		var p Payment
 		var method, txRef, provider, providerPaymentID, providerOrderID sql.NullString
 		var paymentDate sql.NullTime
-		if err := rows.Scan(&p.ID, &p.PaymentCode, &p.Amount, &method, &txRef, &p.Status, &paymentDate, &provider, &providerPaymentID, &providerOrderID, &p.CreatedAt); err != nil {
+		var gst sql.NullFloat64
+		if err := rows.Scan(&p.ID, &p.PaymentCode, &p.Amount, &gst, &method, &txRef, &p.Status, &paymentDate, &provider, &providerPaymentID, &providerOrderID, &p.CreatedAt); err != nil {
 			return nil, err
 		}
+		p.GSTAmount = nullableFloat64(gst)
 		p.PaymentMethod = nullableString(method)
 		p.TransactionReference = nullableString(txRef)
 		p.Provider = nullableString(provider)

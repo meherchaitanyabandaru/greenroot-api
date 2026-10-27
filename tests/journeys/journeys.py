@@ -1710,6 +1710,9 @@ def journey_access():
         check(f"plan {name}: ₹{monthly}/month, {managers} manager(s), all four cycles priced",
               p.get("plan_name") == name and p.get("monthly_price") == monthly and p.get("max_managers") == managers
               and cycles == list(zip(["MONTHLY", "QUARTERLY", "SIX_MONTH", "YEARLY"], amounts)), p)
+        gold_q = next((c for c in p.get("cycle_prices") or [] if c.get("billing_cycle") == "QUARTERLY"), {})
+        check(f"…{name} quarterly shows 18% GST and the total", gold_q.get("total_amount") == round(gold_q.get("amount", 0) + gold_q.get("gst_amount", -1), 2)
+              and abs(gold_q.get("gst_amount", 0) - round(gold_q.get("amount", 0) * 0.18, 2)) <= 0.01, gold_q)
         check(f"…{name}: unlimited orders and quotations, local market ads",
               f.get("unlimited_orders") is True and f.get("unlimited_quotations") is True and f.get("local_market_ads") is True, f)
     sub = expect("owner's trial", "GET", "/subscriptions/me", owner.token)["subscriptions"][0]
@@ -1745,11 +1748,11 @@ def journey_access():
     else:
         # Keys set (no money moves: the order is only created, never paid).
         order = po.get("payment_order", {}) if isinstance(po, dict) else {}
-        check("Razorpay on: the server creates and prices the order (₹499 × 12 − 15% = ₹5,089.80, in paise)",
-              code in (200, 201) and order.get("order_id", "").startswith("order_") and order.get("amount") == 508980, po)
+        check("Razorpay on: the server creates and prices the order (₹499 × 12 − 15% = ₹5,089.80 + 18% GST = ₹6,005.96, in paise)",
+              code in (200, 201) and order.get("order_id", "").startswith("order_") and order.get("amount") == 600596, po)
         _, q_po = call("POST", "/subscriptions/payment-order", owner.token,
                        {"subscription_id": sub["id"], "plan_id": plan_ids.get("BASIC"), "billing_cycle": "QUARTERLY"})
-        check("…Silver quarterly is ₹299 × 3 − 5% = ₹852.15", (q_po.get("payment_order") or {}).get("amount") == 85215, q_po)
+        check("…Silver quarterly is ₹299 × 3 − 5% = ₹852.15 + GST = ₹1,005.54", (q_po.get("payment_order") or {}).get("amount") == 100554, q_po)
         expect("…an unknown cycle is refused", "POST", "/subscriptions/payment-order", owner.token,
                {"subscription_id": sub["id"], "plan_id": plan_ids.get("BASIC"), "billing_cycle": "WEEKLY"}, status=400)
         expect("Razorpay on: an owner cannot renew without a verified payment", "POST", f"/subscriptions/{sub['id']}/renew", owner.token, upgrade, status=400)

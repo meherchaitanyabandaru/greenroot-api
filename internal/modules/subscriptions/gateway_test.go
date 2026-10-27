@@ -98,8 +98,8 @@ func TestPaymentOrder_PricedByServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if order.Amount != 1_020_000 || order.KeyID != "rzp_test_key" || order.OrderID == "" {
-		t.Fatalf("got %+v, want ₹1000 × 12 − 15%% = ₹10,200 = 1020000 paise", order)
+	if order.Amount != 1_203_600 || order.KeyID != "rzp_test_key" || order.OrderID == "" {
+		t.Fatalf("got %+v, want ₹1000 × 12 − 15%% = ₹10,200 + 18%% GST = ₹12,036 = 1203600 paise", order)
 	}
 	// Someone else's subscription.
 	if _, err := s.CreatePaymentOrder(context.Background(), ownerActor(11), PaymentOrderRequest{SubscriptionID: ptr(int64(101)), BillingCycle: "YEARLY"}); !errors.Is(err, ErrForbidden) {

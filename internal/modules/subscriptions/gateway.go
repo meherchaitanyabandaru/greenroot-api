@@ -123,7 +123,8 @@ func (s *Service) CreatePaymentOrder(ctx context.Context, actor ActorContext, re
 	if err != nil {
 		return PaymentOrder{}, ErrInvalidInput
 	}
-	paise := toPaise(finalAmount)
+	_, charged := withGST(finalAmount)
+	paise := toPaise(charged)
 	if paise < razorpay.MinAmountPaise {
 		return PaymentOrder{}, ErrInvalidInput
 	}

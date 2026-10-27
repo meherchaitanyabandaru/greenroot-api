@@ -1101,6 +1101,18 @@ func TestPublishedPrices(t *testing.T) {
 	}
 }
 
+// 18% GST on top of the price after discounts, to the paisa.
+func TestWithGST(t *testing.T) {
+	for taxable, want := range map[float64][2]float64{
+		299: {53.82, 352.82}, 852.15: {153.39, 1005.54}, 5089.8: {916.16, 6005.96},
+		10189.8: {1834.16, 12023.96}, 1279.93: {230.39, 1510.32}, 0: {0, 0},
+	} {
+		if gst, total := withGST(taxable); gst != want[0] || total != want[1] {
+			t.Errorf("₹%.2f: GST %.2f total %.2f, want %.2f %.2f", taxable, gst, total, want[0], want[1])
+		}
+	}
+}
+
 func TestCanonicalCycle(t *testing.T) {
 	for in, want := range map[string]string{
 		"monthly": "MONTHLY", " QUARTERLY ": "QUARTERLY", "SIX_MONTH": "SIX_MONTH", "SEMI_ANNUAL": "SIX_MONTH",
@@ -1123,7 +1135,8 @@ func TestWithPrices_ListsEveryCycleAndKeepsOldFields(t *testing.T) {
 		t.Fatalf("got %+v six=%v yearly=%v", p.CyclePrices, *p.SixMonthPrice, *p.YearlyPrice)
 	}
 	q := p.CyclePrices[1]
-	if q.BillingCycle != "QUARTERLY" || q.Months != 3 || q.DiscountPercent != 5 || q.ListAmount != 1497 || q.Amount != 1422.15 || q.PerMonth != 474.05 {
+	if q.BillingCycle != "QUARTERLY" || q.Months != 3 || q.DiscountPercent != 5 || q.ListAmount != 1497 || q.Amount != 1422.15 || q.PerMonth != 474.05 ||
+		q.GSTAmount != 255.99 || q.TotalAmount != 1678.14 {
 		t.Fatalf("quarterly: %+v", q)
 	}
 	free := SubscriptionPlan{}
@@ -1203,6 +1216,22 @@ func TestRenew_OwnerUpgradesTrialToPaidPlan(t *testing.T) {
 	}
 	if sub.PlanID != growth.ID {
 		t.Errorf("renewal must switch to GROWTH (%d), got plan %d", growth.ID, sub.PlanID)
+	}
+}
+
+// An offline Silver quarterly payment records ₹852.15 + ₹153.39 GST = ₹1,005.54.
+func TestRenew_PaymentRecordsGST(t *testing.T) {
+	repo := newMock()
+	trial := repo.seedPlan("TRIAL", 0, 0)
+	silver := repo.seedPlan("BASIC", 299, 0)
+	repo.seedSub(1, 10, trial.ID, "ACTIVE")
+	if _, err := svc(repo).Renew(context.Background(), adminActor(1), 1, RenewSubscriptionRequest{
+		PlanID: ptr(silver.ID), BillingCycle: "QUARTERLY", PaymentMethod: ptr("CASH"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if p := repo.lastPayment; p == nil || p.Amount != 1005.54 || p.GSTAmount != 153.39 {
+		t.Fatalf("payment %+v, want amount 1005.54 with GST 153.39", p)
 	}
 }
 

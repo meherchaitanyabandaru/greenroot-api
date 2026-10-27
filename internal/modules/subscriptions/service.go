@@ -193,7 +193,8 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateSu
 	if err != nil {
 		return UserSubscription{}, ErrInvalidInput
 	}
-	paid, err := s.checkPayment(ctx, actor, userID, "new", input.PlanID, cycle, finalAmount, input.Provider, input.ProviderRef, input.ProviderPaymentID, input.ProviderSignature, input.trusted)
+	gst, charged := withGST(finalAmount)
+	paid, err := s.checkPayment(ctx, actor, userID, "new", input.PlanID, cycle, charged, input.Provider, input.ProviderRef, input.ProviderPaymentID, input.ProviderSignature, input.trusted)
 	if err != nil {
 		return UserSubscription{}, err
 	}
@@ -211,7 +212,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateSu
 			return err
 		}
 		subscription = created
-		return s.createSubscriptionPayment(ctx, repo, created.ID, userID, finalAmount, input.PaymentMethod, input.Provider, input.ProviderRef, paid, "Subscription created")
+		return s.createSubscriptionPayment(ctx, repo, created.ID, userID, charged, gst, input.PaymentMethod, input.Provider, input.ProviderRef, paid, "Subscription created")
 	})
 	if err != nil {
 		return UserSubscription{}, err
@@ -335,7 +336,8 @@ func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID 
 	if err != nil {
 		return UserSubscription{}, ErrInvalidInput
 	}
-	paid, err := s.checkPayment(ctx, actor, current.UserID, strconv.FormatInt(subscriptionID, 10), planID, cycle, finalAmount, input.Provider, input.ProviderRef, input.ProviderPaymentID, input.ProviderSignature, input.trusted)
+	gst, charged := withGST(finalAmount)
+	paid, err := s.checkPayment(ctx, actor, current.UserID, strconv.FormatInt(subscriptionID, 10), planID, cycle, charged, input.Provider, input.ProviderRef, input.ProviderPaymentID, input.ProviderSignature, input.trusted)
 	if err != nil {
 		return UserSubscription{}, err
 	}
@@ -352,7 +354,7 @@ func (s *Service) Renew(ctx context.Context, actor ActorContext, subscriptionID 
 			return err
 		}
 		subscription = renewed
-		return s.createSubscriptionPayment(ctx, repo, renewed.ID, current.UserID, finalAmount, input.PaymentMethod, input.Provider, input.ProviderRef, paid, "Subscription renewed")
+		return s.createSubscriptionPayment(ctx, repo, renewed.ID, current.UserID, charged, gst, input.PaymentMethod, input.Provider, input.ProviderRef, paid, "Subscription renewed")
 	})
 	if err != nil {
 		return UserSubscription{}, err
@@ -499,7 +501,7 @@ func (s *Service) canAccess(actor ActorContext, subscription UserSubscription) e
 	return ErrForbidden
 }
 
-func (s *Service) createSubscriptionPayment(ctx context.Context, repo Repository, subscriptionID int64, userID int64, amount float64, method *string, provider *string, providerRef *string, paid *verifiedPayment, notes string) error {
+func (s *Service) createSubscriptionPayment(ctx context.Context, repo Repository, subscriptionID int64, userID int64, amount, gst float64, method *string, provider *string, providerRef *string, paid *verifiedPayment, notes string) error {
 	if amount <= 0 {
 		return nil
 	}
@@ -518,6 +520,7 @@ func (s *Service) createSubscriptionPayment(ctx context.Context, repo Repository
 		SubscriptionID:  subscriptionID,
 		PayerUserID:     userID,
 		Amount:          amount,
+		GSTAmount:       gst,
 		Method:          normalizedMethod,
 		Status:          status,
 		Provider:        provider,
@@ -685,7 +688,10 @@ func (s *Service) ValidatePromo(ctx context.Context, req ValidatePromoRequest) P
 	if final < 0 {
 		final = 0
 	}
+	gst, total := withGST(final)
 	return PromoValidation{
+		GSTAmount:     gst,
+		TotalPrice:    total,
 		Valid:         true,
 		PromoCode:     promo.PromoCode,
 		DiscountType:  promo.DiscountType,

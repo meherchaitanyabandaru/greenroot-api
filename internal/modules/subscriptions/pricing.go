@@ -51,8 +51,20 @@ func termFor(cycle string) (cycleTerm, bool) {
 	return cycleTerm{}, false
 }
 
-// cyclePrice is what a cycle costs: monthly price × months, less the cycle
-// discount, to the paisa. There is no GST or fee: the price is the total.
+// GSTPercent is added on top of every subscription charge (after the cycle
+// discount and any promo). Plan prices are before tax.
+const GSTPercent = 18
+
+// withGST returns the GST on a taxable amount and the total to charge, both
+// to the paisa (₹299 → ₹53.82 GST, ₹352.82 total).
+func withGST(taxable float64) (gst, total float64) {
+	paise := math.Round(taxable * 100)
+	g := math.Round(paise * GSTPercent / 100)
+	return g / 100, (paise + g) / 100
+}
+
+// cyclePrice is what a cycle costs before tax: monthly price × months, less
+// the cycle discount, to the paisa.
 func cyclePrice(monthly float64, t cycleTerm) float64 {
 	paise := math.Round(monthly*100) * float64(t.Months) * float64(100-t.DiscountPercent) / 100
 	return math.Round(paise) / 100
@@ -64,8 +76,10 @@ type CyclePrice struct {
 	Months          int     `json:"months"`
 	DiscountPercent int     `json:"discount_percent"`
 	ListAmount      float64 `json:"list_amount"` // monthly × months, before the discount
-	Amount          float64 `json:"amount"`      // what is charged
-	PerMonth        float64 `json:"per_month"`
+	Amount          float64 `json:"amount"`      // after the discount, before GST
+	PerMonth        float64 `json:"per_month"`   // before GST
+	GSTAmount       float64 `json:"gst_amount"`
+	TotalAmount     float64 `json:"total_amount"` // what is charged: amount + GST
 }
 
 // withPrices fills the price list a paid plan offers, and the older
@@ -80,7 +94,10 @@ func withPrices(plan *SubscriptionPlan) {
 	plan.CyclePrices = make([]CyclePrice, 0, len(cycleTerms))
 	for _, t := range cycleTerms {
 		amount := cyclePrice(monthly, t)
+		gst, total := withGST(amount)
 		plan.CyclePrices = append(plan.CyclePrices, CyclePrice{
+			GSTAmount:       gst,
+			TotalAmount:     total,
 			BillingCycle:    t.Code,
 			Months:          t.Months,
 			DiscountPercent: t.DiscountPercent,

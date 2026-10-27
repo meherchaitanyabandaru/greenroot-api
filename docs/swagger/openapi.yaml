@@ -1080,7 +1080,7 @@ paths:
       summary: List subscription plans
       responses:
         "200":
-          description: Active subscription plans
+          description: "Active subscription plans. Paid plans carry monthly_price and cycle_prices: billing_cycle, months, discount_percent, list_amount, amount (before GST), gst_amount (18%), total_amount (charged), per_month."
           content:
             application/json:
               schema:
@@ -1234,7 +1234,7 @@ paths:
       tags: [Subscriptions]
       summary: Create a Razorpay order for a subscription payment
       description: >
-        Prices the plan on the server and creates a Razorpay order bound to the
+        Prices the plan on the server (cycle discount, promo, then 18% GST on top) and creates a Razorpay order bound to the
         user, subscription, plan and billing cycle. Pay it with Razorpay
         checkout, then send the checkout result to POST /subscriptions or
         /subscriptions/{id}/renew with provider razorpay. 503 when Razorpay

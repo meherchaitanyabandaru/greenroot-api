@@ -84,7 +84,8 @@ type SubscriptionSummary struct {
 type Payment struct {
 	ID                   int64      `json:"id"`
 	PaymentCode          string     `json:"payment_code"`
-	Amount               float64    `json:"amount"`
+	Amount               float64    `json:"amount"`               // charged, GST included
+	GSTAmount            *float64   `json:"gst_amount,omitempty"` // nil for payments before GST
 	PaymentMethod        *string    `json:"payment_method,omitempty"`
 	TransactionReference *string    `json:"transaction_reference,omitempty"`
 	Status               string     `json:"payment_status"`
@@ -122,7 +123,9 @@ type PromoValidation struct {
 	DiscountValue float64 `json:"discount_value"`
 	BasePrice     float64 `json:"base_price"`
 	Savings       float64 `json:"savings"`
-	FinalPrice    float64 `json:"final_price"`
+	FinalPrice    float64 `json:"final_price"` // after the promo, before GST
+	GSTAmount     float64 `json:"gst_amount"`
+	TotalPrice    float64 `json:"total_price"` // what is charged
 	Message       string  `json:"message,omitempty"`
 }
 
