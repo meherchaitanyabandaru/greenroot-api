@@ -775,7 +775,9 @@ func computeDiscount(base float64, discountType string, value float64, cap *floa
 	if savings > base {
 		savings = base
 	}
-	return savings
+	// To the paisa, so the shown total, the Razorpay order and the stored
+	// payment agree (10% of ₹1,422.15 is ₹142.22, not ₹142.215).
+	return math.Round(savings*100) / 100
 }
 
 func buildBlastMessage(promo *SubscriptionPromo) string {

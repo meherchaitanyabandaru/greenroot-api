@@ -1145,6 +1145,13 @@ func TestComputeDiscount_Percentage(t *testing.T) {
 	}
 }
 
+func TestComputeDiscount_RoundsToThePaisa(t *testing.T) {
+	// Gold quarterly ₹1,422.15 with 10% off: save ₹142.22, pay ₹1,279.93.
+	if got := computeDiscount(1422.15, "PERCENTAGE", 10, nil); got != 142.22 {
+		t.Fatalf("savings %v, want 142.22", got)
+	}
+}
+
 func TestComputeDiscount_PercentageWithCap(t *testing.T) {
 	cap := 50.0
 	savings := computeDiscount(1000, "PERCENTAGE", 10, &cap) // 10% = 100 but capped at 50
