@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/messaging"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sms"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -18,10 +20,17 @@ const TrialReminderDays = 2
 
 const trialEndingType = "TRIAL_ENDING"
 
+// EventNotifier raises SMS/email events (messaging.Notifier).
+type EventNotifier interface {
+	NotifyAsync(ev messaging.Event)
+}
+
 // RemindEndingTrials asks each owner whose free trial ends within
 // TrialReminderDays to choose a plan: in-app and by push, once per trial.
 // Safe to run often and on several API instances. Returns how many were told.
-func RemindEndingTrials(ctx context.Context, db *sql.DB, rdb *redis.Client, now time.Time) (int, error) {
+// events (may be nil) also sends it by SMS and email: a trial that lapses
+// unnoticed stops a nursery from taking orders.
+func RemindEndingTrials(ctx context.Context, db *sql.DB, rdb *redis.Client, now time.Time, events EventNotifier) (int, error) {
 	today := businessDay(now)
 	list, err := endingTrials(ctx, db, today)
 	if err != nil || len(list) == 0 {
@@ -41,9 +50,15 @@ func RemindEndingTrials(ctx context.Context, db *sql.DB, rdb *redis.Client, now 
 				continue
 			}
 		}
+		daysLeft := int(d.end.Sub(today).Hours() / 24)
+		if events != nil {
+			id := d.subID
+			events.NotifyAsync(messaging.Event{Code: sms.TemplateTrialEnding, UserID: d.userID,
+				Values: map[string]string{"days_left": strconv.Itoa(daysLeft)}, ReferenceType: "SUBSCRIPTION", ReferenceID: &id})
+		}
 		ev := notifyqueue.Event{
 			UserID: d.userID, Type: trialEndingType, Title: "Your free trial is ending",
-			Message: trialEndingMessage(int(d.end.Sub(today).Hours()/24), d.end, from),
+			Message: trialEndingMessage(daysLeft, d.end, from),
 			Data:    notifyqueue.Link("subscription", d.subID),
 		}
 		var queue redis.Cmdable // a nil *redis.Client in the interface is not nil

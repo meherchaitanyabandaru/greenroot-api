@@ -18,6 +18,14 @@ const (
 	TemplatePaymentReceivedSubscription = "PAYMENT_RECEIVED_SUBSCRIPTION"
 	TemplatePaymentFailed               = "PAYMENT_FAILED"
 	TemplateDeliveryUnconfirmed         = "DELIVERY_UNCONFIRMED"
+	// Order lifecycle (20261028_01): see greenroot-infra docs/messaging.md.
+	TemplateQuotationReceived = "QUOTATION_RECEIVED"
+	TemplateOrderPlaced       = "ORDER_PLACED"
+	TemplateDeliveryOnTheWay  = "DELIVERY_ON_THE_WAY"
+	TemplateOrderPartial      = "ORDER_PARTIAL"
+	TemplateNurseryApproved   = "NURSERY_APPROVED"
+	TemplateTrialEnding       = "TRIAL_ENDING"
+	TemplateDeliveryIssue     = "DELIVERY_ISSUE"
 )
 
 var SystemTemplateCodes = []string{

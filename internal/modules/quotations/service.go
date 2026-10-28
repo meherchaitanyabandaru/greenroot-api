@@ -9,13 +9,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/phone"
-
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/phone"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/messaging"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sms"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
 )
@@ -40,6 +41,7 @@ type Service struct {
 	auditSvc   *auditlog.Service
 	storage    *storage.Client
 	redis      redis.Cmdable
+	events     EventNotifier // SMS; nil = in-app only
 }
 
 func NewService(repository Repository, auditSvc *auditlog.Service, storageCli *storage.Client, redisClients ...redis.Cmdable) *Service {
@@ -232,7 +234,7 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateQu
 
 // notifyAssigned tells a manager a quotation is now theirs to handle.
 func (s *Service) notifyAssigned(ctx context.Context, managerID int64, q *Quotation) {
-	_ = s.repository.CreateNotification(ctx, managerID,
+	s.enqueueNotification(ctx, managerID,
 		"QUOTATION_ASSIGNED",
 		"Quotation Assigned to You",
 		fmt.Sprintf("You have been assigned to quotation %s.", q.QuotationCode),
@@ -424,6 +426,18 @@ func (s *Service) SendToCustomer(ctx context.Context, actor ActorContext, quotat
 			notifyqueue.EventQuotationSent,
 			"Quotation Ready for Review",
 			fmt.Sprintf("Quotation %s from %s is ready for your review.", approved.QuotationCode, nurseryName), notifyqueue.Link("quotation", approved.ID))
+	}
+	// Not on the app (never signed in, or only a mobile number): by SMS.
+	if s.events != nil && (approved.CustomerUserID != nil || approved.RecipientMobile != nil) {
+		ev := messaging.Event{Code: sms.TemplateQuotationReceived, NotOnAppOnly: true,
+			Values:        map[string]string{"quotation_code": approved.QuotationCode, "amount": messaging.FormatAmount(approved.TotalAmount)},
+			ReferenceType: "QUOTATION", ReferenceID: &approved.ID}
+		if approved.CustomerUserID != nil {
+			ev.UserID = *approved.CustomerUserID
+		} else {
+			ev.Mobile = *approved.RecipientMobile
+		}
+		s.events.NotifyAsync(ev)
 	}
 	return enrichQuotation(actor, *approved), nil
 }
@@ -620,13 +634,21 @@ func (s *Service) BuyerReject(ctx context.Context, actor ActorContext, quotation
 		if reason != "" {
 			msg += " Reason: " + reason
 		}
-		_ = s.repository.CreateNotification(ctx, ownerID,
+		s.enqueueNotification(ctx, ownerID,
 			"QUOTATION_REJECTED",
 			"Quotation Rejected",
 			msg, notifyqueue.Link("quotation", quotationID))
 	}
 	return enrichQuotation(actor, *updated), nil
 }
+
+// EventNotifier raises SMS/email events (messaging.Notifier).
+type EventNotifier interface {
+	NotifyAsync(ev messaging.Event)
+}
+
+// SetEvents turns on SMS for quotation events (nil = in-app only).
+func (s *Service) SetEvents(n EventNotifier) { s.events = n }
 
 func (s *Service) enqueueNotification(ctx context.Context, userID int64, notifType, title, message string, data map[string]any) {
 	err := notifyqueue.Enqueue(ctx, s.redis, notifyqueue.Event{

@@ -89,6 +89,8 @@ func (m *mockRepo) NurseryIDForUser(_ context.Context, userID int64) (int64, err
 
 func (m *mockRepo) NurseryName(_ context.Context, _ int64) (string, error) { return "Test", nil }
 
+func (m *mockRepo) NurseryOwnerID(_ context.Context, _ int64) (int64, error) { return 0, nil }
+
 func (m *mockRepo) IsNurseryMember(_ context.Context, nurseryID, userID int64) (bool, error) {
 	return m.members[mk(nurseryID, userID)], nil
 }

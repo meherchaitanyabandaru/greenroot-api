@@ -55,7 +55,7 @@ func TestTrialReminder_OnceForTrialsEndingSoon(t *testing.T) {
 	paidEndsSoon := add(5, paidPlan, "ACTIVE", "2031-06-02")  // not a trial
 	cancelled := add(6, trialPlan, "CANCELLED", "2031-06-02") // not running
 
-	n, err := subscriptions.RemindEndingTrials(ctx, db, nil, now)
+	n, err := subscriptions.RemindEndingTrials(ctx, db, nil, now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestTrialReminder_OnceForTrialsEndingSoon(t *testing.T) {
 			t.Errorf("%s must not be reminded", name)
 		}
 	}
-	if n, err := subscriptions.RemindEndingTrials(ctx, db, nil, now); err != nil || n != 0 {
+	if n, err := subscriptions.RemindEndingTrials(ctx, db, nil, now, nil); err != nil || n != 0 {
 		t.Fatalf("second run told %d (%v), want 0: once per trial", n, err)
 	}
 }

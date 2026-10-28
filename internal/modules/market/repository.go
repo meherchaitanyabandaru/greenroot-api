@@ -18,6 +18,7 @@ type Repository interface {
 	// Nursery helpers
 	NurseryIDForUser(ctx context.Context, userID int64) (int64, error)
 	NurseryName(ctx context.Context, nurseryID int64) (string, error)
+	NurseryOwnerID(ctx context.Context, nurseryID int64) (int64, error)
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	IsNurseryActive(ctx context.Context, nurseryID int64) (bool, error)
 
@@ -1003,6 +1004,12 @@ func (r *PostgresRepository) SetAdPickupLocation(ctx context.Context, adID int64
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE ad_id = $1`, adID, lat, lon, source)
 	return err
+}
+
+func (r *PostgresRepository) NurseryOwnerID(ctx context.Context, nurseryID int64) (int64, error) {
+	var id sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `SELECT owner_user_id FROM public.nurseries WHERE nursery_id = $1`, nurseryID).Scan(&id)
+	return id.Int64, err
 }
 
 func (r *PostgresRepository) EnquiryIDFor(ctx context.Context, adID, nurseryID int64) (int64, error) {

@@ -30,6 +30,8 @@ type Recipient struct {
 	UserID int64
 	Mobile string
 	Email  string
+	// SignedIn: has used the app (push reaches them; NotOnAppOnly events skip them).
+	SignedIn bool
 }
 
 // Message is one event addressed to one recipient on one channel.
@@ -59,8 +61,14 @@ type RecipientLookup interface {
 
 // Event is what business modules raise; Values hold semantic data, see ExpandValues.
 type Event struct {
-	Code          string
-	UserID        int64
+	Code   string
+	UserID int64
+	// Mobile reaches someone with no account yet (UserID 0), e.g. a quotation
+	// sent to a number the nursery typed in.
+	Mobile string
+	// NotOnAppOnly: for customers who have never signed in; app users get the
+	// same news by push, so they are not sent an SMS too.
+	NotOnAppOnly  bool
 	Values        map[string]string
 	Sensitive     []string
 	ReferenceType string
@@ -86,9 +94,15 @@ func NewNotifier(recipients RecipientLookup, channels ...Channel) *Notifier {
 // Notify delivers the event on every channel. A failing channel never stops
 // the others.
 func (n *Notifier) Notify(ctx context.Context, ev Event) ([]Outcome, error) {
-	recipient, err := n.recipients.Recipient(ctx, ev.UserID)
-	if err != nil {
-		return nil, fmt.Errorf("resolve recipient %d: %w", ev.UserID, err)
+	recipient := Recipient{Mobile: ev.Mobile}
+	if ev.UserID != 0 {
+		var err error
+		if recipient, err = n.recipients.Recipient(ctx, ev.UserID); err != nil {
+			return nil, fmt.Errorf("resolve recipient %d: %w", ev.UserID, err)
+		}
+	}
+	if ev.NotOnAppOnly && recipient.SignedIn {
+		return nil, nil
 	}
 	msg := Message{
 		TemplateCode:  ev.Code,

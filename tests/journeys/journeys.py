@@ -23,6 +23,7 @@ import hmac
 import json
 import os
 import random
+import re
 import socket
 import sys
 import time
@@ -1227,6 +1228,14 @@ def journey_market():
     expect("the posting nursery cannot enquire on its own ad", "POST", f"/market/ads/{a['id']}/enquiries", owner.token, {"message": "self"}, status=400)
     e = expect("a rival enquires", "POST", f"/market/ads/{a['id']}/enquiries", rival.token, {"message": "Need 50, can you deliver?"}, status=(200, 201))
     expect("a second enquiry from the same nursery is refused", "POST", f"/market/ads/{a['id']}/enquiries", rival.token, {"message": "again"}, status=400)
+    seen = False
+    for _ in range(25):  # the notification queue is asynchronous
+        notes = call("GET", "/notifications", owner.token)[1].get("notifications", [])
+        seen = any(n.get("notification_type") == "MARKET_MESSAGE" and "Need 50" in n.get("message", "") for n in notes)
+        if seen:
+            break
+        time.sleep(0.2)
+    check("…the ad's owner is told about the enquiry (before: only the Chats badge)", seen, owner.id)
     got = expect("…the owner's view of the ad", "GET", f"/market/ads/{a['id']}", owner.token)["ad"]
     check("…can no longer be deleted (it has a chat)", got["capabilities"]["can_delete"] is False, got["capabilities"])
     expect("…delete is refused: archive it instead", "DELETE", f"/market/ads/{a['id']}", owner.token, status=409)
@@ -2055,6 +2064,71 @@ def journey_notifications():
     check("…deletes nothing (unread are kept)", out.get("deleted") == 0, out)
 
 
+def journey_messages():
+    """Who is told what: in-app/push at each order step; SMS only for customers who never signed in (and for money)."""
+    boss = admin()
+    owner, manager, buyer, driver, plants = team(boss)
+    nid = owner.nursery_id
+    address = {"contact_name": "Ravi", "contact_mobile": buyer.mobile, "address_line1": "12 Lake Road", "city": "Hyderabad", "latitude": 17.44, "longitude": 78.38}
+    items = [{"plant_id": plants[0], "quantity": 5, "unit_price": 100, "total_price": 500}]
+
+    def told(user, kind):  # the queue is asynchronous
+        for _ in range(25):
+            notes = call("GET", "/notifications", user.token)[1].get("notifications", [])
+            if any(n.get("notification_type") == kind for n in notes):
+                return True
+            time.sleep(0.2)
+        return False
+
+    def texted(mobile, code, tries=25):
+        for _ in range(tries):
+            rows = call("GET", f"/sms/messages?mobile={mobile}&template_code={code}", boss.token)[1].get("messages", [])
+            if rows:
+                return rows
+            time.sleep(0.2)
+        return []
+
+    o = expect("owner places an order for a customer on the app", "POST", "/orders", owner.token,
+               {"seller_nursery_id": nid, "buyer_mobile": buyer.mobile, "delivery": address, "items": items}, status=201)["order"]
+    check("…the customer is told in the app (order placed)", told(buyer, "ORDER_PLACED"), o["id"])
+    check("…and gets no SMS: push reaches app users", not texted(buyer.mobile, "ORDER_PLACED", tries=5), buyer.mobile)
+    expect("owner confirms", "POST", f"/orders/{o['id']}/confirm", owner.token, {})
+    check("…the customer is told it is confirmed", told(buyer, "ORDER_CONFIRMED"), o["id"])
+    expect("owner assigns the manager", "POST", f"/orders/{o['id']}/assign-manager", owner.token, {"manager_user_id": manager.id})
+    check("…the manager is told (through the queue, so it pushes)", told(manager, "ORDER_ASSIGNED"), o["id"])
+
+    newbie = new_mobile()
+    o2 = expect("owner places an order for a number that never used the app", "POST", "/orders", owner.token,
+                {"seller_nursery_id": nid, "buyer_mobile": newbie, "delivery": dict(address, contact_mobile=newbie), "items": items}, status=201)["order"]
+    rows = texted(newbie, "ORDER_PLACED")
+    check("…they get an SMS with the order code", bool(rows) and "ORD-" in rows[0].get("message_body", ""), rows)
+    for step in ("confirm", "start-loading", "complete-loading"):
+        expect(f"{step} their order", "POST", f"/orders/{o2['id']}/{step}", owner.token, LOADED_OK if step == "complete-loading" else {})
+    d2 = expect("trip for their order", "POST", "/dispatches", owner.token, {"order_id": o2["id"]}, status=201)["dispatch"]
+    expect("driver accepts", "POST", f"/dispatches/{d2['id']}/accept", driver.token, {"trip_code": d2["trip_uuid"]})
+    expect("driver starts the trip", "PUT", f"/dispatches/{d2['id']}/status", driver.token, {"dispatch_status": "IN_TRANSIT"})
+    rows = texted(newbie, "DELIVERY_ON_THE_WAY")
+    check("…the delivery code goes to them by SMS (they have no app to see it), masked in the SMS log",
+          bool(rows) and "Give code **** to the driver" in rows[0].get("message_body", "") and not re.search(r"code \d{4}", rows[0]["message_body"]), rows)
+    expect("nursery marks it delivered with a reason (no app to show the code)", "POST", f"/dispatches/{d2['id']}/deliver", owner.token,
+           {"override_reason": "Customer has no smartphone; plants handed over at the gate"})
+    check("…they are told by SMS (48-hour dispute window)", bool(texted(newbie, "DELIVERY_UNCONFIRMED")), newbie)
+
+    q = expect("owner drafts a quotation for a number with no account", "POST", "/quotations", owner.token,
+               {"quotation_type": "CUSTOMER", "nursery_id": nid, "recipient_name": "Walk-in", "recipient_mobile": (stranger := new_mobile()), "items": items}, status=(200, 201))["quotation"]
+    expect("owner sends it", "POST", f"/quotations/{q['id']}/send", owner.token, {})
+    rows = texted(stranger, "QUOTATION_RECEIVED")
+    check("…the number gets an SMS with the quotation code", bool(rows) and "QUO-" in rows[0].get("message_body", ""), rows)
+
+    expect("start loading", "POST", f"/orders/{o['id']}/start-loading", owner.token, {})
+    expect("complete loading", "POST", f"/orders/{o['id']}/complete-loading", owner.token, LOADED_OK)
+    d = expect("owner creates the trip", "POST", "/dispatches", owner.token, {"order_id": o["id"]}, status=201)["dispatch"]
+    expect("the driver scans and accepts", "POST", f"/dispatches/{d['id']}/accept", driver.token, {"trip_code": d["trip_uuid"]})
+    check("…the owner is told the driver accepted", told(owner, "DISPATCH_ACCEPTED"), d["id"])
+    expect("owner cancels the trip", "PUT", f"/dispatches/{d['id']}/status", owner.token, {"dispatch_status": "CANCELLED"})
+    check("…the driver is told it was cancelled", told(driver, "TRIP_CANCELLED"), d["id"])
+
+
 JOURNEYS = [
     ("auth", journey_auth),
     ("accounts", journey_accounts),
@@ -2075,6 +2149,7 @@ JOURNEYS = [
     ("access", journey_access),
     ("reports", journey_reports),
     ("notifications", journey_notifications),
+    ("messages", journey_messages),
 ]
 
 

@@ -11,6 +11,7 @@ import (
 
 type Module struct {
 	handler *Handler
+	service *Service
 }
 
 func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, redisClients ...*redis.Client) Module {
@@ -29,7 +30,7 @@ func NewModuleWithTrial(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Se
 	} else {
 		service = NewServiceWithTrial(repository, trialSvc, audit)
 	}
-	return Module{handler: NewHandler(service, jwt)}
+	return Module{handler: NewHandler(service, jwt), service: service}
 }
 
 func (m Module) RegisterRoutes(router chi.Router) {
@@ -69,4 +70,10 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		// Customers
 		r.Get("/{id}/customers", m.handler.GetCustomers)
 	})
+}
+
+// WithEvents sends the approval by SMS too (messaging.Notifier).
+func (m Module) WithEvents(n EventNotifier) Module {
+	m.service.SetEvents(n)
+	return m
 }

@@ -140,12 +140,21 @@ func TestSeedTemplatesFitOneSMS(t *testing.T) {
 		{Body: "Payment of Rs.{#numeric#}.{#numeric#} received for your GreenRoot subscription. Payment ref PAY-{#numeric#}-{#numeric#}. - GreenRoot", Variables: []string{"amount_rupees", "amount_paise", "payment_date", "payment_seq"}},
 		{Body: "Your payment of Rs.{#numeric#}.{#numeric#} on GreenRoot (ref PAY-{#numeric#}-{#numeric#}) was not successful. Please try again. - GreenRoot", Variables: []string{"amount_rupees", "amount_paise", "payment_date", "payment_seq"}},
 		{Body: "GreenRoot delivery DSP-{#numeric#}-{#numeric#} was marked done by the nursery without your code. Not received? Report it in the app within 48 hours. - GreenRoot", Variables: []string{"dispatch_date", "dispatch_seq"}},
+		// 20261028_01_lifecycle_messages
+		{Body: "You have a GreenRoot quotation QUO-{#numeric#}-{#numeric#} for Rs.{#numeric#}.{#numeric#}. Sign in to the GreenRoot app with this number to view and accept it. - GreenRoot", Variables: []string{"quotation_date", "quotation_seq", "amount_rupees", "amount_paise"}},
+		{Body: "Your GreenRoot order ORD-{#numeric#}-{#numeric#} for Rs.{#numeric#}.{#numeric#} has been placed. Sign in to the GreenRoot app with this number to track it. - GreenRoot", Variables: []string{"order_date", "order_seq", "amount_rupees", "amount_paise"}},
+		{Body: "Your GreenRoot delivery DSP-{#numeric#}-{#numeric#} is on the way. Give code {#numeric#} to the driver only after you check your plants. - GreenRoot", Variables: []string{"dispatch_date", "dispatch_seq", "delivery_code"}},
+		{Body: "GreenRoot order ORD-{#numeric#}-{#numeric#} was loaded with fewer plants than ordered. New total Rs.{#numeric#}.{#numeric#}. - GreenRoot", Variables: []string{"order_date", "order_seq", "amount_rupees", "amount_paise"}},
+		{Body: "Your nursery is approved on GreenRoot. Sign in to start taking orders. - GreenRoot", Variables: []string{}},
+		{Body: "Your GreenRoot free trial ends in {#numeric#} days. Choose a plan in the app to keep taking orders. - GreenRoot", Variables: []string{"days_left"}},
+		{Body: "A customer reported a problem with GreenRoot delivery DSP-{#numeric#}-{#numeric#}. Open the app to respond. - GreenRoot", Variables: []string{"dispatch_date", "dispatch_seq"}},
 	}
 	values := map[string]string{
 		"otp": "123456", "valid_minutes": "5", "mobile_last4": "0000",
 		"amount_rupees": "1250000", "amount_paise": "50",
 		"order_date": "20261016", "order_seq": "12345", "payment_date": "20261016", "payment_seq": "12345",
 		"dispatch_date": "20261016", "dispatch_seq": "12345",
+		"quotation_date": "20261016", "quotation_seq": "12345", "delivery_code": "1234", "days_left": "30",
 	}
 	for _, spec := range seeds {
 		spec.Category = CategoryServiceImplicit

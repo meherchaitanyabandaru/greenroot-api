@@ -17,8 +17,10 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/database"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/database/migrate"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/database/migrations"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/email"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/market"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/notifications"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sms"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/subscriptions"
 	platformemail "github.com/meherchaitanyabandaru/greenroot-api/platform/email"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/fcm"
@@ -310,7 +312,9 @@ func purgeOldNotifications(ctx context.Context, deps Dependencies) {
 }
 
 func remindEndingTrials(ctx context.Context, deps Dependencies) {
-	n, err := subscriptions.RemindEndingTrials(ctx, deps.DB, deps.Redis, time.Now())
+	notifier := newNotifier(deps, sms.NewModule(deps.DB, deps.JWT, deps.Audit, deps.SMS),
+		email.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Email))
+	n, err := subscriptions.RemindEndingTrials(ctx, deps.DB, deps.Redis, time.Now(), notifier)
 	if err != nil {
 		slog.Error("trial reminder job failed", "error", err)
 		return

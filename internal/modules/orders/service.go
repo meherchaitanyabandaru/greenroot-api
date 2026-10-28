@@ -6,16 +6,17 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"strings"
 	"time"
 
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/phone"
-
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/phone"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/messaging"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sms"
 	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
 )
@@ -35,6 +36,34 @@ type Service struct {
 	auditSvc   *auditlog.Service
 	storage    *storage.Client
 	redis      redis.Cmdable
+	events     EventNotifier // SMS/email; nil = in-app only
+}
+
+// EventNotifier raises SMS/email events (messaging.Notifier).
+type EventNotifier interface {
+	NotifyAsync(ev messaging.Event)
+}
+
+// SetEvents turns on SMS for order events (nil = in-app only).
+func (s *Service) SetEvents(n EventNotifier) { s.events = n }
+
+// notify goes through the queue, so it is also pushed to the phone; without a
+// queue it is still kept in the in-app inbox.
+func (s *Service) notify(ctx context.Context, userID int64, notifType, title, message string, data map[string]any) {
+	if err := notifyqueue.Enqueue(ctx, s.redis, notifyqueue.Event{UserID: userID, Type: notifType, Title: title, Message: message, Data: data}); err != nil {
+		_ = s.repository.CreateNotification(ctx, userID, notifType, title, message, data)
+	}
+}
+
+func (s *Service) raise(ev messaging.Event) {
+	if s.events != nil {
+		s.events.NotifyAsync(ev)
+	}
+}
+
+// orderValues are what the order SMS templates read (ORD-{date}-{seq}, Rs.{rupees}.{paise}).
+func orderValues(o Order) map[string]string {
+	return map[string]string{"order_code": o.OrderCode, "amount": messaging.FormatAmount(o.TotalAmount)}
 }
 
 func NewService(repository Repository, auditSvc *auditlog.Service, storageCli *storage.Client, redisClients ...redis.Cmdable) *Service {
@@ -225,6 +254,17 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, input CreateOr
 	}
 	s.audit(ctx, actor, auditlog.EntityOrder, order.ID, auditlog.ActionCreate,
 		fmt.Sprintf("Order %s created", order.OrderNumber), nil, input)
+	if b := order.BuyerUserID; b != nil && *b != actor.UserID {
+		from := "your nursery"
+		if order.SellerNursery != nil && *order.SellerNursery != "" {
+			from = *order.SellerNursery
+		}
+		s.notify(ctx, *b, "ORDER_PLACED", "New order",
+			fmt.Sprintf("%s placed order %s for you. It will be confirmed soon.", from, order.OrderCode), notifyqueue.Link("order", order.ID))
+		id := order.ID
+		s.raise(messaging.Event{Code: sms.TemplateOrderPlaced, UserID: *b, NotOnAppOnly: true,
+			Values: orderValues(*order), ReferenceType: "ORDER", ReferenceID: &id})
+	}
 	s.enrichOrder(ctx, actor, order)
 	s.bumpOrdersSearchCache(ctx, actor.UserID)
 	return *order, nil
@@ -284,6 +324,10 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, orderID 
 		fmt.Sprintf("Order #%d status %s → %s", orderID, current.Status, status),
 		map[string]any{"status": current.Status},
 		map[string]any{"status": status})
+	if status == "CONFIRMED" && order.BuyerUserID != nil && *order.BuyerUserID != actor.UserID {
+		s.notify(ctx, *order.BuyerUserID, "ORDER_CONFIRMED", "Order confirmed",
+			fmt.Sprintf("Your order %s was confirmed. The nursery will load it next.", order.OrderCode), notifyqueue.Link("order", order.ID))
+	}
 	s.enrichOrder(ctx, actor, order)
 	s.bumpOrdersSearchCache(ctx, actor.UserID)
 	return *order, nil
@@ -324,7 +368,7 @@ func (s *Service) UpdateDeliverySnapshot(ctx context.Context, actor ActorContext
 	if input.EmergencyUpdate {
 		if driverUserID, err := s.repository.StartedDispatchDriverUserID(ctx, orderID); err == nil && driverUserID != nil {
 			msg := fmt.Sprintf("Delivery address changed for order %s. Please review and acknowledge the update.", updated.OrderCode)
-			_ = s.repository.CreateNotification(ctx, *driverUserID, "DELIVERY_ADDRESS_UPDATED", "Delivery Address Updated", msg, nil)
+			s.notify(ctx, *driverUserID, "DELIVERY_ADDRESS_UPDATED", "Delivery Address Updated", msg, nil) // drivers cannot open order pages
 		}
 	}
 	s.audit(ctx, actor, auditlog.EntityOrder, orderID, auditlog.ActionUpdate,
@@ -417,7 +461,10 @@ func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, order
 	}
 	if finalStatus == "PARTIALLY_FULFILLED" && order.BuyerUserID != nil {
 		msg := fmt.Sprintf("Order %s was loaded with reduced quantities. Please review your updated order.", updated.OrderCode)
-		_ = s.repository.CreateNotification(ctx, *order.BuyerUserID, "ORDER_PARTIAL", "Partial Delivery Notice", msg, notifyqueue.Link("order", orderID))
+		s.notify(ctx, *order.BuyerUserID, "ORDER_PARTIAL", "Partial Delivery Notice", msg, notifyqueue.Link("order", orderID))
+		// The amount changed: money goes by SMS to everyone.
+		s.raise(messaging.Event{Code: sms.TemplateOrderPartial, UserID: *order.BuyerUserID,
+			Values: orderValues(*updated), ReferenceType: "ORDER", ReferenceID: &orderID})
 	}
 	s.audit(ctx, actor, auditlog.EntityOrder, orderID, auditlog.ActionUpdate,
 		fmt.Sprintf("Order #%d status LOADING → %s", orderID, finalStatus),
@@ -566,7 +613,7 @@ func (s *Service) AssignManager(ctx context.Context, actor ActorContext, orderID
 		fmt.Sprintf("Order #%d manager assigned", orderID),
 		map[string]any{"assigned_manager_user_id": order.AssignedManagerUserID},
 		map[string]any{"assigned_manager_user_id": managerUserID})
-	_ = s.repository.CreateNotification(ctx, managerUserID, "ORDER_ASSIGNED", "Order Assigned to You",
+	s.notify(ctx, managerUserID, "ORDER_ASSIGNED", "Order Assigned to You",
 		fmt.Sprintf("You have been assigned to order %s.", updated.OrderCode), notifyqueue.Link("order", orderID))
 	s.enrichOrder(ctx, actor, updated)
 	return *updated, nil

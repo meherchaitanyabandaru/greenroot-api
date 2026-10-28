@@ -188,6 +188,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 	if v, ok := rowversion.Expected(ctx); ok && v != current.Version {
 		return Dispatch{}, ErrConflict
 	}
+	previous := current.Status // read before the update (a repository may hand back the same struct)
 	dispatch, err := s.repository.UpdateStatus(ctx, dispatchID, UpdateStatusInput{Status: status, DeliveryDate: deliveryDate, Notes: req.Notes, ByUserID: &actor.UserID, ExpectedVersion: current.Version})
 	if err != nil {
 		return Dispatch{}, err
@@ -201,11 +202,25 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 		}
 	}
 	// A driver may start straight from ACCEPTED: the customer still hears it left.
-	if (status == "DISPATCHED" || current.Status == "ACCEPTED" && status == "IN_TRANSIT") && dispatch.CustomerUserID != nil {
+	if (status == "DISPATCHED" || previous == "ACCEPTED" && status == "IN_TRANSIT") && dispatch.CustomerUserID != nil {
 		s.enqueueNotification(ctx, *dispatch.CustomerUserID,
 			notifyqueue.EventOrderDispatched,
 			"Order Dispatched",
 			fmt.Sprintf("Your order dispatch %s is on the way.", dispatch.DispatchCode), notifyqueue.Link("dispatch", dispatch.ID))
+		// Not on the app: the code they give the driver comes by SMS.
+		if code, ok := s.deliveryCode(*dispatch); ok && s.events != nil {
+			id := dispatch.ID
+			s.events.NotifyAsync(messaging.Event{
+				Code: sms.TemplateDeliveryOnTheWay, UserID: *dispatch.CustomerUserID, NotOnAppOnly: true,
+				Values:    map[string]string{"dispatch_code": dispatch.DispatchCode, "delivery_code": code},
+				Sensitive: []string{"delivery_code"}, ReferenceType: "DISPATCH", ReferenceID: &id,
+			})
+		}
+	}
+	if status == "CANCELLED" && current.DriverUserID != nil {
+		s.enqueueNotification(ctx, *current.DriverUserID, "TRIP_CANCELLED", "Trip cancelled",
+			fmt.Sprintf("Trip %s was cancelled by the nursery. You can take another trip.", dispatch.DispatchCode),
+			notifyqueue.Link("dispatch", dispatch.ID))
 	}
 	if IsLiveTrackingTerminal(status) {
 		s.removeLiveDriverLocation(ctx, *dispatch)
@@ -911,6 +926,11 @@ func (s *Service) ConfirmReceipt(ctx context.Context, actor ActorContext, dispat
 		s.enqueueNotification(ctx, *dispatch.OwnerUserIDSnapshot, notifyqueue.EventDeliveryIssue,
 			"Customer reported a delivery problem",
 			fmt.Sprintf("%s: %s", dispatch.DispatchCode, issue), notifyqueue.Link("dispatch", dispatch.ID))
+		if s.events != nil {
+			id := dispatch.ID
+			s.events.NotifyAsync(messaging.Event{Code: sms.TemplateDeliveryIssue, UserID: *dispatch.OwnerUserIDSnapshot,
+				Values: map[string]string{"dispatch_code": dispatch.DispatchCode}, ReferenceType: "DISPATCH", ReferenceID: &id})
+		}
 	}
 	s.audit(ctx, actor, "dispatches", dispatchID, actionUpdate, map[string]any{"receipt_confirmed": true, "issue": issuePtr})
 	return s.present(actor, dispatch), nil

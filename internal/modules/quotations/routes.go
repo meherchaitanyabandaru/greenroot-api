@@ -12,6 +12,7 @@ import (
 
 type Module struct {
 	handler *Handler
+	service *Service
 }
 
 func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, storageCli *storage.Client, redisClients ...*redis.Client) Module {
@@ -26,7 +27,13 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, st
 	} else {
 		service = NewService(repository, audit, storageCli)
 	}
-	return Module{handler: NewHandler(service, jwt)}
+	return Module{handler: NewHandler(service, jwt), service: service}
+}
+
+// WithEvents sends quotation events by SMS too (messaging.Notifier).
+func (m Module) WithEvents(n EventNotifier) Module {
+	m.service.SetEvents(n)
+	return m
 }
 
 func (m Module) RegisterRoutes(router chi.Router) {

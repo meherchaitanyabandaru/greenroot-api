@@ -5,10 +5,12 @@ package market
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"strconv"
 	"strings"
 
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
 )
 
@@ -44,6 +46,7 @@ func (s *Service) SendEnquiry(ctx context.Context, actor ActorContext, adID int6
 	if err != nil {
 		return Enquiry{}, err
 	}
+	s.notifyOtherSide(ctx, enquiry, nurseryID, "New market enquiry", req.Message)
 	return enrichEnquiry(enquiry, nurseryID), nil
 }
 
@@ -133,6 +136,9 @@ func (s *Service) ReplyToEnquiry(ctx context.Context, actor ActorContext, id int
 	}
 	msg, err := s.repo.AddMessage(ctx, id, actor.UserID, nurseryID, req.Body)
 	msg.IsMine = true
+	if err == nil {
+		s.notifyOtherSide(ctx, e, nurseryID, "New message", req.Body)
+	}
 	return msg, err
 }
 
@@ -171,8 +177,12 @@ func (s *Service) MakeOffer(ctx context.Context, actor ActorContext, id int64, r
 	if low := minOffer(e, nurseryID); req.PricePerUnit < low {
 		return Message{}, fmt.Errorf("%w: offer at least ₹%s — 70%% of the asking price", ErrInvalidInput, strconv.FormatFloat(low, 'f', -1, 64))
 	}
-	msg, err := s.repo.AddOffer(ctx, id, actor.UserID, nurseryID, req, "Offered "+dealText(req.PricePerUnit, req.Quantity, e.AdPriceUnit))
+	offered := "Offered " + dealText(req.PricePerUnit, req.Quantity, e.AdPriceUnit)
+	msg, err := s.repo.AddOffer(ctx, id, actor.UserID, nurseryID, req, offered)
 	msg.IsMine = true
+	if err == nil {
+		s.notifyOtherSide(ctx, e, nurseryID, "New offer", offered)
+	}
 	return msg, err
 }
 
@@ -194,6 +204,11 @@ func (s *Service) respondToOffer(ctx context.Context, actor ActorContext, id, me
 	}
 	if err := s.repo.RespondToOffer(ctx, id, messageID, actor.UserID, nurseryID, accept, dealBody); err != nil {
 		return Enquiry{}, err
+	}
+	if accept {
+		s.notifyOtherSide(ctx, e, nurseryID, "Offer accepted", "Deal agreed on "+e.AdTitle)
+	} else {
+		s.notifyOtherSide(ctx, e, nurseryID, "Offer declined", "Your offer on "+e.AdTitle+" was declined")
 	}
 	return s.GetEnquiry(ctx, actor, id)
 }
@@ -333,4 +348,24 @@ func enrichEnquiry(enquiry Enquiry, actorNurseryID int64) Enquiry {
 			m.OfferStatus != nil && *m.OfferStatus == OfferPending
 	}
 	return enquiry
+}
+
+// notifyOtherSide tells the other nursery's owner (in-app and push) about a
+// chat event: before, only the Chats badge changed, so replies went unseen.
+func (s *Service) notifyOtherSide(ctx context.Context, e Enquiry, fromNurseryID int64, title, body string) {
+	other := e.AdNurseryID
+	if fromNurseryID == e.AdNurseryID {
+		other = e.EnquiringNurseryID
+	}
+	owner, err := s.repo.NurseryOwnerID(ctx, other)
+	if err != nil || owner == 0 {
+		return
+	}
+	if r := []rune(body); len(r) > 120 {
+		body = string(r[:120]) + "…"
+	}
+	if err := notifyqueue.Enqueue(ctx, s.redis, notifyqueue.Event{UserID: owner, Type: "MARKET_MESSAGE", Title: title,
+		Message: e.AdTitle + ": " + body + " (Market → Chats)", Data: notifyqueue.Link("enquiry", e.ID)}); err != nil {
+		slog.Warn("market notification not queued", "enquiry_id", e.ID, "error", err)
+	}
 }

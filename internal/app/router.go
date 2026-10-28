@@ -106,7 +106,7 @@ func NewRouter(deps Dependencies) chi.Router {
 		smsModule.RegisterRoutes(r)
 		emailModule := email.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Email)
 		emailModule.RegisterRoutes(r)
-		notifier := messaging.NewNotifier(messaging.NewUserRecipients(deps.DB), smsModule.Service(), emailModule.Service())
+		notifier := newNotifier(deps, smsModule, emailModule)
 
 		auth.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis, smsModule.Service(), notifier).RegisterRoutes(r)
 		admin.NewModule(deps.DB, deps.JWT, redisClients...).RegisterRoutes(r)
@@ -122,9 +122,9 @@ func NewRouter(deps Dependencies) chi.Router {
 		if deps.Razorpay != nil {
 			subModule.Service().SetGateway(deps.Razorpay, deps.Config.Razorpay.WebhookSecret)
 		}
-		nurseries.NewModuleWithTrial(deps.DB, deps.JWT, deps.Audit, subModule.Service(), redisClients...).RegisterRoutes(r)
-		orders.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, redisClients...).RegisterRoutes(r)
-		quotations.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, redisClients...).RegisterRoutes(r)
+		nurseries.NewModuleWithTrial(deps.DB, deps.JWT, deps.Audit, subModule.Service(), redisClients...).WithEvents(notifier).RegisterRoutes(r)
+		orders.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, redisClients...).WithEvents(notifier).RegisterRoutes(r)
+		quotations.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, redisClients...).WithEvents(notifier).RegisterRoutes(r)
 		payments.NewModule(deps.DB, deps.JWT, deps.Audit, notifier).RegisterRoutes(r)
 		plants.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...).RegisterRoutes(r)
 		ratings.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
@@ -168,4 +168,10 @@ func swaggerHTML(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(html)
+}
+
+// newNotifier fans business events out to SMS and email; the router and the
+// background jobs (trial reminders) share it.
+func newNotifier(deps Dependencies, smsModule sms.Module, emailModule email.Module) *messaging.Notifier {
+	return messaging.NewNotifier(messaging.NewUserRecipients(deps.DB), smsModule.Service(), emailModule.Service())
 }

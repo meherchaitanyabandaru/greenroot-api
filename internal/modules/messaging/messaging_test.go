@@ -91,3 +91,21 @@ func TestNotify_UnknownUser(t *testing.T) {
 		t.Fatalf("want ErrUnknownUser, got %v", err)
 	}
 }
+
+func TestNotify_NotOnAppOnly(t *testing.T) {
+	sms := &fakeChannel{name: "SMS"}
+	n := NewNotifier(fakeRecipients{
+		7: {UserID: 7, Mobile: "9876543210", SignedIn: true},
+		8: {UserID: 8, Mobile: "9876500000"},
+	}, sms)
+	ctx := context.Background()
+	if out, _ := n.Notify(ctx, Event{Code: "ORDER_PLACED", UserID: 7, NotOnAppOnly: true}); len(out) != 0 {
+		t.Errorf("app user (push reaches them): want no SMS, got %+v", out)
+	}
+	if out, _ := n.Notify(ctx, Event{Code: "ORDER_PLACED", UserID: 8, NotOnAppOnly: true}); len(out) != 1 {
+		t.Errorf("never signed in: want the SMS, got %+v", out)
+	}
+	if out, _ := n.Notify(ctx, Event{Code: "QUOTATION_RECEIVED", Mobile: "9876511111", NotOnAppOnly: true}); len(out) != 1 || sms.got[len(sms.got)-1].Recipient.Mobile != "9876511111" {
+		t.Errorf("no account, only a mobile: want the SMS to that mobile, got %+v", out)
+	}
+}

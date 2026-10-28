@@ -4,15 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/messaging"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sms"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -42,7 +44,16 @@ type Service struct {
 	trialSvc   TrialCreator // may be nil
 	auditSvc   *auditlog.Service
 	redis      redis.Cmdable
+	events     EventNotifier // SMS; nil = in-app only
 }
+
+// EventNotifier raises SMS/email events (messaging.Notifier).
+type EventNotifier interface {
+	NotifyAsync(ev messaging.Event)
+}
+
+// SetEvents turns on the approval SMS (nil = in-app only).
+func (s *Service) SetEvents(n EventNotifier) { s.events = n }
 
 func NewService(repository Repository, auditSvc *auditlog.Service, redisClients ...redis.Cmdable) *Service {
 	return NewServiceWithTrial(repository, nil, auditSvc, redisClients...)
@@ -367,6 +378,11 @@ func (s *Service) notifyReview(ctx context.Context, n *Nursery, status, reason s
 	}
 	if err := notifyqueue.Enqueue(ctx, s.redis, ev); err != nil {
 		slog.Warn("nursery review notification not queued", "nursery_id", n.ID, "error", err)
+	}
+	// Approval can come days after signing up: also by SMS so the owner starts.
+	if status != "REJECTED" && s.events != nil {
+		s.events.NotifyAsync(messaging.Event{Code: sms.TemplateNurseryApproved, UserID: *n.OwnerUserID,
+			ReferenceType: "NURSERY", ReferenceID: &n.ID})
 	}
 }
 

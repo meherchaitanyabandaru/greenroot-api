@@ -3,6 +3,8 @@ package dispatches
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +33,7 @@ type mockRepo struct {
 	nextID         int64
 	nextItemID     int64
 	nextEventID    int64
+	notified       []string // "<user id>:<type>" of in-app notifications
 }
 
 func newMock() *mockRepo {
@@ -182,7 +185,8 @@ func (m *mockRepo) SetDriverUser(_ context.Context, dispatchID int64, userID int
 	return d, nil
 }
 
-func (m *mockRepo) CreateNotification(_ context.Context, _ int64, _, _, _ string, _ map[string]any) error {
+func (m *mockRepo) CreateNotification(_ context.Context, userID int64, notifType, _, _ string, _ map[string]any) error {
+	m.notified = append(m.notified, fmt.Sprintf("%d:%s", userID, notifType))
 	return nil
 }
 
@@ -1122,5 +1126,31 @@ func TestDeliver_OverrideTellsTheCustomerBySMS(t *testing.T) {
 	}
 	if len(ev2.events) != 0 {
 		t.Fatalf("code delivery raised %+v", ev2.events)
+	}
+}
+
+// The customer who is not on the app gets the delivery code by SMS when the
+// truck leaves; the event is masked in logs and skipped for app users.
+func TestOnTheWay_SendsTheCodeBySMS(t *testing.T) {
+	repo, s, _ := deliveryWorld("ACCEPTED")
+	ev := &recordingEvents{}
+	s.SetEvents(ev)
+	if _, err := s.UpdateStatus(context.Background(), driverActor(400), 10, UpdateStatusRequest{Status: "IN_TRANSIT"}); err != nil {
+		t.Fatal(err)
+	}
+	code, _ := s.deliveryCode(*repo.dispatches[10])
+	if len(ev.events) != 1 || ev.events[0].Code != sms.TemplateDeliveryOnTheWay || ev.events[0].UserID != 300 ||
+		!ev.events[0].NotOnAppOnly || ev.events[0].Values["delivery_code"] != code || ev.events[0].Sensitive[0] != "delivery_code" {
+		t.Fatalf("events: %+v", ev.events)
+	}
+}
+
+func TestCancel_TellsTheDriver(t *testing.T) {
+	repo, s, _ := deliveryWorld("ACCEPTED")
+	if _, err := s.UpdateStatus(context.Background(), ownerActor(100), 10, UpdateStatusRequest{Status: "CANCELLED"}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(repo.notified, "400:TRIP_CANCELLED") {
+		t.Fatalf("driver not told: %v", repo.notified)
 	}
 }
