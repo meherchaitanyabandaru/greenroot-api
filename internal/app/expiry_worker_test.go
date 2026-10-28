@@ -18,6 +18,9 @@ func expiryTestDeps(t *testing.T) (Dependencies, *redis.Client) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
+	if err := rdb.Ping(context.Background()).Err(); err != nil {
+		t.Skipf("skipping redis-dependent test (sandbox or network restricted): %v", err)
+	}
 	return Dependencies{Redis: rdb, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}, rdb
 }
 

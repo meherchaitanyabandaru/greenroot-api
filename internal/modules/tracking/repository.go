@@ -12,6 +12,7 @@ type Repository interface {
 	ListBy(context.Context, Subject, int64) ([]TrackingPoint, error)
 	LatestBy(context.Context, Subject, int64) (*TrackingPoint, error)
 	CanViewDriver(ctx context.Context, driverID, userID int64) (bool, error)
+	CanViewLiveDriver(ctx context.Context, driverUserID, userID int64) (bool, error)
 	CanViewDispatch(ctx context.Context, dispatchID, userID int64) (bool, error)
 }
 
@@ -118,8 +119,8 @@ func nurseryMember(nurseryExpr string) string {
 		WHERE n.nursery_id = ` + nurseryExpr + ` AND n.owner_user_id = $2 AND COALESCE(n.status::text, '') <> 'DELETED')`
 }
 
-// CanViewDriver: the driver themself, or staff of a nursery the driver is
-// connected to.
+// CanViewDriver: the driver themself, or staff of a nursery whose trip the
+// driver is running now. Drivers belong to no nursery; the trip is the link.
 func (r *PostgresRepository) CanViewDriver(ctx context.Context, driverID, userID int64) (bool, error) {
 	var ok bool
 	// #nosec G202 -- nurseryMember only interpolates a fixed column name.
@@ -127,12 +128,28 @@ func (r *PostgresRepository) CanViewDriver(ctx context.Context, driverID, userID
 		SELECT EXISTS (
 			SELECT 1 FROM public.drivers dr
 			WHERE dr.driver_id = $1 AND (
-				dr.user_id = $2 OR EXISTS (
-					SELECT 1 FROM public.nursery_drivers nd
-					WHERE nd.driver_user_id = dr.user_id
-					  AND nd.status IN ('CONNECTED', 'APPROVED')
-					  AND `+nurseryMember("nd.nursery_id")+`)))`, driverID, userID).Scan(&ok)
+				dr.user_id = $2 OR `+onTripOfViewersNursery("dr.user_id")+`))`, driverID, userID).Scan(&ok)
 	return ok, err
+}
+
+// CanViewLiveDriver is CanViewDriver keyed by the driver's user id.
+func (r *PostgresRepository) CanViewLiveDriver(ctx context.Context, driverUserID, userID int64) (bool, error) {
+	var ok bool
+	// #nosec G202 -- nurseryMember only interpolates a fixed column name.
+	err := r.db.QueryRowContext(ctx, `SELECT $1 = $2 OR `+onTripOfViewersNursery("$1")+``,
+		driverUserID, userID).Scan(&ok)
+	return ok, err
+}
+
+// onTripOfViewersNursery: the driver ($driverExpr) has an active trip for a
+// nursery the viewer ($2) runs.
+func onTripOfViewersNursery(driverExpr string) string {
+	return `EXISTS (
+		SELECT 1 FROM public.dispatches d
+		JOIN public.orders o ON o.order_id = d.order_id
+		WHERE d.driver_user_id = ` + driverExpr + `
+		  AND d.status IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
+		  AND ` + nurseryMember("o.seller_nursery_id") + `)`
 }
 
 // CanViewDispatch mirrors dispatches.Service.canAccess: the trip's driver,

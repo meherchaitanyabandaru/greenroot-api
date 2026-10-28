@@ -35,9 +35,11 @@ func NewService(repository Repository, auditSvc *auditlog.Service, redisClients 
 	return &Service{repository: repository, auditSvc: auditSvc, redis: rdb}
 }
 
+// DRIVER_INVITE is no longer created (2026-10-28): the trip QR is a driver's
+// invitation and any approved driver may take a trip. Ones already sent can
+// still be accepted until they expire.
 var allowedInviteTypes = map[string]bool{
 	"MANAGER_INVITE":            true,
-	"DRIVER_INVITE":             true,
 	"CUSTOMER_INVITE":           true,
 	"NURSERY_ONBOARDING_INVITE": true,
 	"TRIP_SHARE_INVITE":         true,
@@ -46,7 +48,6 @@ var allowedInviteTypes = map[string]bool{
 // inviteTypeAllowedRoles maps each invite type to the roles that may create it.
 var inviteTypeAllowedRoles = map[string][]string{
 	"MANAGER_INVITE":            {"ADMIN", "SUPER_ADMIN", "NURSERY_OWNER"},
-	"DRIVER_INVITE":             {"ADMIN", "SUPER_ADMIN", "NURSERY_OWNER", "MANAGER"},
 	"CUSTOMER_INVITE":           {"ADMIN", "SUPER_ADMIN", "NURSERY_OWNER", "MANAGER"},
 	"NURSERY_ONBOARDING_INVITE": {"ADMIN", "SUPER_ADMIN"},
 	"TRIP_SHARE_INVITE":         {"ADMIN", "SUPER_ADMIN", "NURSERY_OWNER", "MANAGER"},

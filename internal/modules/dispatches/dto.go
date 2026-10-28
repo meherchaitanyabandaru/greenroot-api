@@ -36,6 +36,8 @@ type CreateDispatchRequest struct {
 	OutsideVehicleNumber *string `json:"outside_vehicle_number"`
 	OutsideDriverName    *string `json:"outside_driver_name"`
 	OutsideDriverMobile  *string `json:"outside_driver_mobile"`
+	// Lorry the trip needs: TRUCK, VAN, PICKUP or AUTO; empty = any.
+	RequiredVehicleType *string `json:"required_vehicle_type"`
 }
 
 // DeliverRequest marks a trip delivered: with the customer's delivery code,

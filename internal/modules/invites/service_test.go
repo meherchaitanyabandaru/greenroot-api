@@ -149,13 +149,16 @@ func TestCreate_OwnerCanInviteManager(t *testing.T) {
 	}
 }
 
-func TestCreate_ManagerCanInviteDriver(t *testing.T) {
-	_, err := svc(newMock()).Create(context.Background(), managerActor(10), CreateInviteRequest{
-		InviteType:   "DRIVER_INVITE",
-		TargetMobile: ptr("9400000000"),
-	})
-	if err != nil {
-		t.Fatalf("manager should invite driver: %v", err)
+func TestCreate_NoDriverInvites(t *testing.T) {
+	// The trip QR is a driver's invitation: nobody creates driver invites.
+	for _, a := range []ActorContext{adminActor(1), ownerActor(10), managerActor(10)} {
+		_, err := svc(newMock()).Create(context.Background(), a, CreateInviteRequest{
+			InviteType:   "DRIVER_INVITE",
+			TargetMobile: ptr("9400000000"),
+		})
+		if !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("roles %v: want ErrInvalidInput, got %v", a.Roles, err)
+		}
 	}
 }
 
@@ -172,7 +175,7 @@ func TestCreate_ManagerCannotInviteManager(t *testing.T) {
 
 func TestCreate_BuyerForbidden(t *testing.T) {
 	_, err := svc(newMock()).Create(context.Background(), buyerActor(1), CreateInviteRequest{
-		InviteType:   "DRIVER_INVITE",
+		InviteType:   "CUSTOMER_INVITE",
 		TargetMobile: ptr("9400000000"),
 	})
 	if !errors.Is(err, ErrForbidden) {
@@ -213,7 +216,7 @@ func TestCreate_BadInviteTypeInvalid(t *testing.T) {
 func TestCreate_NoContactInvalid(t *testing.T) {
 	// Neither mobile nor email set
 	_, err := svc(newMock()).Create(context.Background(), adminActor(1), CreateInviteRequest{
-		InviteType: "DRIVER_INVITE",
+		InviteType: "CUSTOMER_INVITE",
 	})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("want ErrInvalidInput when no contact provided, got %v", err)
@@ -222,7 +225,7 @@ func TestCreate_NoContactInvalid(t *testing.T) {
 
 func TestCreate_EmailContactAccepted(t *testing.T) {
 	_, err := svc(newMock()).Create(context.Background(), adminActor(1), CreateInviteRequest{
-		InviteType:  "DRIVER_INVITE",
+		InviteType:  "CUSTOMER_INVITE",
 		TargetEmail: ptr("driver@example.com"),
 	})
 	if err != nil {

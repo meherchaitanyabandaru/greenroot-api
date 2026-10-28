@@ -107,8 +107,16 @@ func (s *Service) GetLiveDriver(ctx context.Context, a ActorContext, driverUserI
 	if driverUserID <= 0 {
 		return nil, ErrInvalidInput
 	}
-	if a.HasRole("DRIVER") && !a.HasRole("ADMIN") && driverUserID != a.UserID {
-		return nil, ErrForbidden
+	// A driver's position is personal: staff see it only while the driver
+	// runs one of their nursery's trips.
+	if !a.HasRole("ADMIN") && driverUserID != a.UserID {
+		ok, err := s.repository.CanViewLiveDriver(ctx, driverUserID, a.UserID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrForbidden
+		}
 	}
 	if s.liveGeo == nil {
 		slog.Warn("redis geo live tracking unavailable", "driver_user_id", driverUserID, "error", redisgeo.ErrUnavailable)

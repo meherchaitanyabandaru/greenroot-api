@@ -64,6 +64,10 @@ type Dispatch struct {
 	OutsideVehicleNumber *string `json:"outside_vehicle_number,omitempty"`
 	OutsideDriverName    *string `json:"outside_driver_name,omitempty"`
 	OutsideDriverMobile  *string `json:"outside_driver_mobile,omitempty"`
+	// The trip QR is the driver's invitation: any approved driver with the
+	// lorry asked for (any lorry when empty) may take it until it expires.
+	RequiredVehicleType *string    `json:"required_vehicle_type,omitempty"`
+	InviteExpiresAt     *time.Time `json:"invite_expires_at,omitempty"`
 	// How the customer confirmed delivery: CUSTOMER_CODE, CUSTOMER_APP or
 	// UNCONFIRMED (nursery override, with a reason).
 	DeliveryConfirmation      *string    `json:"delivery_confirmation,omitempty"`

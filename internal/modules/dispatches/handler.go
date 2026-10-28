@@ -232,6 +232,24 @@ func (h *Handler) Accept(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, DispatchResponse{Dispatch: dispatch})
 }
 
+// NewInvite gives a trip still waiting for a driver a new QR (staff only).
+func (h *Handler) NewInvite(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	dispatch, err := h.service.RenewInvite(r.Context(), actor, id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, DispatchResponse{Dispatch: dispatch})
+}
+
 // CreateTripEvent records a trip event for a dispatch (driver only).
 func (h *Handler) CreateTripEvent(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
@@ -305,9 +323,16 @@ func int64Query(value string) int64 { parsed, _ := strconv.ParseInt(value, 10, 6
 
 func writeError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, ErrDriverNotConnected):
-		response.Error(w, http.StatusForbidden, "driver_not_connected",
-			"You are not this nursery's driver yet. Ask the owner to invite you as a driver (Members → Drivers), then scan the trip again.")
+	case errors.Is(err, ErrTripTaken):
+		response.Error(w, http.StatusConflict, "trip_taken", "Another driver has already taken this trip.")
+	case errors.Is(err, ErrTripCancelled):
+		response.Error(w, http.StatusConflict, "trip_cancelled", "The nursery cancelled this trip.")
+	case errors.Is(err, ErrTripInviteExpired):
+		response.Error(w, http.StatusGone, "trip_invite_expired", "This trip QR has expired. Ask the nursery for a new one.")
+	case errors.Is(err, ErrVehicleMismatch):
+		response.Error(w, http.StatusConflict, "vehicle_type_mismatch", "This trip needs a different lorry than the one you registered.")
+	case errors.Is(err, ErrDriverNotApproved):
+		response.Error(w, http.StatusForbidden, "driver_not_approved", "Only drivers approved by GreenRoot can take trips. Finish your driver registration and wait for approval.")
 	case errors.Is(err, ErrForbidden):
 		response.Error(w, http.StatusForbidden, "forbidden", "not allowed to access dispatch")
 	case errors.Is(err, ErrNotFound):

@@ -42,7 +42,8 @@ type Repository interface {
 	OrderAccess(ctx context.Context, orderID int64) (*OrderAccess, error)
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	IsDispatchDriver(ctx context.Context, driverID int64, userID int64) (bool, error)
-	IsConnectedDriver(ctx context.Context, nurseryID int64, userID int64) (bool, error)
+	DriverEligibility(ctx context.Context, userID int64) (DriverEligibility, error)
+	RenewTripInvite(ctx context.Context, dispatchID int64) (*Dispatch, error)
 	GetOwnedNurseryID(ctx context.Context, userID int64) (*int64, error)
 	GetUserNurseryIDs(ctx context.Context, userID int64) ([]int64, error)
 	CreateNotification(ctx context.Context, userID int64, notifType, title, message string, data map[string]any) error
@@ -72,6 +73,17 @@ type CreateDispatchInput struct {
 	OutsideVehicleNumber *string
 	OutsideDriverName    *string
 	OutsideDriverMobile  *string
+
+	RequiredVehicleType *string
+}
+
+// DriverEligibility is what decides whether a driver may take a trip:
+// admin-approved, still driving, and the lorry they registered.
+type DriverEligibility struct {
+	Found          bool
+	ApprovalStatus string
+	Status         string
+	VehicleType    string
 }
 
 type MarkDeliveredInput struct {
@@ -199,69 +211,41 @@ func (r *PostgresRepository) FindByTripUUID(ctx context.Context, tripUUID string
 	return &dispatch, nil
 }
 
+// SetDriverUser claims the trip for this driver. One UPDATE decides it: the
+// trip must still be PENDING with no driver, and the driver free of other
+// trips, so of two drivers accepting at once exactly one gets it.
 func (r *PostgresRepository) SetDriverUser(ctx context.Context, dispatchID int64, userID int64) (*Dispatch, error) {
-	var driverID int64
-	_ = r.db.QueryRowContext(ctx,
-		`SELECT driver_id FROM public.drivers WHERE user_id = $1 LIMIT 1`, userID).Scan(&driverID)
-
-	var err error
-	if driverID > 0 {
-		result, execErr := r.db.ExecContext(ctx,
-			`UPDATE public.dispatches
-			 SET driver_user_id = $1, driver_id = $2, status = 'ACCEPTED', driver_accepted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-			 WHERE dispatch_id = $3
-			   AND NOT EXISTS (
-			   	SELECT 1
-			   	FROM public.dispatches active
-			   	WHERE active.driver_user_id = $1
-			   	  AND active.dispatch_id <> $3
-			   	  AND active.status IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
-			   )`,
-			userID, driverID, dispatchID)
-		err = execErr
-		if err == nil {
-			if affected, rowsErr := result.RowsAffected(); rowsErr != nil {
-				err = rowsErr
-			} else if affected == 0 {
-				if active, activeErr := r.DriverHasActiveTrip(ctx, userID, dispatchID); activeErr != nil {
-					err = activeErr
-				} else if active {
-					err = ErrActiveDriverTrip
-				} else {
-					err = ErrNotFound
-				}
-			}
-		}
-	} else {
-		result, execErr := r.db.ExecContext(ctx,
-			`UPDATE public.dispatches
-			 SET driver_user_id = $1, status = 'ACCEPTED', driver_accepted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-			 WHERE dispatch_id = $2
-			   AND NOT EXISTS (
-			   	SELECT 1
-			   	FROM public.dispatches active
-			   	WHERE active.driver_user_id = $1
-			   	  AND active.dispatch_id <> $2
-			   	  AND active.status IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
-			   )`,
-			userID, dispatchID)
-		err = execErr
-		if err == nil {
-			if affected, rowsErr := result.RowsAffected(); rowsErr != nil {
-				err = rowsErr
-			} else if affected == 0 {
-				if active, activeErr := r.DriverHasActiveTrip(ctx, userID, dispatchID); activeErr != nil {
-					err = activeErr
-				} else if active {
-					err = ErrActiveDriverTrip
-				} else {
-					err = ErrNotFound
-				}
-			}
-		}
-	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE public.dispatches
+		SET driver_user_id = $1,
+		    driver_id = (SELECT driver_id FROM public.drivers WHERE user_id = $1 ORDER BY driver_id DESC LIMIT 1),
+		    status = 'ACCEPTED', driver_accepted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		WHERE dispatch_id = $2
+		  AND status = 'PENDING' AND driver_user_id IS NULL AND driver_id IS NULL
+		  AND NOT EXISTS (
+		  	SELECT 1
+		  	FROM public.dispatches active
+		  	WHERE active.driver_user_id = $1
+		  	  AND active.dispatch_id <> $2
+		  	  AND active.status IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
+		  )`,
+		userID, dispatchID)
 	if err != nil {
 		return nil, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if affected == 0 {
+		active, err := r.DriverHasActiveTrip(ctx, userID, dispatchID)
+		if err != nil {
+			return nil, err
+		}
+		if active {
+			return nil, ErrActiveDriverTrip
+		}
+		return nil, ErrTripTaken
 	}
 	return r.FindByID(ctx, dispatchID)
 }
@@ -287,7 +271,8 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 			dispatch_code, order_id, dispatch_number, status, vehicle_id, driver_id, dispatched_by_user_id,
 			dispatched_at, destination_address, notes, created_at, updated_at,
 			is_outside_transport, outside_vehicle_number, outside_driver_name, outside_driver_mobile,
-			nursery_id, customer_user_id, snapshot_owner_user_id
+			nursery_id, customer_user_id, snapshot_owner_user_id,
+			required_vehicle_type, invite_expires_at
 		)
 		VALUES (
 			$1, $2, NULLIF($3, ''), 'PENDING', $4, $5, $6, $7,
@@ -306,13 +291,17 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 			$11, NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, ''),
 			(SELECT o.seller_nursery_id FROM public.orders o WHERE o.order_id = $2),
 			(SELECT o.buyer_user_id FROM public.orders o WHERE o.order_id = $2),
-			(SELECT n.owner_user_id FROM public.orders o JOIN public.nurseries n ON n.nursery_id = o.seller_nursery_id WHERE o.order_id = $2)
+			(SELECT n.owner_user_id FROM public.orders o JOIN public.nurseries n ON n.nursery_id = o.seller_nursery_id WHERE o.order_id = $2),
+			NULLIF($15, ''),
+			-- The QR is the driver's invitation: unused, it lapses like any invite.
+			CASE WHEN $11 THEN NULL ELSE $10::timestamptz + INTERVAL '72 hours' END
 		)
 		RETURNING dispatch_id
 	`
 	var dispatchID int64
 	if err := tx.QueryRowContext(ctx, query, dispatchCode, input.OrderID, stringOrEmpty(input.DispatchNumber), int64OrNil(input.VehicleID), int64OrNil(input.DriverID), actorID, timeOrNil(input.DispatchDate), stringOrEmpty(input.DestinationAddress), stringOrEmpty(input.Notes), now,
-		input.IsOutsideTransport, stringOrEmpty(input.OutsideVehicleNumber), stringOrEmpty(input.OutsideDriverName), stringOrEmpty(input.OutsideDriverMobile)).Scan(&dispatchID); err != nil {
+		input.IsOutsideTransport, stringOrEmpty(input.OutsideVehicleNumber), stringOrEmpty(input.OutsideDriverName), stringOrEmpty(input.OutsideDriverMobile),
+		stringOrEmpty(input.RequiredVehicleType)).Scan(&dispatchID); err != nil {
 		return nil, err
 	}
 	for _, item := range input.Items {
@@ -536,16 +525,37 @@ func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int6
 	return exists, err
 }
 
-// IsConnectedDriver: the nursery approved this driver and has not disconnected them.
-func (r *PostgresRepository) IsConnectedDriver(ctx context.Context, nurseryID int64, userID int64) (bool, error) {
-	var ok bool
+func (r *PostgresRepository) DriverEligibility(ctx context.Context, userID int64) (DriverEligibility, error) {
+	var e DriverEligibility
 	err := r.db.QueryRowContext(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM public.nursery_drivers
-			WHERE nursery_id = $1 AND driver_user_id = $2
-			  AND status IN ('APPROVED', 'CONNECTED', 'ACTIVE') AND disconnected_at IS NULL
-		)`, nurseryID, userID).Scan(&ok)
-	return ok, err
+		SELECT COALESCE(approval_status::text, ''), COALESCE(status::text, ''), COALESCE(vehicle_type::text, '')
+		FROM public.drivers WHERE user_id = $1
+		ORDER BY driver_id DESC LIMIT 1`, userID).Scan(&e.ApprovalStatus, &e.Status, &e.VehicleType)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DriverEligibility{}, nil
+	}
+	e.Found = err == nil
+	return e, err
+}
+
+// RenewTripInvite issues a new QR for a trip still waiting for a driver: the
+// old QR stops working and the new one lasts 72 hours.
+func (r *PostgresRepository) RenewTripInvite(ctx context.Context, dispatchID int64) (*Dispatch, error) {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE public.dispatches
+		SET trip_uuid = gen_random_uuid(), invite_expires_at = CURRENT_TIMESTAMP + INTERVAL '72 hours',
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE dispatch_id = $1 AND status = 'PENDING' AND driver_user_id IS NULL AND driver_id IS NULL
+		  AND NOT is_outside_transport AND deleted_at IS NULL`, dispatchID)
+	if err != nil {
+		return nil, err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return nil, err
+	} else if n == 0 {
+		return nil, ErrTripTaken
+	}
+	return r.FindByID(ctx, dispatchID)
 }
 
 func (r *PostgresRepository) IsDispatchDriver(ctx context.Context, driverID int64, userID int64) (bool, error) {
@@ -713,7 +723,8 @@ func baseSelect() string {
 			d.is_outside_transport, d.outside_vehicle_number, d.outside_driver_name, d.outside_driver_mobile,
 			d.delivery_confirmation, d.delivery_confirmed_by_user_id, d.delivery_confirmed_at,
 			d.delivery_override_reason, d.delivery_issue, d.delivery_issue_reported_at, d.delivery_code_attempts,
-			d.driver_accepted_at
+			d.driver_accepted_at,
+			d.required_vehicle_type, d.invite_expires_at
 		FROM public.dispatches d
 		JOIN public.orders o ON o.order_id = d.order_id
 		LEFT JOIN public.nurseries sn ON sn.nursery_id = o.seller_nursery_id
@@ -817,7 +828,8 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 	var trackingUUID, tripUUID sql.NullString
 	var outsideVehicle, outsideDriverName, outsideDriverMobile, confirmation, overrideReason, issue sql.NullString
 	var confirmedBy sql.NullInt64
-	var confirmedAt, issueAt, acceptedAt sql.NullTime
+	var confirmedAt, issueAt, acceptedAt, inviteExpiresAt sql.NullTime
+	var requiredVehicle sql.NullString
 	if err := row.Scan(
 		&dispatch.ID, &dispatch.DispatchCode, &dispatch.OrderID, &orderNumber,
 		&orderStatus, &loadingStartedAt, &loadingCompletedAt,
@@ -836,8 +848,13 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 		&confirmation, &confirmedBy, &confirmedAt,
 		&overrideReason, &issue, &issueAt, &dispatch.DeliveryCodeAttempts,
 		&acceptedAt,
+		&requiredVehicle, &inviteExpiresAt,
 	); err != nil {
 		return Dispatch{}, err
+	}
+	dispatch.RequiredVehicleType = nullableString(requiredVehicle)
+	if inviteExpiresAt.Valid {
+		dispatch.InviteExpiresAt = &inviteExpiresAt.Time
 	}
 	dispatch.OrderNumber = nullableString(orderNumber)
 	dispatch.OrderStatus = nullableString(orderStatus)

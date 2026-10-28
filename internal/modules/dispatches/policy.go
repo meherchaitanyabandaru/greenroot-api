@@ -81,6 +81,7 @@ type DispatchCapabilities struct {
 	CanAddItems       bool `json:"can_add_items"`
 	CanViewTracking   bool `json:"can_view_tracking"`
 	CanShareCode      bool `json:"can_share_code"`
+	CanRenewInvite    bool `json:"can_renew_invite"` // staff: issue a new trip QR
 	// Without the customer's code: staff only, with a reason.
 	CanOverrideDelivery bool `json:"can_override_delivery"`
 	// The customer's own actions (set in withLifecycle, need the dispatch).

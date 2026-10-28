@@ -2174,6 +2174,39 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+  /api/v1/dispatches/{id}/new-invite:
+    post:
+      tags:
+        - Dispatches
+      summary: Renew Trip Invite
+      description: "Staff only: generate a new QR code for an unclaimed trip, e.g. after the previous QR expired."
+      operationId: postDispatchesByIdNewInvite
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DispatchesDispatchResponse'
+          description: OK
+        "401":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+        "404":
+          $ref: '#/components/responses/Error'
+        "409":
+          $ref: '#/components/responses/Error'
+        "500":
+          $ref: '#/components/responses/Error'
   /api/v1/dispatches/{id}/ack-delivery-update:
     post:
       tags:

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisgeo"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/messaging"
@@ -23,12 +24,12 @@ type mockRepo struct {
 	dispatches     map[int64]*Dispatch
 	items          map[int64]*DispatchItem
 	tripEvents     []TripEvent
-	orderAccess    map[int64]*OrderAccess // order_id → access
-	nurseryMembers map[int64][]int64      // nursery_id → []user_id
-	ownedNurseries map[int64]int64        // user_id → nursery_id
-	userNurseries  map[int64][]int64      // user_id → []nursery_id
-	driverUserIDs  map[int64]int64        // driver_id → user_id
-	connected      map[[2]int64]bool      // {nursery_id, driver user_id} approved
+	orderAccess    map[int64]*OrderAccess      // order_id → access
+	nurseryMembers map[int64][]int64           // nursery_id → []user_id
+	ownedNurseries map[int64]int64             // user_id → nursery_id
+	userNurseries  map[int64][]int64           // user_id → []nursery_id
+	driverUserIDs  map[int64]int64             // driver_id → user_id
+	drivers        map[int64]DriverEligibility // driver user_id → their driver record
 	duplicates     map[string]bool
 	nextID         int64
 	nextItemID     int64
@@ -45,7 +46,7 @@ func newMock() *mockRepo {
 		ownedNurseries: make(map[int64]int64),
 		userNurseries:  make(map[int64][]int64),
 		driverUserIDs:  make(map[int64]int64),
-		connected:      make(map[[2]int64]bool),
+		drivers:        make(map[int64]DriverEligibility),
 		duplicates:     make(map[string]bool),
 	}
 }
@@ -175,10 +176,14 @@ func (m *mockRepo) CompleteOrderIfReady(_ context.Context, orderID int64) error 
 	return nil
 }
 
-func (m *mockRepo) SetDriverUser(_ context.Context, dispatchID int64, userID int64) (*Dispatch, error) {
+// SetDriverUser mirrors the repository's single conditional UPDATE.
+func (m *mockRepo) SetDriverUser(ctx context.Context, dispatchID int64, userID int64) (*Dispatch, error) {
 	d, ok := m.dispatches[dispatchID]
-	if !ok {
-		return nil, ErrNotFound
+	if !ok || d.Status != "PENDING" || d.DriverUserID != nil || d.DriverID != nil {
+		return nil, ErrTripTaken
+	}
+	if active, _ := m.DriverHasActiveTrip(ctx, userID, dispatchID); active {
+		return nil, ErrActiveDriverTrip
 	}
 	d.DriverUserID = &userID
 	d.Status = "ACCEPTED"
@@ -263,8 +268,23 @@ func (m *mockRepo) IsDispatchDriver(_ context.Context, driverID int64, userID in
 	return uid == userID, nil
 }
 
-func (m *mockRepo) IsConnectedDriver(_ context.Context, nurseryID int64, userID int64) (bool, error) {
-	return m.connected[[2]int64{nurseryID, userID}], nil
+func (m *mockRepo) DriverEligibility(_ context.Context, userID int64) (DriverEligibility, error) {
+	return m.drivers[userID], nil
+}
+
+// approveDriver registers an approved, active driver with a TRUCK.
+func (m *mockRepo) approveDriver(userID int64) {
+	m.drivers[userID] = DriverEligibility{Found: true, ApprovalStatus: "APPROVED", Status: "ACTIVE", VehicleType: "TRUCK"}
+}
+
+func (m *mockRepo) RenewTripInvite(_ context.Context, dispatchID int64) (*Dispatch, error) {
+	d, ok := m.dispatches[dispatchID]
+	if !ok || d.Status != "PENDING" || d.DriverUserID != nil || d.IsOutsideTransport {
+		return nil, ErrTripTaken
+	}
+	u, exp := "9b2d3c1e-1111-4a2b-8c3d-000000000001", time.Now().Add(72*time.Hour)
+	d.TripUUID, d.InviteExpiresAt = &u, &exp
+	return d, nil
 }
 
 func (m *mockRepo) GetOwnedNurseryID(_ context.Context, userID int64) (*int64, error) {
@@ -324,7 +344,9 @@ func managerActor(id int64) ActorContext { return ActorContext{UserID: id, Roles
 func buyerActor(id int64) ActorContext   { return ActorContext{UserID: id, Roles: []string{"BUYER"}} }
 func driverActor(id int64) ActorContext  { return ActorContext{UserID: id, Roles: []string{"DRIVER"}} }
 
-func nid(n int64) *int64 { return &n }
+func nid(n int64) *int64    { return &n }
+func ptr64(n int64) *int64  { return &n }
+func strp(s string) *string { return &s }
 
 func svc(repo *mockRepo) *Service { return NewService(repo, nil) }
 
@@ -467,6 +489,9 @@ func TestUpdateStatus_DeliveredRemovesLiveDriverLocation(t *testing.T) {
 		_ = client.Close()
 		mr.Close()
 	}()
+	if err := client.Ping(context.Background()).Err(); err != nil {
+		t.Skipf("skipping redis-dependent test (sandbox or network restricted): %v", err)
+	}
 
 	repo := newMock()
 	repo.seedNursery(1, 100)
@@ -561,7 +586,7 @@ func TestAcceptDispatch_BuyerForbidden(t *testing.T) {
 
 func TestAcceptDispatch_DriverSuccess(t *testing.T) {
 	repo := newMock()
-	repo.connected[[2]int64{1, 400}] = true
+	repo.approveDriver(400)
 	nid := int64(1)
 	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	d, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip)
@@ -575,7 +600,7 @@ func TestAcceptDispatch_DriverSuccess(t *testing.T) {
 
 func TestAcceptDispatch_NeedsTheTripCode(t *testing.T) {
 	repo := newMock()
-	repo.connected[[2]int64{1, 400}] = true
+	repo.approveDriver(400)
 	nid := int64(1)
 	repo.seedDispatch(Dispatch{ID: 10, DispatchCode: "DSP-20261026-0001", Status: "PENDING", SellerNurseryID: &nid})
 	for _, code := range []string{"", "DSP-20261026-0001", "10", "11111111-2222-3333-4444-555555555555"} {
@@ -590,7 +615,7 @@ func TestAcceptDispatch_NeedsTheTripCode(t *testing.T) {
 
 func TestGetByCode_OnlyTheTripCodeFindsATrip(t *testing.T) {
 	repo := newMock()
-	repo.connected[[2]int64{1, 400}] = true
+	repo.approveDriver(400)
 	nid := int64(1)
 	repo.seedDispatch(Dispatch{ID: 10, DispatchCode: "DSP-20261026-0001", Status: "PENDING", SellerNurseryID: &nid})
 	if _, err := svc(repo).GetByCode(context.Background(), driverActor(400), "DSP-20261026-0001"); !errors.Is(err, ErrNotFound) {
@@ -601,29 +626,160 @@ func TestGetByCode_OnlyTheTripCodeFindsATrip(t *testing.T) {
 	}
 }
 
-func TestQR_OnlyTheNurserysOwnDriversPreviewOrAccept(t *testing.T) {
+func TestQR_AnyApprovedDriverTakesATripWithoutJoiningTheNursery(t *testing.T) {
 	repo := newMock()
-	repo.connected[[2]int64{1, 400}] = true
-	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", NurseryID: nid(1)})
-	// Driver 401 holds the real QR but is not connected to nursery 1.
-	if _, err := svc(repo).GetByCode(context.Background(), driverActor(401), testTrip); !errors.Is(err, ErrForbidden) {
-		t.Errorf("other nursery's driver preview: want ErrForbidden, got %v", err)
+	repo.approveDriver(401) // no nursery link and no driver invite: just approved
+	name, mobile := "Ravi", "9811300004"
+	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", NurseryID: nid(1),
+		CustomerNameSnapshot: &name, CustomerMobileSnapshot: &mobile})
+	d, err := svc(repo).GetByCode(context.Background(), driverActor(401), testTrip)
+	if err != nil {
+		t.Fatalf("approved driver previews the trip from its QR: %v", err)
 	}
-	if _, err := svc(repo).AcceptDispatch(context.Background(), driverActor(401), 10, testTrip); !errors.Is(err, ErrForbidden) {
-		t.Errorf("other nursery's driver accept: want ErrForbidden, got %v", err)
+	if d.CustomerNameSnapshot != nil || d.CustomerMobileSnapshot != nil {
+		t.Errorf("a driver deciding sees no customer contact, got %v %v", d.CustomerNameSnapshot, d.CustomerMobileSnapshot)
 	}
-	if d, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip); err != nil || d.Status != "ACCEPTED" {
-		t.Fatalf("connected driver accepts: %v %v", d.Status, err)
+	if d, err := svc(repo).AcceptDispatch(context.Background(), driverActor(401), 10, testTrip); err != nil || d.Status != "ACCEPTED" {
+		t.Fatalf("approved driver accepts: %v %v", d.Status, err)
 	}
-	// Scanning again is idempotent for the same driver.
-	if _, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip); err != nil {
+	// Scanning again is idempotent for the same driver, who now sees the customer.
+	d, err = svc(repo).GetByCode(context.Background(), driverActor(401), testTrip)
+	if err != nil || d.CustomerMobileSnapshot == nil {
+		t.Errorf("the trip's driver sees whom to call: %v %v", d.CustomerMobileSnapshot, err)
+	}
+	if _, err := svc(repo).AcceptDispatch(context.Background(), driverActor(401), 10, testTrip); err != nil {
 		t.Errorf("repeat scan: %v", err)
+	}
+}
+
+func TestAcceptDispatch_OnlyEligibleDrivers(t *testing.T) {
+	cases := []struct {
+		name   string
+		driver DriverEligibility
+		need   *string
+		want   error
+	}{
+		{"never applied", DriverEligibility{}, nil, ErrDriverNotApproved},
+		{"waiting for approval", DriverEligibility{Found: true, ApprovalStatus: "PENDING", Status: "ACTIVE", VehicleType: "TRUCK"}, nil, ErrDriverNotApproved},
+		{"suspended", DriverEligibility{Found: true, ApprovalStatus: "APPROVED", Status: "SUSPENDED", VehicleType: "TRUCK"}, nil, ErrDriverNotApproved},
+		{"stopped driving", DriverEligibility{Found: true, ApprovalStatus: "APPROVED", Status: "INACTIVE", VehicleType: "TRUCK"}, nil, ErrDriverNotApproved},
+		{"wrong lorry", DriverEligibility{Found: true, ApprovalStatus: "APPROVED", Status: "ACTIVE", VehicleType: "AUTO"}, strp("TRUCK"), ErrVehicleMismatch},
+		{"the lorry asked for", DriverEligibility{Found: true, ApprovalStatus: "APPROVED", Status: "ACTIVE", VehicleType: "truck"}, strp("TRUCK"), nil},
+		{"any lorry", DriverEligibility{Found: true, ApprovalStatus: "APPROVED", Status: "ACTIVE", VehicleType: "AUTO"}, nil, nil},
+	}
+	for _, c := range cases {
+		repo := newMock()
+		repo.drivers[400] = c.driver
+		repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", NurseryID: nid(1), RequiredVehicleType: c.need})
+		_, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip)
+		if !errors.Is(err, c.want) || (c.want == nil && err != nil) {
+			t.Errorf("%s: want %v, got %v", c.name, c.want, err)
+		}
+		if c.want != nil && repo.dispatches[10].DriverUserID != nil {
+			t.Errorf("%s: refused driver must not be assigned", c.name)
+		}
+	}
+}
+
+func TestAcceptDispatch_UnavailableTrips(t *testing.T) {
+	past, future := time.Now().Add(-time.Minute), time.Now().Add(time.Hour)
+	other := int64(402)
+	cases := []struct {
+		name string
+		d    Dispatch
+		want error
+	}{
+		{"cancelled", Dispatch{ID: 10, Status: "CANCELLED"}, ErrTripCancelled},
+		{"taken", Dispatch{ID: 10, Status: "ACCEPTED", DriverUserID: &other}, ErrTripTaken},
+		{"delivered", Dispatch{ID: 10, Status: "DELIVERED", DriverUserID: &other}, ErrTripTaken},
+		{"QR expired", Dispatch{ID: 10, Status: "PENDING", InviteExpiresAt: &past}, ErrTripInviteExpired},
+		{"outside lorry", Dispatch{ID: 10, Status: "PENDING", IsOutsideTransport: true}, ErrOutsideTransport},
+		{"QR still valid", Dispatch{ID: 10, Status: "PENDING", InviteExpiresAt: &future}, nil},
+	}
+	for _, c := range cases {
+		repo := newMock()
+		repo.approveDriver(400)
+		c.d.NurseryID = nid(1)
+		repo.seedDispatch(c.d)
+		_, previewErr := svc(repo).GetByCode(context.Background(), driverActor(400), testTrip)
+		_, acceptErr := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip)
+		for _, err := range []error{previewErr, acceptErr} {
+			if !errors.Is(err, c.want) || (c.want == nil && err != nil) {
+				t.Errorf("%s: want %v, got %v", c.name, c.want, err)
+			}
+		}
+	}
+}
+
+func TestAcceptDispatch_TwoDriversOneTrip(t *testing.T) {
+	repo := newMock()
+	repo.approveDriver(400)
+	repo.approveDriver(401)
+	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", NurseryID: nid(1), OwnerUserIDSnapshot: ptr64(100)})
+	if _, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip); err != nil {
+		t.Fatalf("first driver: %v", err)
+	}
+	if _, err := svc(repo).AcceptDispatch(context.Background(), driverActor(401), 10, testTrip); !errors.Is(err, ErrTripTaken) {
+		t.Errorf("second driver: want ErrTripTaken, got %v", err)
+	}
+	if got := *repo.dispatches[10].DriverUserID; got != 400 {
+		t.Errorf("trip belongs to the first driver, got %d", got)
+	}
+	// The owner and the winning driver are told; nobody else.
+	want := []string{"100:" + notifyqueue.EventDispatchAccepted, "400:" + notifyqueue.EventDispatchAccepted}
+	if fmt.Sprint(repo.notified) != fmt.Sprint(want) {
+		t.Errorf("notifications: got %v, want %v", repo.notified, want)
+	}
+}
+
+func TestAcceptDispatch_LostRaceSaysTaken(t *testing.T) {
+	// Both drivers passed the checks; the conditional UPDATE picks one.
+	repo := newMock()
+	repo.approveDriver(401)
+	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", NurseryID: nid(1)})
+	if _, err := repo.SetDriverUser(context.Background(), 10, 400); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SetDriverUser(context.Background(), 10, 401); !errors.Is(err, ErrTripTaken) {
+		t.Errorf("the loser of the race: want ErrTripTaken, got %v", err)
+	}
+	if len(repo.notified) != 0 {
+		t.Errorf("no notification for a claim that failed: %v", repo.notified)
+	}
+}
+
+func TestRenewInvite(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, 100)
+	repo.approveDriver(400)
+	past := time.Now().Add(-time.Minute)
+	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", NurseryID: nid(1), SellerNurseryID: nid(1), InviteExpiresAt: &past})
+	repo.seedOrderAccess(0, nid(1))
+	expired := withLifecycle(ownerActor(100), *repo.dispatches[10])
+	if expired.Capabilities.CanShareCode || !expired.Capabilities.CanRenewInvite {
+		t.Errorf("expired QR: no share, offer a new one: %+v", expired.Capabilities)
+	}
+	if _, err := svc(repo).RenewInvite(context.Background(), driverActor(400), 10); !errors.Is(err, ErrForbidden) {
+		t.Errorf("a driver cannot renew: %v", err)
+	}
+	d, err := svc(repo).RenewInvite(context.Background(), ownerActor(100), 10)
+	if err != nil || d.TripUUID == nil || *d.TripUUID == testTrip {
+		t.Fatalf("owner renews with a new QR: %v %v", d.TripUUID, err)
+	}
+	if _, err := svc(repo).GetByCode(context.Background(), driverActor(400), testTrip); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the old QR stops working: %v", err)
+	}
+	if _, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, *d.TripUUID); err != nil {
+		t.Errorf("the new QR works: %v", err)
+	}
+	if _, err := svc(repo).RenewInvite(context.Background(), ownerActor(100), 10); !errors.Is(err, ErrTripTaken) {
+		t.Errorf("no new QR once a driver has it: %v", err)
 	}
 }
 
 func TestAcceptDispatch_DriverWithActiveTripRejected(t *testing.T) {
 	repo := newMock()
-	repo.connected[[2]int64{1, 400}] = true
+	repo.approveDriver(400)
 	nid := int64(1)
 	driverID := int64(400)
 	repo.seedDispatch(Dispatch{ID: 9, Status: "IN_TRANSIT", SellerNurseryID: &nid, DriverUserID: &driverID})
@@ -636,7 +792,7 @@ func TestAcceptDispatch_DriverWithActiveTripRejected(t *testing.T) {
 
 func TestAcceptDispatch_DriverWithTerminalTripCanAccept(t *testing.T) {
 	repo := newMock()
-	repo.connected[[2]int64{1, 400}] = true
+	repo.approveDriver(400)
 	nid := int64(1)
 	driverID := int64(400)
 	repo.seedDispatch(Dispatch{ID: 9, Status: "DELIVERED", SellerNurseryID: &nid, DriverUserID: &driverID})
@@ -656,8 +812,8 @@ func TestAcceptDispatch_AlreadyAcceptedByDifferentDriver(t *testing.T) {
 	existing := int64(401)
 	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", SellerNurseryID: &nid, DriverUserID: &existing})
 	_, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip)
-	if !errors.Is(err, ErrAlreadyAccepted) {
-		t.Errorf("already accepted by other driver: want ErrAlreadyAccepted, got %v", err)
+	if !errors.Is(err, ErrTripTaken) {
+		t.Errorf("already accepted by other driver: want ErrTripTaken, got %v", err)
 	}
 }
 
@@ -666,8 +822,8 @@ func TestAcceptDispatch_NonPendingForbidden(t *testing.T) {
 	nid := int64(1)
 	repo.seedDispatch(Dispatch{ID: 10, Status: "IN_TRANSIT", SellerNurseryID: &nid})
 	_, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip)
-	if !errors.Is(err, ErrForbidden) {
-		t.Errorf("accept non-pending: want ErrForbidden, got %v", err)
+	if !errors.Is(err, ErrTripTaken) {
+		t.Errorf("accept non-pending: want ErrTripTaken, got %v", err)
 	}
 }
 
@@ -788,7 +944,7 @@ func TestGetByCode_Found(t *testing.T) {
 
 func TestGetByCode_OnlyDriversPreviewUnclaimedTrips(t *testing.T) {
 	repo := newMock()
-	repo.connected[[2]int64{1, 5}] = true
+	repo.approveDriver(5)
 	repo.seedDispatch(Dispatch{ID: 10, DispatchCode: "DC-1", Status: "PENDING", NurseryID: nid(1)})
 	if _, err := svc(repo).GetByCode(context.Background(), driverActor(5), testTrip); err != nil {
 		t.Errorf("driver preview of a pending trip: %v", err)
@@ -798,8 +954,8 @@ func TestGetByCode_OnlyDriversPreviewUnclaimedTrips(t *testing.T) {
 	}
 	mine, other := int64(7), "6fa459ea-ee8a-3ca4-894e-db77e160355e"
 	repo.seedDispatch(Dispatch{ID: 11, DispatchCode: "DC-2", Status: "ACCEPTED", DriverUserID: &mine, TripUUID: &other})
-	if _, err := svc(repo).GetByCode(context.Background(), driverActor(5), other); !errors.Is(err, ErrForbidden) {
-		t.Errorf("another driver's trip: want ErrForbidden, got %v", err)
+	if _, err := svc(repo).GetByCode(context.Background(), driverActor(5), other); !errors.Is(err, ErrTripTaken) {
+		t.Errorf("another driver's trip: want ErrTripTaken, got %v", err)
 	}
 }
 

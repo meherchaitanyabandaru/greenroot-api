@@ -48,9 +48,10 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Get("/{id}", m.handler.Get)
 		r.Put("/{id}/status", m.handler.UpdateStatus)
 		r.Post("/{id}/ack-delivery-update", m.handler.AcknowledgeDeliveryUpdate)
-		r.Post("/{id}/deliver", m.handler.Deliver) // driver/nursery: customer's code or override
-		r.Post("/{id}/receipt", m.handler.Receipt) // customer: received / report a problem
-		r.Post("/{id}/accept", m.handler.Accept)   // driver accepts and links to dispatch
+		r.Post("/{id}/deliver", m.handler.Deliver)      // driver/nursery: customer's code or override
+		r.Post("/{id}/receipt", m.handler.Receipt)      // customer: received / report a problem
+		r.Post("/{id}/accept", m.handler.Accept)        // driver accepts and links to dispatch
+		r.Post("/{id}/new-invite", m.handler.NewInvite) // staff: new trip QR (old one stops working)
 		r.Post("/{id}/items", m.handler.CreateItem)
 		r.Post("/{id}/trip-events", m.handler.CreateTripEvent)
 	})

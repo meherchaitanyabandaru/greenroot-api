@@ -13,14 +13,15 @@ type mockRepo struct {
 	points     []TrackingPoint
 	dispatches map[int64]DispatchAccess
 	// who may view a driver's / dispatch's history (the DB derives this from
-	// drivers, nursery_drivers, nursery_users and dispatches)
+	// drivers, the driver's active trips, nursery_users and dispatches)
 	driverViewers   map[int64][]int64
 	dispatchViewers map[int64][]int64
+	liveViewers     map[int64][]int64 // by the driver's user id
 	nextID          int64
 }
 
 func newMock() *mockRepo {
-	return &mockRepo{dispatches: map[int64]DispatchAccess{}, driverViewers: map[int64][]int64{}, dispatchViewers: map[int64][]int64{}, nextID: 100}
+	return &mockRepo{dispatches: map[int64]DispatchAccess{}, driverViewers: map[int64][]int64{}, dispatchViewers: map[int64][]int64{}, liveViewers: map[int64][]int64{}, nextID: 100}
 }
 
 func contains(ids []int64, id int64) bool {
@@ -34,6 +35,10 @@ func contains(ids []int64, id int64) bool {
 
 func (m *mockRepo) CanViewDriver(_ context.Context, driverID, userID int64) (bool, error) {
 	return contains(m.driverViewers[driverID], userID), nil
+}
+
+func (m *mockRepo) CanViewLiveDriver(_ context.Context, driverUserID, userID int64) (bool, error) {
+	return driverUserID == userID || contains(m.liveViewers[driverUserID], userID), nil
 }
 
 func (m *mockRepo) CanViewDispatch(_ context.Context, dispatchID, userID int64) (bool, error) {
@@ -377,7 +382,7 @@ func TestTrackingReads_RequireAConnection(t *testing.T) {
 	repo := newMock()
 	d, dsp, v := int64(7), int64(30), int64(5)
 	repo.points = []TrackingPoint{{ID: 1, DriverID: &d, DispatchID: &dsp, VehicleID: &v, Latitude: 12.9, Longitude: 77.5}}
-	repo.driverViewers[d] = []int64{70, 80}     // the driver (70) and a connected nursery owner (80)
+	repo.driverViewers[d] = []int64{70, 80}     // the driver (70) and the owner whose trip they run (80)
 	repo.dispatchViewers[dsp] = []int64{70, 90} // the driver and the receiving customer (90)
 	s := svc(repo)
 	ctx := context.Background()
@@ -392,11 +397,11 @@ func TestTrackingReads_RequireAConnection(t *testing.T) {
 		{"admin sees vehicle", adminActor(1), SubjectVehicle, v, true},
 		{"super admin sees driver", ActorContext{UserID: 2, Roles: []string{"SUPER_ADMIN"}}, SubjectDriver, d, true},
 		{"driver sees own history", driverActor(70), SubjectDriver, d, true},
-		{"connected owner sees driver", ownerActor(80), SubjectDriver, d, true},
+		{"owner of the driver's trip sees driver", ownerActor(80), SubjectDriver, d, true},
 		{"customer sees own dispatch", buyerActor(90), SubjectDispatch, dsp, true},
 		{"unrelated buyer cannot see driver", buyerActor(99), SubjectDriver, d, false},
 		{"unrelated buyer cannot see dispatch", buyerActor(99), SubjectDispatch, dsp, false},
-		{"unconnected owner cannot see driver", ownerActor(81), SubjectDriver, d, false},
+		{"another owner cannot see driver", ownerActor(81), SubjectDriver, d, false},
 		{"other driver cannot see driver", driverActor(71), SubjectDriver, d, false},
 		{"non-admin cannot see vehicle", ownerActor(80), SubjectVehicle, v, false},
 		{"unknown driver id is forbidden, not 404", buyerActor(99), SubjectDriver, 12345, false},
@@ -411,6 +416,32 @@ func TestTrackingReads_RequireAConnection(t *testing.T) {
 			if !c.allowed && !errors.Is(err, ErrForbidden) {
 				t.Errorf("%s: want ErrForbidden, got %v", c.name, err)
 			}
+		}
+	}
+}
+
+func TestGetLiveDriver_OnlyWhileOnTheViewersTrip(t *testing.T) {
+	repo := newMock()
+	repo.liveViewers[70] = []int64{80} // driver 70 runs a trip of owner 80's nursery
+	s := svc(repo)
+	ctx := context.Background()
+	for _, c := range []struct {
+		name    string
+		actor   ActorContext
+		allowed bool
+	}{
+		{"the driver", driverActor(70), true},
+		{"owner of the driver's trip", ownerActor(80), true},
+		{"any other owner", ownerActor(81), false},
+		{"another driver", driverActor(71), false},
+		{"admin", adminActor(1), true},
+	} {
+		_, err := s.GetLiveDriver(ctx, c.actor, 70)
+		if c.allowed && err != nil {
+			t.Errorf("%s: want allowed, got %v", c.name, err)
+		}
+		if !c.allowed && !errors.Is(err, ErrForbidden) {
+			t.Errorf("%s: want ErrForbidden, got %v", c.name, err)
 		}
 	}
 }

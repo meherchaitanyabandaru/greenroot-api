@@ -450,12 +450,11 @@ def invite(owner, kind, person):
     return out["invite"]["invite_uuid"]
 
 
-def approved_driver(boss, owner):
+def approved_driver(boss, owner=None, vehicle="MINI_TRUCK"):
+    """A driver GreenRoot approved. No nursery link: the trip QR is the invitation."""
     d = User(first="Driver", activity="DRIVER")
-    uuid = invite(owner, "DRIVER_INVITE", d)
-    expect("driver accepts invite", "POST", f"/invites/{uuid}/accept", d.token, {})
     app = expect("driver applies with licence", "POST", "/drivers/apply", d.token,
-                 {"licence_number": "TS09" + d.mobile, "vehicle_number": "TS09" + d.mobile[-4:], "vehicle_type": "MINI_TRUCK"}, status=(200, 201))
+                 {"licence_number": "TS09" + d.mobile, "vehicle_number": "TS09" + d.mobile[-4:], "vehicle_type": vehicle}, status=(200, 201))
     expect("admin approves driver", "POST", f"/drivers/{app['driver']['id']}/approve", boss.token, {"driver_user_id": d.id})
     d.refresh()
     return d
@@ -966,7 +965,8 @@ def journey_dispatch():
     check("…the driver sees which nursery to pick up from", bool(out["dispatch"].get("seller_nursery_name")), out["dispatch"])
     expect("accepting again is idempotent", "POST", f"/dispatches/{did}/accept", driver.token, {"trip_code": trip})
     expect("another driver cannot take an accepted trip", "POST", f"/dispatches/{did}/accept", second_driver.token, {"trip_code": trip}, status=(403, 409))
-    expect("another driver cannot look it up any more", "GET", f"/dispatches/code/{trip}", second_driver.token, status=403)
+    out = expect("another driver scanning it is told it is taken", "GET", f"/dispatches/code/{trip}", second_driver.token, status=409)
+    check("…trip_taken", err_code(out) == "trip_taken", out)
 
     # One active trip per driver
     o2 = loaded_order()
@@ -1099,30 +1099,60 @@ def journey_dispatch():
     check("…none: completing loading assigns no driver", not (trips.get("dispatches") or []), trips)
     d4 = expect("owner creates the trip", "POST", "/dispatches", owner.token, {"order_id": o4["id"], "driver_user_id": second_driver.id}, status=201)["dispatch"]
     check("…PENDING with no driver, even if a driver id is sent", d4["dispatch_status"] == "PENDING" and not d4.get("driver_user_id"), d4)
-    rival_driver = approved_driver(boss, rival)
-    expect("another nursery's driver cannot preview it with the real QR", "GET", f"/dispatches/code/{d4['trip_uuid']}", rival_driver.token, status=403)
-    expect("…nor accept it", "POST", f"/dispatches/{d4['id']}/accept", rival_driver.token, {"trip_code": d4["trip_uuid"]}, status=403)
-    out = expect("the nursery's driver scans and accepts", "POST", f"/dispatches/{d4['id']}/accept", second_driver.token, {"trip_code": d4["trip_uuid"]})["dispatch"]
-    check("…Driver Assigned", out["dispatch_status"] == "ACCEPTED" and out.get("driver_user_id") == second_driver.id, out)
+    out = expect("no one sends driver invites any more: the trip QR is the invitation", "POST", "/invites", owner.token,
+                 {"invite_type": "DRIVER_INVITE", "nursery_id": owner.nursery_id, "target_mobile": "9" + str(random.randint(10**8, 10**9 - 1))}, status=400)
+    stranger_driver = approved_driver(boss)  # never linked to this nursery
+    pv = expect("a driver with no tie to the nursery previews the trip from its QR", "GET", f"/dispatches/code/{d4['trip_uuid']}", stranger_driver.token)["dispatch"]
+    check("…sees where it goes, not the customer's name or number", bool(pv.get("destination_address"))
+          and not pv.get("customer_mobile_snapshot") and not pv.get("customer_name_snapshot"), pv)
+    check("…and the pickup nursery", bool(pv.get("seller_nursery_name")), pv)
+    applicant = User(first="Unapproved", activity="DRIVER")
+    expect("someone not approved as a driver cannot take it", "POST", f"/dispatches/{d4['id']}/accept", applicant.token, {"trip_code": d4["trip_uuid"]}, status=403)
+    # Two drivers accept at the same moment: exactly one gets the trip.
+    import threading
+    results = {}
+    def grab(drv):
+        results[drv.id] = call("POST", f"/dispatches/{d4['id']}/accept", drv.token, {"trip_code": d4["trip_uuid"]})
+    racers = [threading.Thread(target=grab, args=(drv,)) for drv in (stranger_driver, second_driver)]
+    [r.start() for r in racers]
+    [r.join() for r in racers]
+    won = [uid for uid, (code, _) in results.items() if code == 200]
+    lost = [body for code, body in results.values() if code != 200]
+    check("two drivers accept at once: exactly one gets it", len(won) == 1, results)
+    check("…the other is told it is taken", len(lost) == 1 and err_code(lost[0]) == "trip_taken", results)
+    winner = stranger_driver if won and won[0] == stranger_driver.id else second_driver
+    out = expect("…the trip names the winner", "GET", f"/dispatches/{d4['id']}", owner.token)["dispatch"]
+    check("…Driver Assigned", out["dispatch_status"] == "ACCEPTED" and out.get("driver_user_id") == winner.id, out)
     check("…with the time it was accepted", bool(out.get("driver_accepted_at")), out)
-    expect("scanning again is idempotent", "POST", f"/dispatches/{d4['id']}/accept", second_driver.token, {"trip_code": d4["trip_uuid"]})
-    out = expect("driver starts straight from Driver Assigned", "PUT", f"/dispatches/{d4['id']}/status", second_driver.token, {"dispatch_status": "IN_TRANSIT"})["dispatch"]
+    expect("scanning again is idempotent", "POST", f"/dispatches/{d4['id']}/accept", winner.token, {"trip_code": d4["trip_uuid"]})
+    out = expect("driver starts straight from Driver Assigned", "PUT", f"/dispatches/{d4['id']}/status", winner.token, {"dispatch_status": "IN_TRANSIT"})["dispatch"]
     check("…On the Way", out["dispatch_status"] == "IN_TRANSIT", out)
     check("…with when it left and who started it", bool(out.get("trip_started_at")) and bool(out.get("dispatch_date"))
-          and out.get("trip_started_by_user_id") == second_driver.id, out)
+          and out.get("trip_started_by_user_id") == winner.id, out)
     code4 = expect("buyer opens it", "GET", f"/dispatches/{d4['id']}", buyer.token)["dispatch"].get("delivery_code")
-    expect("driver delivers with the code", "POST", f"/dispatches/{d4['id']}/deliver", second_driver.token, {"code": code4})
+    expect("driver delivers with the code", "POST", f"/dispatches/{d4['id']}/deliver", winner.token, {"code": code4})
     expect("a delivered order's address can no longer change", "PUT", f"/orders/{o4['id']}/delivery", owner.token,
            dict(address, emergency_update=True), status=(409, 422))
-    expect("no GPS after delivery (the app stops on this 409)", "POST", "/tracking", second_driver.token, {"dispatch_id": d4["id"], "latitude": 17.41, "longitude": 78.39}, status=409)
+    expect("no GPS after delivery (the app stops on this 409)", "POST", "/tracking", winner.token, {"dispatch_id": d4["id"], "latitude": 17.41, "longitude": 78.39}, status=409)
     o5 = loaded_order()
     expect("start loading", "POST", f"/orders/{o5['id']}/start-loading", owner.token, {})
     expect("complete loading", "POST", f"/orders/{o5['id']}/complete-loading", owner.token, LOADED_OK)
-    d5 = expect("owner creates another trip", "POST", "/dispatches", owner.token, {"order_id": o5["id"]}, status=201)["dispatch"]
-    expect("the nursery's driver accepts", "POST", f"/dispatches/{d5['id']}/accept", second_driver.token, {"trip_code": d5["trip_uuid"]})
+    expect("a trip cannot ask for an unknown lorry", "POST", "/dispatches", owner.token, {"order_id": o5["id"], "required_vehicle_type": "ROCKET"}, status=400)
+    d5 = expect("owner creates a trip that needs an auto", "POST", "/dispatches", owner.token, {"order_id": o5["id"], "required_vehicle_type": "AUTO"}, status=201)["dispatch"]
+    check("…with the lorry asked for and a QR that expires", d5.get("required_vehicle_type") == "AUTO" and bool(d5.get("invite_expires_at")), d5)
+    out = expect("a driver with another lorry cannot take it", "POST", f"/dispatches/{d5['id']}/accept", second_driver.token, {"trip_code": d5["trip_uuid"]}, status=409)
+    check("…vehicle_type_mismatch", err_code(out) == "vehicle_type_mismatch", out)
+    expect("a driver cannot issue a new QR", "POST", f"/dispatches/{d5['id']}/new-invite", second_driver.token, {}, status=403)
+    old_code = d5["trip_uuid"]
+    d5 = expect("owner issues a new QR", "POST", f"/dispatches/{d5['id']}/new-invite", owner.token, {})["dispatch"]
+    check("…a different code", d5.get("trip_uuid") and d5["trip_uuid"] != old_code, d5)
+    expect("…the old QR finds nothing now", "GET", f"/dispatches/code/{old_code}", second_driver.token, status=404)
+    auto = approved_driver(boss, vehicle="AUTO")
+    expect("a driver with an auto accepts", "POST", f"/dispatches/{d5['id']}/accept", auto.token, {"trip_code": d5["trip_uuid"]})
     expect("owner cancels the trip", "PUT", f"/dispatches/{d5['id']}/status", owner.token, {"dispatch_status": "CANCELLED"})
-    expect("no GPS on a cancelled trip", "POST", "/tracking", second_driver.token, {"dispatch_id": d5["id"], "latitude": 17.41, "longitude": 78.39}, status=409)
-    expect("a cancelled trip cannot be accepted again", "POST", f"/dispatches/{d5['id']}/accept", second_driver.token, {"trip_code": d5["trip_uuid"]}, status=(403, 404, 409))
+    expect("no GPS on a cancelled trip", "POST", "/tracking", auto.token, {"dispatch_id": d5["id"], "latitude": 17.41, "longitude": 78.39}, status=409)
+    out = expect("a cancelled trip cannot be accepted again", "POST", f"/dispatches/{d5['id']}/accept", second_driver.token, {"trip_code": d5["trip_uuid"]}, status=409)
+    check("…trip_cancelled", err_code(out) == "trip_cancelled", out)
 
     # Ratings: only the parties, only once it is done
     stranger = User(first="Nosy", activity="CUSTOMER")

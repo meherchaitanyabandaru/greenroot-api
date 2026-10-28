@@ -34,8 +34,14 @@ var (
 	ErrActiveDispatch   = errors.New("active dispatch already exists for order")
 	ErrAlreadyAccepted  = errors.New("dispatch already accepted")
 	ErrActiveDriverTrip = errors.New("driver already has an active trip")
-	// Wraps ErrForbidden, so callers that only check for that still refuse.
-	ErrDriverNotConnected = fmt.Errorf("%w: driver is not connected to this nursery", apperrs.ErrForbidden)
+
+	// Why a driver cannot take a trip from its QR. They wrap ErrForbidden or
+	// ErrConflict, so callers checking only those still refuse.
+	ErrTripTaken         = fmt.Errorf("%w: trip already taken", apperrs.ErrConflict)
+	ErrTripCancelled     = fmt.Errorf("%w: trip cancelled", apperrs.ErrConflict)
+	ErrTripInviteExpired = fmt.Errorf("%w: trip invite expired", apperrs.ErrConflict)
+	ErrVehicleMismatch   = fmt.Errorf("%w: trip needs another lorry", apperrs.ErrConflict)
+	ErrDriverNotApproved = fmt.Errorf("%w: driver not approved", apperrs.ErrForbidden)
 
 	ErrConfirmationRequired = errors.New("delivery needs the customer's confirmation")
 	ErrWrongDeliveryCode    = errors.New("wrong delivery code")
@@ -340,16 +346,16 @@ func (s *Service) GetByCode(ctx context.Context, actor ActorContext, code string
 	if err != nil {
 		return Dispatch{}, err
 	}
-	unclaimed := dispatch.Status == "PENDING" && dispatch.DriverID == nil && dispatch.DriverUserID == nil
-	if actor.HasRole("DRIVER") && unclaimed {
-		// A leaked QR must not show the customer's address to another nursery's driver.
-		if err := s.requireConnectedDriver(ctx, actor, *dispatch); err != nil {
+	// The QR is the driver's invitation: any driver may look at an open trip
+	// to decide; everyone else sees it only if they are part of it.
+	if actor.HasRole("DRIVER") && !isTripDriver(actor, *dispatch) {
+		if err := openForDrivers(*dispatch, time.Now()); err != nil {
 			return Dispatch{}, err
 		}
-	} else {
-		if err := s.canAccess(ctx, actor, *dispatch); err != nil {
-			return Dispatch{}, err
-		}
+		return s.present(actor, *dispatch), nil
+	}
+	if err := s.canAccess(ctx, actor, *dispatch); err != nil {
+		return Dispatch{}, err
 	}
 	return s.present(actor, *dispatch), nil
 }
@@ -377,16 +383,10 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 	if dispatch.Status == "ACCEPTED" && dispatch.DriverUserID != nil && *dispatch.DriverUserID == actor.UserID {
 		return s.present(actor, *dispatch), nil
 	}
-	if dispatch.IsOutsideTransport {
-		return Dispatch{}, ErrOutsideTransport
+	if err := openForDrivers(*dispatch, time.Now()); err != nil {
+		return Dispatch{}, err
 	}
-	if dispatch.Status != "PENDING" {
-		return Dispatch{}, ErrForbidden
-	}
-	if dispatch.DriverID != nil || dispatch.DriverUserID != nil {
-		return Dispatch{}, ErrAlreadyAccepted
-	}
-	if err := s.requireConnectedDriver(ctx, actor, *dispatch); err != nil {
+	if err := s.requireEligibleDriver(ctx, actor, *dispatch); err != nil {
 		return Dispatch{}, err
 	}
 	active, err := s.repository.DriverHasActiveTrip(ctx, actor.UserID, dispatchID)
@@ -400,32 +400,94 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 	if err != nil {
 		return Dispatch{}, err
 	}
+	// Sent only after the claim succeeded, so they always name the winner.
 	if updated.OwnerUserIDSnapshot != nil {
 		s.enqueueNotification(ctx, *updated.OwnerUserIDSnapshot,
 			notifyqueue.EventDispatchAccepted,
 			"Dispatch Accepted",
-			fmt.Sprintf("Dispatch %s was accepted by the driver.", updated.DispatchCode), notifyqueue.Link("dispatch", updated.ID))
+			fmt.Sprintf("Dispatch %s was accepted by %s.", updated.DispatchCode, textOr(updated.DriverName, "a driver")), notifyqueue.Link("dispatch", updated.ID))
 	}
+	s.enqueueNotification(ctx, actor.UserID,
+		notifyqueue.EventDispatchAccepted,
+		"Trip is yours",
+		fmt.Sprintf("You have trip %s. Pick up at %s.", updated.DispatchCode, textOr(updated.SellerNurseryName, "the nursery")), notifyqueue.Link("dispatch", updated.ID))
 	return s.present(actor, *updated), nil
 }
 
-// requireConnectedDriver: the nursery approved this driver (nursery_drivers).
-func (s *Service) requireConnectedDriver(ctx context.Context, actor ActorContext, d Dispatch) error {
-	nurseryID := d.NurseryID
-	if nurseryID == nil {
-		nurseryID = d.SellerNurseryID
+// RenewInvite gives a trip still waiting for a driver a new QR (the old one
+// stops working), e.g. after the 72 hours ran out. Nursery staff only.
+func (s *Service) RenewInvite(ctx context.Context, actor ActorContext, dispatchID int64) (Dispatch, error) {
+	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "dispatches", dispatchID)
+	if err != nil {
+		return Dispatch{}, err
 	}
-	if nurseryID == nil {
-		return ErrForbidden
+	defer lock.Release(ctx)
+
+	current, err := s.repository.FindByID(ctx, dispatchID)
+	if err != nil {
+		return Dispatch{}, err
 	}
-	ok, err := s.repository.IsConnectedDriver(ctx, *nurseryID, actor.UserID)
+	staff, _, err := s.operatorRole(ctx, actor, *current)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if !staff {
+		return Dispatch{}, ErrForbidden
+	}
+	if current.IsOutsideTransport {
+		return Dispatch{}, ErrOutsideTransport
+	}
+	updated, err := s.repository.RenewTripInvite(ctx, dispatchID)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	s.audit(ctx, actor, "dispatches", dispatchID, actionUpdate, map[string]any{"trip_invite": "renewed"})
+	return s.present(actor, *updated), nil
+}
+
+var vehicleTypes = map[string]bool{"TRUCK": true, "VAN": true, "PICKUP": true, "AUTO": true}
+
+func isTripDriver(actor ActorContext, d Dispatch) bool {
+	return d.DriverUserID != nil && *d.DriverUserID == actor.UserID
+}
+
+// openForDrivers: the trip's QR can still be taken -- nobody has it, it was
+// not cancelled, it is not an outside lorry, and the QR has not lapsed.
+func openForDrivers(d Dispatch, now time.Time) error {
+	switch {
+	case d.IsOutsideTransport:
+		return ErrOutsideTransport
+	case d.Status == "CANCELLED":
+		return ErrTripCancelled
+	case d.Status != "PENDING" || d.DriverID != nil || d.DriverUserID != nil:
+		return ErrTripTaken
+	case d.InviteExpiresAt != nil && !now.Before(*d.InviteExpiresAt):
+		return ErrTripInviteExpired
+	}
+	return nil
+}
+
+// requireEligibleDriver: any driver GreenRoot approved who is still driving,
+// with the lorry the trip asks for. No link to the nursery is needed.
+func (s *Service) requireEligibleDriver(ctx context.Context, actor ActorContext, d Dispatch) error {
+	e, err := s.repository.DriverEligibility(ctx, actor.UserID)
 	if err != nil {
 		return err
 	}
-	if !ok {
-		return ErrDriverNotConnected
+	if !e.Found || e.ApprovalStatus != "APPROVED" || e.Status != "ACTIVE" {
+		return ErrDriverNotApproved
+	}
+	if d.RequiredVehicleType != nil && !strings.EqualFold(*d.RequiredVehicleType, e.VehicleType) {
+		return ErrVehicleMismatch
 	}
 	return nil
+}
+
+func textOr(s *string, fallback string) string {
+	if s == nil || strings.TrimSpace(*s) == "" {
+		return fallback
+	}
+	return *s
 }
 
 func (s *Service) enqueueNotification(ctx context.Context, userID int64, notifType, title, message string, data map[string]any) {
@@ -648,6 +710,12 @@ func normalizeCreate(req CreateDispatchRequest) (CreateDispatchInput, error) {
 			input.OutsideDriverMobile = &mobile
 		}
 	}
+	if v := strings.ToUpper(strings.TrimSpace(stringOrEmpty(req.RequiredVehicleType))); v != "" && !input.IsOutsideTransport {
+		if !vehicleTypes[v] {
+			return CreateDispatchInput{}, ErrInvalidInput
+		}
+		input.RequiredVehicleType = &v
+	}
 	// Empty dispatch number: the repository uses the public code (DSP-YYYYMMDD-NNNN).
 	return input, nil
 }
@@ -724,6 +792,10 @@ func withLifecycle(actor ActorContext, dispatch Dispatch) Dispatch {
 	} else {
 		// An app driver starts the trip themselves; the hand-over button only confused owners.
 		caps.CanMarkDispatched = false
+		caps.CanRenewInvite = caps.CanShareCode && dispatch.DriverUserID == nil
+		if dispatch.InviteExpiresAt != nil && !time.Now().Before(*dispatch.InviteExpiresAt) {
+			caps.CanAccept, caps.CanShareCode = false, false // the QR lapsed: only a new one helps
+		}
 	}
 	caps.CanConfirmReceipt, caps.CanReportIssue = receiptActions(dispatch, buyerSide, time.Now())
 	dispatch.Capabilities = &caps
@@ -734,6 +806,11 @@ func withLifecycle(actor ActorContext, dispatch Dispatch) Dispatch {
 // customer only, the delivery code while the trip is on its way.
 func (s *Service) present(actor ActorContext, dispatch Dispatch) Dispatch {
 	dispatch = withLifecycle(actor, dispatch)
+	// A driver deciding on a trip sees where it goes, not who the customer
+	// is: anyone with the QR may look, and only the one who takes it calls.
+	if actor.HasRole("DRIVER") && !isTripDriver(actor, dispatch) && !isCustomer(actor, dispatch) {
+		dispatch.CustomerNameSnapshot, dispatch.CustomerMobileSnapshot, dispatch.CustomerUserID = nil, nil, nil
+	}
 	if isCustomer(actor, dispatch) && onTheWay(dispatch.Status) && dispatch.DeliveryCodeAttempts < maxDeliveryCodeAttempts {
 		if code, ok := s.deliveryCode(dispatch); ok {
 			dispatch.DeliveryCode = &code
