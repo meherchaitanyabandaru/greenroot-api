@@ -34,6 +34,8 @@ var (
 	ErrActiveDispatch   = errors.New("active dispatch already exists for order")
 	ErrAlreadyAccepted  = errors.New("dispatch already accepted")
 	ErrActiveDriverTrip = errors.New("driver already has an active trip")
+	// Wraps ErrForbidden, so callers that only check for that still refuse.
+	ErrDriverNotConnected = fmt.Errorf("%w: driver is not connected to this nursery", apperrs.ErrForbidden)
 
 	ErrConfirmationRequired = errors.New("delivery needs the customer's confirmation")
 	ErrWrongDeliveryCode    = errors.New("wrong delivery code")
@@ -421,7 +423,7 @@ func (s *Service) requireConnectedDriver(ctx context.Context, actor ActorContext
 		return err
 	}
 	if !ok {
-		return ErrForbidden
+		return ErrDriverNotConnected
 	}
 	return nil
 }

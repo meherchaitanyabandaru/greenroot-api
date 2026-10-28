@@ -305,6 +305,9 @@ func int64Query(value string) int64 { parsed, _ := strconv.ParseInt(value, 10, 6
 
 func writeError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, ErrDriverNotConnected):
+		response.Error(w, http.StatusForbidden, "driver_not_connected",
+			"You are not this nursery's driver yet. Ask the owner to invite you as a driver (Members → Drivers), then scan the trip again.")
 	case errors.Is(err, ErrForbidden):
 		response.Error(w, http.StatusForbidden, "forbidden", "not allowed to access dispatch")
 	case errors.Is(err, ErrNotFound):

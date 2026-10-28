@@ -34,6 +34,7 @@ type Repository interface {
 	GetBuyerNurseryID(ctx context.Context, quotationID int64) (*int64, error)
 	SoftDelete(ctx context.Context, id int64) error
 	FindNurseryOwnerID(ctx context.Context, quotationID int64) (int64, error)
+	DeliveryKM(ctx context.Context, quotationID, buyerUserID int64) (*float64, error)
 	AssignManager(ctx context.Context, quotationID int64, managerUserID int64) (*Quotation, error)
 	UnassignManager(ctx context.Context, quotationID int64) (*Quotation, error)
 	MarkConverted(ctx context.Context, quotationID int64, orderID int64, byUserID int64) error
@@ -288,6 +289,36 @@ func (r *PostgresRepository) SoftDelete(ctx context.Context, id int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// DeliveryKM is the straight-line km from the nursery to the buyer's default
+// address (the one the order is delivered to); nil when either has no point.
+func (r *PostgresRepository) DeliveryKM(ctx context.Context, quotationID, buyerUserID int64) (*float64, error) {
+	var km sql.NullFloat64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT ST_Distance(
+			ST_SetSRID(ST_MakePoint(na.longitude::double precision, na.latitude::double precision), 4326)::geography,
+			ST_SetSRID(ST_MakePoint(ua.longitude::double precision, ua.latitude::double precision), 4326)::geography
+		) / 1000
+		FROM public.quotations q
+		JOIN LATERAL (
+			SELECT a.latitude, a.longitude FROM public.nursery_addresses a
+			WHERE a.nursery_id = q.nursery_id AND a.latitude IS NOT NULL AND a.longitude IS NOT NULL
+			ORDER BY a.is_primary DESC, a.nursery_address_id LIMIT 1
+		) na ON true
+		JOIN LATERAL (
+			SELECT u.latitude, u.longitude FROM public.user_addresses u
+			WHERE u.user_id = $2 AND u.latitude IS NOT NULL AND u.longitude IS NOT NULL
+			ORDER BY u.is_default DESC, u.address_id DESC LIMIT 1
+		) ua ON true
+		WHERE q.quotation_id = $1`, quotationID, buyerUserID).Scan(&km)
+	if errors.Is(err, sql.ErrNoRows) || !km.Valid {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &km.Float64, nil
 }
 
 func (r *PostgresRepository) FindNurseryOwnerID(ctx context.Context, quotationID int64) (int64, error) {

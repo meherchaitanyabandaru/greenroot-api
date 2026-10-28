@@ -176,6 +176,10 @@ func (m *mockRepo) SoftDelete(_ context.Context, id int64) error {
 	return nil
 }
 
+func (m *mockRepo) DeliveryKM(context.Context, int64, int64) (*float64, error) {
+	return nil, nil
+}
+
 func (m *mockRepo) FindNurseryOwnerID(_ context.Context, quotationID int64) (int64, error) {
 	q, ok := m.quotations[quotationID]
 	if !ok || q.NurseryID == nil {
@@ -1357,5 +1361,15 @@ func TestBuyerAccept_ExpiredQuotationRejected(t *testing.T) {
 	_, err := svc.BuyerAccept(context.Background(), buyerActor(99), 1)
 	if !errors.Is(err, ErrQuotationExpired) {
 		t.Errorf("expired quotation should return ErrQuotationExpired, got %v", err)
+	}
+}
+
+func TestAcceptedMessage_DistanceAndTransport(t *testing.T) {
+	km := 41.6
+	if got, want := acceptedMessage("QUO-1", &km), "Buyer accepted quotation QUO-1. Delivery is about 42 km away (approximate). Transport charges are not included; agree them with the buyer."; got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+	if got, want := acceptedMessage("QUO-1", nil), "Buyer accepted quotation QUO-1. Transport charges are not included; agree them with the buyer."; got != want {
+		t.Errorf("no distance: got %q", got)
 	}
 }

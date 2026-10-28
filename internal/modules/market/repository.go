@@ -29,6 +29,7 @@ type Repository interface {
 	ListByNursery(ctx context.Context, nurseryID int64, q AdsQuery) ([]Ad, int, error)
 	UpdateAd(ctx context.Context, id, userID int64, req UpdateAdRequest) (Ad, error)
 	SetAdStatus(ctx context.Context, id int64, status string, ts *time.Time) error
+	ArchiveAd(ctx context.Context, id int64, closeReason *string) error
 	// IsCatalogSize reports whether name is an active size (Seed, Sapling, ...).
 	IsCatalogSize(ctx context.Context, name string) (bool, error)
 	// SoftDeleteAd marks the ad DELETED; false when it is no longer deletable
@@ -42,7 +43,7 @@ type Repository interface {
 	SellerProfile(ctx context.Context, nurseryID int64) (SellerProfile, error)
 
 	// Views & saves
-	RecordView(ctx context.Context, adID, nurseryID int64) error
+	RecordView(ctx context.Context, adID, nurseryID int64) (bool, error)
 	ToggleSave(ctx context.Context, adID, nurseryID, userID int64) (bool, error)
 	IsSaved(ctx context.Context, adID, nurseryID int64) (bool, error)
 	ListSaved(ctx context.Context, nurseryID int64, q AdsQuery) ([]Ad, int, error)
@@ -353,10 +354,12 @@ func (r *PostgresRepository) UpdateAd(ctx context.Context, id, userID int64, req
 	addExpr := func(expr string, values ...any) {
 		start := len(args) + 1
 		args = append(args, values...)
+		// One pass: renumbering $1→$2 then $2→$3 in turn would also move the first.
+		pairs := make([]string, 0, 2*len(values))
 		for i := range values {
-			expr = strings.ReplaceAll(expr, fmt.Sprintf("$%d", i+1), fmt.Sprintf("$%d", start+i))
+			pairs = append(pairs, fmt.Sprintf("$%d", i+1), fmt.Sprintf("$%d", start+i))
 		}
-		setClauses = append(setClauses, expr)
+		setClauses = append(setClauses, strings.NewReplacer(pairs...).Replace(expr))
 	}
 	if req.PlantName != nil {
 		add("plant_name", *req.PlantName)
@@ -407,7 +410,7 @@ func (r *PostgresRepository) UpdateAd(ctx context.Context, id, userID int64, req
 		add("access_instructions", *req.AccessInstructions)
 	}
 	if req.PickupLatitude != nil && req.PickupLongitude != nil {
-		addExpr("pickup_latitude = $1, pickup_longitude = $2, pickup_location = ST_SetSRID(ST_MakePoint($2::double precision, $1::double precision), 4326)::geography", *req.PickupLatitude, *req.PickupLongitude)
+		addExpr("pickup_latitude = $1::double precision, pickup_longitude = $2::double precision, pickup_location = ST_SetSRID(ST_MakePoint($2::double precision, $1::double precision), 4326)::geography", *req.PickupLatitude, *req.PickupLongitude)
 	}
 	if req.PickupGPSAccuracyM != nil {
 		add("pickup_gps_accuracy_meters", *req.PickupGPSAccuracyM)
@@ -448,6 +451,13 @@ func (r *PostgresRepository) SetAdStatus(ctx context.Context, id int64, status s
 		return err
 	}
 	_, err := r.db.ExecContext(ctx, q, status, id)
+	return err
+}
+
+func (r *PostgresRepository) ArchiveAd(ctx context.Context, id int64, closeReason *string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE public.market_ads SET status = 'ARCHIVED', archived_at = NOW(), close_reason = $2, updated_at = NOW()
+		 WHERE ad_id = $1`, id, closeReason)
 	return err
 }
 
@@ -553,13 +563,18 @@ func (r *PostgresRepository) SetExpiry(ctx context.Context, id int64, expiresAt 
 
 // ── Views & saves ─────────────────────────────────────────────
 
-func (r *PostgresRepository) RecordView(ctx context.Context, adID, nurseryID int64) error {
-	_, err := r.db.ExecContext(ctx,
+// RecordView reports whether this nursery's first view of the ad was recorded.
+func (r *PostgresRepository) RecordView(ctx context.Context, adID, nurseryID int64) (bool, error) {
+	res, err := r.db.ExecContext(ctx,
 		`INSERT INTO public.market_ad_views (ad_id, nursery_id)
 		 VALUES ($1, $2) ON CONFLICT DO NOTHING`,
 		adID, nurseryID,
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 func (r *PostgresRepository) ToggleSave(ctx context.Context, adID, nurseryID, userID int64) (bool, error) {
@@ -1042,7 +1057,7 @@ const messageSelect = `
 
 const enquirySelect = `
 	SELECT me.enquiry_id, me.enquiry_code,
-	       me.ad_id, ma.title, ma.ad_type, ma.status, ma.price_per_unit, ma.price_unit, ma.quantity, ma.photos->>0,
+	       me.ad_id, ma.title, ma.ad_type, ma.status, ma.close_reason, ma.price_per_unit, ma.price_unit, ma.quantity, ma.photos->>0,
 	       me.ad_nursery_id, ln.nursery_name,
 	       me.enquiring_nursery_id, en.nursery_name,
 	       me.created_by_user_id, me.message, me.quantity_needed,

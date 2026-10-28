@@ -1337,6 +1337,9 @@ def journey_market():
           and acc["pickup_landmark"] == "Banyan tree on the village road" and acc["access_instructions"] == "Narrow lane, tractors only", acc)
     expect("…switching road off keeps the pickup point, so it is allowed", "PATCH", f"/market/ads/{acc['id']}", owner.token, {"road_accessible": False})
     expect("…clearing the pickup point with no road is refused", "PATCH", f"/market/ads/{acc['id']}", owner.token, {"pickup_landmark": ""}, status=400)
+    placed = expect("a draft can be placed by GPS later (posted with location off)", "PATCH", f"/market/ads/{acc['id']}", owner.token,
+                    {"pickup_latitude": 16.9174, "pickup_longitude": 81.8306, "pickup_gps_accuracy_meters": 5, "pickup_location_source": "gps_confirmed"})["ad"]
+    check("…stored at that point", abs(placed["pickup_latitude"] - 16.9174) < 1e-6 and placed["pickup_location_source"] == "gps_confirmed", placed)
     neem = expect("look up neem", "GET", "/plants/lookup?q=Azadirachta", owner.token)["results"][0]["plant"]
     expect("a wanted post cannot carry road or truck access", "POST", "/market/ads", owner.token,
            {"ad_type": "WANT", "plant_id": neem["id"], "plant_name": "Neem", "title": "Neem", "road_accessible": True}, status=400)

@@ -138,7 +138,7 @@ func scanEnquiryRow(row rowScanner) (Enquiry, error) {
 
 	if err := row.Scan(
 		&e.ID, &e.Code,
-		&e.AdID, &e.AdTitle, &e.AdType, &e.AdStatus, &e.AdPricePerUnit, &e.AdPriceUnit, &e.AdQuantity, &e.AdPhoto,
+		&e.AdID, &e.AdTitle, &e.AdType, &e.AdStatus, &e.AdCloseReason, &e.AdPricePerUnit, &e.AdPriceUnit, &e.AdQuantity, &e.AdPhoto,
 		&e.AdNurseryID, &e.AdNurseryName,
 		&e.EnquiringNurseryID, &e.EnquiryNurseryName,
 		&e.CreatedByUserID, &e.Message, &quantityNeeded,

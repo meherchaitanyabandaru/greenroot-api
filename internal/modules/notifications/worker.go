@@ -34,9 +34,7 @@ func StartQueueWorker(ctx context.Context, db *sql.DB, rdb redis.Cmdable, sender
 		log = slog.Default()
 	}
 	repo := NewRepository(db)
-	if err := rdb.XGroupCreateMkStream(ctx, redisutil.KeyNotifications, notificationWorkerGroup, "0").Err(); err != nil && !isBusyGroup(err) {
-		log.Warn("notification queue group setup failed", "error", err)
-	}
+	createNotificationGroup(ctx, rdb, log)
 	consumer := notificationConsumerName()
 
 	for {
@@ -59,6 +57,10 @@ func StartQueueWorker(ctx context.Context, db *sql.DB, rdb redis.Cmdable, sender
 		}
 		if err != nil {
 			log.Warn("notification queue read failed", "error", err)
+			// Redis restarted empty or was flushed: without the group nothing is ever delivered again.
+			if strings.HasPrefix(err.Error(), "NOGROUP") {
+				createNotificationGroup(ctx, rdb, log)
+			}
 			time.Sleep(time.Second)
 			continue
 		}
@@ -67,6 +69,12 @@ func StartQueueWorker(ctx context.Context, db *sql.DB, rdb redis.Cmdable, sender
 				handleNotificationMessage(ctx, repo, rdb, sender, msg, log)
 			}
 		}
+	}
+}
+
+func createNotificationGroup(ctx context.Context, rdb redis.Cmdable, log *slog.Logger) {
+	if err := rdb.XGroupCreateMkStream(ctx, redisutil.KeyNotifications, notificationWorkerGroup, "0").Err(); err != nil && !isBusyGroup(err) {
+		log.Warn("notification queue group setup failed", "error", err)
 	}
 }
 

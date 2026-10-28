@@ -31,12 +31,15 @@ type Quotation struct {
 	CreatedByUserID int64   `json:"created_by_user_id"`
 	CreatedByName   *string `json:"created_by_name,omitempty"`
 	// Seller side
-	NurseryID             *int64  `json:"nursery_id,omitempty"`
-	NurseryName           *string `json:"nursery_name,omitempty"`
-	NurseryPhone          *string `json:"nursery_phone,omitempty"`
-	NurseryBrandColor     *string `json:"nursery_brand_color,omitempty"`
-	AssignedManagerUserID *int64  `json:"assigned_manager_user_id,omitempty"`
-	AssignedManagerName   *string `json:"assigned_manager_name,omitempty"`
+	NurseryID         *int64  `json:"nursery_id,omitempty"`
+	NurseryName       *string `json:"nursery_name,omitempty"`
+	NurseryPhone      *string `json:"nursery_phone,omitempty"`
+	NurseryBrandColor *string `json:"nursery_brand_color,omitempty"`
+	// The nursery's pickup point, for the buyer's rough delivery distance.
+	NurseryLatitude       *float64 `json:"nursery_latitude,omitempty"`
+	NurseryLongitude      *float64 `json:"nursery_longitude,omitempty"`
+	AssignedManagerUserID *int64   `json:"assigned_manager_user_id,omitempty"`
+	AssignedManagerName   *string  `json:"assigned_manager_name,omitempty"`
 	// Buyer side
 	CustomerUserID  *int64  `json:"customer_user_id,omitempty"`
 	BuyerNurseryID  *int64  `json:"buyer_nursery_id,omitempty"`

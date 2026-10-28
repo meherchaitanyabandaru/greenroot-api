@@ -206,9 +206,9 @@ func (s *Service) respondToOffer(ctx context.Context, actor ActorContext, id, me
 		return Enquiry{}, err
 	}
 	if accept {
-		s.notifyOtherSide(ctx, e, nurseryID, "Offer accepted", "Deal agreed on "+e.AdTitle)
+		s.notifyOtherSide(ctx, e, nurseryID, "Offer accepted", "Deal agreed")
 	} else {
-		s.notifyOtherSide(ctx, e, nurseryID, "Offer declined", "Your offer on "+e.AdTitle+" was declined")
+		s.notifyOtherSide(ctx, e, nurseryID, "Offer declined", "Your offer was declined")
 	}
 	return s.GetEnquiry(ctx, actor, id)
 }
@@ -239,16 +239,37 @@ func (s *Service) writableEnquiry(ctx context.Context, actor ActorContext, id in
 // readOnlyReason is empty while both nurseries can still write: the chat is
 // open and its ad is live. Pausing, expiring or archiving the ad freezes it.
 func readOnlyReason(e Enquiry) string {
+	// The ad's nursery closes, the other one cancels; on a WANT the ad's nursery buys.
+	poster, replier := "seller", "buyer"
+	if e.AdType == AdTypeWant {
+		poster, replier = "buyer", "seller"
+	}
 	switch e.Status {
 	case EnquiryClosed:
-		return "the seller closed this chat"
+		return "the " + poster + " closed this chat"
 	case EnquiryCancelled:
-		return "the buyer cancelled this enquiry"
+		return "the " + replier + " cancelled this enquiry"
 	}
-	if e.AdStatus != StatusPublished {
-		return "this ad is no longer active"
+	switch e.AdStatus {
+	case StatusPublished:
+		return ""
+	case StatusPaused:
+		return "the " + poster + " paused this ad for now"
+	case StatusExpired:
+		return "this ad expired"
+	case StatusArchived:
+		if e.AdCloseReason != nil && *e.AdCloseReason == CloseSoldOut {
+			if e.AdType == AdTypeWant {
+				return "the buyer closed this ad: they found the plants"
+			}
+			return "the seller closed this ad: sold out"
+		}
+		if e.AdCloseReason != nil && *e.AdCloseReason == CloseNoLongerAvailable {
+			return "the " + poster + " closed this ad: no longer needed or available"
+		}
+		return "the " + poster + " closed this ad"
 	}
-	return ""
+	return "this ad is no longer active"
 }
 
 // dealText renders "₹120 per plant × 50"; the unit falls back to "each".

@@ -43,11 +43,18 @@ func baseSelect() string {
 		       NULLIF(TRIM(COALESCE(um.first_name, '') || ' ' || COALESCE(um.last_name, '')), '') AS assigned_manager_name,
 		       o.order_code AS converted_order_code,
 		       q.converted_at,
-		       n.brand_color AS nursery_brand_color
+		       n.brand_color AS nursery_brand_color,
+		       na.latitude::double precision, na.longitude::double precision
 		FROM public.quotations q
 		LEFT JOIN public.users um ON um.user_id = q.assigned_manager_user_id
 		LEFT JOIN public.orders o ON o.order_id = q.converted_order_id
 		LEFT JOIN public.nurseries n ON n.nursery_id = q.nursery_id
+		-- Where the plants leave from: the buyer sees roughly how far that is.
+		LEFT JOIN LATERAL (
+			SELECT a.latitude, a.longitude FROM public.nursery_addresses a
+			WHERE a.nursery_id = q.nursery_id
+			ORDER BY a.is_primary DESC, a.nursery_address_id LIMIT 1
+		) na ON true
 		WHERE q.deleted_at IS NULL
 	`
 }
@@ -178,27 +185,28 @@ func scanQuotationRows(rows *sql.Rows) (Quotation, error) {
 func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) {
 	var q Quotation
 	var (
-		createdByName         sql.NullString
-		nurseryID             sql.NullInt64
-		nurseryName           sql.NullString
-		nurseryPhone          sql.NullString
-		customerUserID        sql.NullInt64
-		assignedManagerUserID sql.NullInt64
-		convertedOrderID      sql.NullInt64
-		recipientName         sql.NullString
-		recipientMobile       sql.NullString
-		notes                 sql.NullString
-		rejectionReason       sql.NullString
-		validUntil            sql.NullTime
-		sentAt                sql.NullTime
-		customerRespondedAt   sql.NullTime
-		deletedAt             sql.NullTime
-		buyerNurseryID        sql.NullInt64
-		totalAmount           sql.NullString
-		assignedManagerName   sql.NullString
-		convertedOrderCode    sql.NullString
-		convertedAt           sql.NullTime
-		nurseryBrandColor     sql.NullString
+		createdByName          sql.NullString
+		nurseryID              sql.NullInt64
+		nurseryName            sql.NullString
+		nurseryPhone           sql.NullString
+		customerUserID         sql.NullInt64
+		assignedManagerUserID  sql.NullInt64
+		convertedOrderID       sql.NullInt64
+		recipientName          sql.NullString
+		recipientMobile        sql.NullString
+		notes                  sql.NullString
+		rejectionReason        sql.NullString
+		validUntil             sql.NullTime
+		sentAt                 sql.NullTime
+		customerRespondedAt    sql.NullTime
+		deletedAt              sql.NullTime
+		buyerNurseryID         sql.NullInt64
+		totalAmount            sql.NullString
+		assignedManagerName    sql.NullString
+		convertedOrderCode     sql.NullString
+		convertedAt            sql.NullTime
+		nurseryBrandColor      sql.NullString
+		nurseryLat, nurseryLon sql.NullFloat64
 	)
 	if err := row.Scan(
 		&q.ID, &q.QuotationCode, &q.QuotationType,
@@ -212,6 +220,7 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 		&buyerNurseryID, &assignedManagerName,
 		&convertedOrderCode, &convertedAt,
 		&nurseryBrandColor,
+		&nurseryLat, &nurseryLon,
 	); err != nil {
 		return Quotation{}, err
 	}
@@ -223,6 +232,9 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 	q.NurseryName = nullableString(nurseryName)
 	q.NurseryPhone = nullableString(nurseryPhone)
 	q.NurseryBrandColor = nullableString(nurseryBrandColor)
+	if nurseryLat.Valid && nurseryLon.Valid {
+		q.NurseryLatitude, q.NurseryLongitude = &nurseryLat.Float64, &nurseryLon.Float64
+	}
 	q.CustomerUserID = nullableInt64(customerUserID)
 	q.BuyerNurseryID = nullableInt64(buyerNurseryID)
 	q.AssignedManagerUserID = nullableInt64(assignedManagerUserID)

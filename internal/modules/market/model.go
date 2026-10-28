@@ -34,6 +34,12 @@ const (
 	AdTypeWant = "WANT"
 )
 
+// Why the seller closed (archived) an ad; shown in its read-only chats.
+const (
+	CloseSoldOut           = "SOLD_OUT"
+	CloseNoLongerAvailable = "NO_LONGER_AVAILABLE"
+)
+
 // AdExpireDays is how long a published ad stays live before auto-expiring.
 const AdExpireDays = 30
 
@@ -169,6 +175,7 @@ type Enquiry struct {
 	AdTitle            string     `json:"ad_title"`
 	AdType             string     `json:"ad_type"`
 	AdStatus           string     `json:"ad_status"`
+	AdCloseReason      *string    `json:"ad_close_reason,omitempty"`
 	AdPricePerUnit     *float64   `json:"ad_price_per_unit,omitempty"`
 	AdPriceUnit        *string    `json:"ad_price_unit,omitempty"`
 	AdQuantity         *int       `json:"ad_quantity,omitempty"`

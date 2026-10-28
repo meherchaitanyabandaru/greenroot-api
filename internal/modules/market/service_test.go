@@ -18,6 +18,8 @@ type mockRepo struct {
 	enquiries     map[int64]Enquiry
 	saves         map[string]bool // "adID:nurseryID" → saved
 	enquiryExists map[string]bool // "adID:nurseryID"
+	views         map[string]bool // "adID:nurseryID"
+	closeReason   *string
 	lastOfferBody string
 	blockedUntil  map[int64]*time.Time
 	noCoords      map[int64]bool
@@ -176,6 +178,17 @@ func (m *mockRepo) UpdateAd(_ context.Context, id, _ int64, req UpdateAdRequest)
 	return ad, nil
 }
 
+func (m *mockRepo) ArchiveAd(_ context.Context, id int64, closeReason *string) error {
+	ad, ok := m.ads[id]
+	if !ok {
+		return ErrNotFound
+	}
+	ad.Status = StatusArchived
+	m.ads[id] = ad
+	m.closeReason = closeReason
+	return nil
+}
+
 func (m *mockRepo) SetAdStatus(_ context.Context, id int64, status string, _ *time.Time) error {
 	ad, ok := m.ads[id]
 	if !ok {
@@ -227,7 +240,17 @@ func (m *mockRepo) PostingBlockedUntil(_ context.Context, nurseryID int64) (*tim
 	return m.blockedUntil[nurseryID], nil
 }
 
-func (m *mockRepo) RecordView(_ context.Context, _ int64, _ int64) error { return nil }
+func (m *mockRepo) RecordView(_ context.Context, adID, nurseryID int64) (bool, error) {
+	key := fmt.Sprintf("%d:%d", adID, nurseryID)
+	if m.views[key] {
+		return false, nil
+	}
+	if m.views == nil {
+		m.views = map[string]bool{}
+	}
+	m.views[key] = true
+	return true, nil
+}
 
 func (m *mockRepo) ToggleSave(_ context.Context, adID, nurseryID, _ int64) (bool, error) {
 	key := mk(adID, nurseryID)
@@ -475,6 +498,23 @@ func TestGetAd_PublishedVisibleToOthers(t *testing.T) {
 	}
 }
 
+func TestGetAd_ReopeningCountsOneView(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, true, 10)
+	repo.seedNursery(2, true, 20)
+	repo.seedAd(1, 1, StatusPublished)
+	s := svc(repo)
+
+	for range 3 {
+		if _, err := s.GetAd(context.Background(), ownerActor(20), 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := repo.ads[1].ViewCount; got != 1 {
+		t.Errorf("one nursery opening the ad 3 times: view_count = %d, want 1", got)
+	}
+}
+
 func TestGetAd_DraftNotVisibleToOthers(t *testing.T) {
 	repo := newMock()
 	repo.seedNursery(1, true, 10)
@@ -585,12 +625,52 @@ func TestArchiveAd_FromPublished(t *testing.T) {
 	repo.seedAd(1, 1, StatusPublished)
 	repo.members[mk(1, 10)] = true
 
-	_, err := svc(repo).ArchiveAd(context.Background(), ownerActor(10), 1)
+	_, err := svc(repo).ArchiveAd(context.Background(), ownerActor(10), 1, CloseSoldOut)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if repo.ads[1].Status != StatusArchived {
 		t.Errorf("want ARCHIVED, got %s", repo.ads[1].Status)
+	}
+	if repo.closeReason == nil || *repo.closeReason != CloseSoldOut {
+		t.Errorf("close reason = %v, want SOLD_OUT", repo.closeReason)
+	}
+}
+
+func TestArchiveAd_UnknownReasonRefused(t *testing.T) {
+	repo := newMock()
+	repo.seedNursery(1, true, 10)
+	repo.seedAd(1, 1, StatusPublished)
+	repo.members[mk(1, 10)] = true
+
+	if _, err := svc(repo).ArchiveAd(context.Background(), ownerActor(10), 1, "BORED"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("want ErrInvalidInput, got %v", err)
+	}
+	if repo.ads[1].Status != StatusPublished {
+		t.Errorf("a refused close must leave the ad live, got %s", repo.ads[1].Status)
+	}
+}
+
+func TestReadOnlyReason_SaysWhyTheAdClosed(t *testing.T) {
+	sold, gone := CloseSoldOut, CloseNoLongerAvailable
+	cases := []struct {
+		adType, adStatus string
+		reason           *string
+		want             string
+	}{
+		{AdTypeSell, StatusArchived, &sold, "the seller closed this ad: sold out"},
+		{AdTypeWant, StatusArchived, &sold, "the buyer closed this ad: they found the plants"},
+		{AdTypeSell, StatusArchived, &gone, "the seller closed this ad: no longer needed or available"},
+		{AdTypeSell, StatusArchived, nil, "the seller closed this ad"},
+		{AdTypeSell, StatusExpired, nil, "this ad expired"},
+		{AdTypeWant, StatusPaused, nil, "the buyer paused this ad for now"},
+		{AdTypeSell, StatusPublished, nil, ""},
+	}
+	for _, c := range cases {
+		e := Enquiry{AdType: c.adType, AdStatus: c.adStatus, AdCloseReason: c.reason, Status: EnquiryInProgress}
+		if got := readOnlyReason(e); got != c.want {
+			t.Errorf("%s %s: got %q, want %q", c.adType, c.adStatus, got, c.want)
+		}
 	}
 }
 
@@ -1039,7 +1119,8 @@ func TestSuspendedAdIsFrozenForTheSeller(t *testing.T) {
 		t.Errorf("edit under review: want ErrConflict, got %v", err)
 	}
 	for name, fn := range map[string]func(context.Context, ActorContext, int64) (Ad, error){
-		"publish": s.PublishAd, "resume": s.ResumeAd, "archive": s.ArchiveAd,
+		"publish": s.PublishAd, "resume": s.ResumeAd,
+		"archive": func(ctx context.Context, a ActorContext, id int64) (Ad, error) { return s.ArchiveAd(ctx, a, id, "") },
 	} {
 		if _, err := fn(ctx, ownerActor(10), 1); !errors.Is(err, ErrInvalidInput) {
 			t.Errorf("%s under review: want ErrInvalidInput, got %v", name, err)
@@ -1221,5 +1302,19 @@ func TestMinOffer_SeventyPercentForBuyersOnly(t *testing.T) {
 	sell.AdPricePerUnit = &odd
 	if got := minOffer(sell, 2); got != 69.3 {
 		t.Fatalf("₹99 ad: want ₹69.30 minimum, got %v", got)
+	}
+}
+
+func TestReadOnlyReason_NamesTheRightSide(t *testing.T) {
+	cases := []struct{ adType, status, want string }{
+		{AdTypeSell, EnquiryClosed, "the seller closed this chat"},
+		{AdTypeWant, EnquiryClosed, "the buyer closed this chat"},
+		{AdTypeSell, EnquiryCancelled, "the buyer cancelled this enquiry"},
+		{AdTypeWant, EnquiryCancelled, "the seller cancelled this enquiry"},
+	}
+	for _, c := range cases {
+		if got := readOnlyReason(Enquiry{AdType: c.adType, Status: c.status, AdStatus: StatusPublished}); got != c.want {
+			t.Errorf("%s %s: got %q, want %q", c.adType, c.status, got, c.want)
+		}
 	}
 }

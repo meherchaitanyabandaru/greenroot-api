@@ -597,7 +597,8 @@ func (s *Service) BuyerAccept(ctx context.Context, actor ActorContext, quotation
 		s.enqueueNotification(ctx, ownerID,
 			notifyqueue.EventQuotationAccepted,
 			"Quotation Accepted",
-			fmt.Sprintf("Buyer accepted quotation %s.", updated.QuotationCode), notifyqueue.Link("quotation", quotationID))
+			acceptedMessage(updated.QuotationCode, s.deliveryKM(ctx, quotationID, actor.UserID)),
+			notifyqueue.Link("quotation", quotationID))
 	}
 	return enrichQuotation(actor, *updated), nil
 }
@@ -807,4 +808,22 @@ func optionalStringValue(v *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*v)
+}
+
+func (s *Service) deliveryKM(ctx context.Context, quotationID, buyerUserID int64) *float64 {
+	km, err := s.repository.DeliveryKM(ctx, quotationID, buyerUserID)
+	if err != nil {
+		return nil // only a hint in a notification: never fail the accept
+	}
+	return km
+}
+
+// acceptedMessage tells the nursery roughly how far the delivery is; the
+// buyer was shown the same before accepting. Transport is never in the price.
+func acceptedMessage(code string, km *float64) string {
+	msg := fmt.Sprintf("Buyer accepted quotation %s.", code)
+	if km != nil {
+		msg += fmt.Sprintf(" Delivery is about %.0f km away (approximate).", *km)
+	}
+	return msg + " Transport charges are not included; agree them with the buyer."
 }

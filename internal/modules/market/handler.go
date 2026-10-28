@@ -151,7 +151,16 @@ func (h *Handler) RenewAd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ArchiveAd(w http.ResponseWriter, r *http.Request) {
-	h.adTransition(w, r, h.svc.ArchiveAd)
+	// The body is optional: older apps send none.
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if r.ContentLength != 0 && !response.DecodeJSON(w, r, &req) {
+		return
+	}
+	h.adTransition(w, r, func(ctx context.Context, actor ActorContext, id int64) (Ad, error) {
+		return h.svc.ArchiveAd(ctx, actor, id, req.Reason)
+	})
 }
 
 func (h *Handler) DeleteAd(w http.ResponseWriter, r *http.Request) {

@@ -195,7 +195,8 @@ func (s *Service) GetAd(ctx context.Context, actor ActorContext, id int64) (Ad, 
 		return Ad{}, ErrNotFound
 	}
 	if !isOwner && nurseryID > 0 {
-		if err := s.repo.RecordView(ctx, id, nurseryID); err == nil {
+		// view_count is unique nurseries: reopening the ad does not add one.
+		if first, err := s.repo.RecordView(ctx, id, nurseryID); err == nil && first {
 			s.incrementAdCounter(ctx, redisutil.KeyAdViews+strconv.FormatInt(id, 10), 1, func() {
 				_ = s.repo.FlushAdCounters(ctx, map[int64]int64{id: 1}, nil)
 			})
@@ -411,13 +412,20 @@ func (s *Service) RenewAd(ctx context.Context, actor ActorContext, id int64) (Ad
 	})
 }
 
-func (s *Service) ArchiveAd(ctx context.Context, actor ActorContext, id int64) (Ad, error) {
+// ArchiveAd closes the ad for good; closeReason (optional) tells the nurseries
+// in its chats why, e.g. sold out.
+func (s *Service) ArchiveAd(ctx context.Context, actor ActorContext, id int64, closeReason string) (Ad, error) {
+	var reason *string
+	switch closeReason {
+	case "":
+	case CloseSoldOut, CloseNoLongerAvailable:
+		reason = &closeReason
+	default:
+		return Ad{}, fmt.Errorf("%w: reason must be SOLD_OUT or NO_LONGER_AVAILABLE", ErrInvalidInput)
+	}
 	return s.adTransition(ctx, actor, id, StatusArchived,
 		[]string{StatusDraft, StatusPublished, StatusPaused, StatusExpired},
-		func(ctx context.Context) error {
-			now := time.Now()
-			return s.repo.SetAdStatus(ctx, id, StatusArchived, &now)
-		})
+		func(ctx context.Context) error { return s.repo.ArchiveAd(ctx, id, reason) })
 }
 
 // DeleteAd soft-deletes the owner's ad. Only drafts and live/paused ads nobody

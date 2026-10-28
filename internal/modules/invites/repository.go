@@ -39,7 +39,7 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, req Crea
 			target_mobile, target_email, target_name,
 			status, expires_at, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING', CURRENT_TIMESTAMP + INTERVAL '7 days', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING', CURRENT_TIMESTAMP + INTERVAL '72 hours', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING invite_id
 	`
 	var id int64
