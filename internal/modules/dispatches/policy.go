@@ -50,7 +50,7 @@ func IsDispatchableOrderStatus(s string) bool {
 // All other transitions go through UpdateStatus.
 //
 //	PENDING → DISPATCHED | CANCELLED
-//	ACCEPTED → DISPATCHED | CANCELLED
+//	ACCEPTED → DISPATCHED | IN_TRANSIT | CANCELLED   (the driver may start without a hand-over)
 //	DISPATCHED → IN_TRANSIT
 //	IN_TRANSIT → DELIVERED
 //	DELIVERED / CANCELLED → terminal (no transitions)
@@ -59,7 +59,7 @@ func CanTransition(from, to string) bool {
 	case "PENDING":
 		return to == "DISPATCHED" || to == "CANCELLED"
 	case "ACCEPTED":
-		return to == "DISPATCHED" || to == "CANCELLED"
+		return to == "DISPATCHED" || to == "IN_TRANSIT" || to == "CANCELLED"
 	case "DISPATCHED":
 		return to == "IN_TRANSIT"
 	case "IN_TRANSIT":
@@ -108,7 +108,7 @@ func BuildCapabilities(actor ActorContext, status string, buyerSide bool) Dispat
 	return DispatchCapabilities{
 		CanAccept:         isDriver && status == "PENDING",
 		CanMarkDispatched: (isOperator || isAdmin) && (status == "PENDING" || status == "ACCEPTED"),
-		CanStartTrip:      isDriver && status == "DISPATCHED",
+		CanStartTrip:      isDriver && (status == "ACCEPTED" || status == "DISPATCHED"),
 		// The lorry may arrive before the driver taps Start: the customer's code is what counts.
 		CanMarkDelivered:    (isDriver || isOperator || isAdmin) && !buyerSide && onTheWay(status),
 		CanOverrideDelivery: (isOperator || isAdmin) && onTheWay(status),

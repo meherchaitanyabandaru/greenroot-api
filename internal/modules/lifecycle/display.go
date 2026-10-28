@@ -82,8 +82,11 @@ func OrderWithDispatch(orderStatus string, dispatchStatus string) OrderDisplays 
 	orderStatus = strings.ToUpper(strings.TrimSpace(orderStatus))
 	dispatchStatus = strings.ToUpper(strings.TrimSpace(dispatchStatus))
 	displays := Order(orderStatus)
+	// Once a trip exists everyone sees where the delivery is, in the same words.
 	if orderStatus != "COMPLETED" && dispatchStatus != "" && dispatchStatus != "CANCELLED" {
 		displays.Customer = buyerDispatchDisplay(dispatchStatus)
+		displays.Operator = dispatchDisplay(dispatchStatus)
+		displays.Driver = displays.Operator
 	}
 	if orderStatus != "COMPLETED" && dispatchStatus == "DELIVERED" {
 		displays.Operator = Display{
@@ -349,13 +352,11 @@ func orderDisplay(status string, customer bool) Display {
 func buyerDispatchDisplay(status string) Display {
 	switch status {
 	case "PENDING":
-		return Display{"Delivery Pending", "Delivery Being Arranged", "The nursery is arranging your delivery.", "neutral"}
+		return Display{"Arranging Delivery", "Arranging Delivery", "The nursery is finding a driver.", "neutral"}
 	case "ACCEPTED":
-		return Display{"Driver Assigned", "Driver Assigned", "A driver has accepted your delivery.", "info"}
-	case "DISPATCHED":
-		return Display{"Out for Delivery", "Out for Delivery", "Your order has left the nursery.", "info"}
-	case "IN_TRANSIT":
-		return Display{"On the Way", "On the Way", "Your delivery is on the way.", "warning"}
+		return Display{"Driver Assigned", "Driver Assigned", "A driver will bring your plants.", "info"}
+	case "DISPATCHED", "IN_TRANSIT":
+		return Display{"On the Way", "On the Way", "Your plants are on the way.", "warning"}
 	case "DELIVERED":
 		return Display{"Delivered", "Delivered", "Your order has been delivered.", "success"}
 	case "CANCELLED":
@@ -368,13 +369,11 @@ func buyerDispatchDisplay(status string) Display {
 func dispatchDisplay(status string) Display {
 	switch status {
 	case "PENDING":
-		return Display{"Pending", "Dispatch Created", "Awaiting driver.", "warning"}
+		return Display{"Waiting for Driver", "Waiting for Driver", "Share the trip QR with your driver.", "warning"}
 	case "ACCEPTED":
-		return Display{"Accepted", "Driver Accepted", "Driver has accepted the trip.", "info"}
-	case "DISPATCHED":
-		return Display{"Dispatched", "Out for Delivery", "Order has left the nursery.", "info"}
-	case "IN_TRANSIT":
-		return Display{"In Transit", "In Transit", "Delivery is on the way.", "warning"}
+		return Display{"Driver Assigned", "Driver Assigned", "The driver starts the trip when they leave.", "info"}
+	case "DISPATCHED", "IN_TRANSIT":
+		return Display{"On the Way", "On the Way", "The plants are on the way.", "warning"}
 	case "DELIVERED":
 		return Display{"Delivered", "Delivered", "Delivery is complete.", "success"}
 	case "CANCELLED":

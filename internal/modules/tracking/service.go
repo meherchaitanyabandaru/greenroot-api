@@ -34,6 +34,10 @@ func (s *Service) Create(ctx context.Context, a ActorContext, in CreateRequest) 
 	if (in.VehicleID == nil && in.DriverID == nil && in.DispatchID == nil) || in.Latitude < -90 || in.Latitude > 90 || in.Longitude < -180 || in.Longitude > 180 {
 		return TrackingPoint{}, ErrInvalidInput
 	}
+	// A held point may be up to 12 h old; small clock skew allowed, never the future.
+	if t := in.RecordedAt; t != nil && (t.Before(time.Now().Add(-12*time.Hour)) || t.After(time.Now().Add(2*time.Minute))) {
+		return TrackingPoint{}, ErrInvalidInput
+	}
 	if in.DispatchID != nil {
 		if err := s.canTrackDispatch(ctx, a, *in.DispatchID); err != nil {
 			return TrackingPoint{}, err

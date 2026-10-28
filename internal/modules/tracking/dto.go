@@ -1,5 +1,7 @@
 package tracking
 
+import "time"
+
 type CreateRequest struct {
 	VehicleID  *int64  `json:"vehicle_id"`
 	DriverID   *int64  `json:"driver_id"`
@@ -7,6 +9,8 @@ type CreateRequest struct {
 	Latitude   float64 `json:"latitude"`
 	Longitude  float64 `json:"longitude"`
 	Notes      *string `json:"notes"`
+	// When the phone took the fix: points held while offline keep their time.
+	RecordedAt *time.Time `json:"recorded_at,omitempty"`
 }
 type ListResponse struct {
 	Tracking []TrackingPoint `json:"tracking"`

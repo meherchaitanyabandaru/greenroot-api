@@ -42,6 +42,7 @@ type Repository interface {
 	OrderAccess(ctx context.Context, orderID int64) (*OrderAccess, error)
 	IsNurseryMember(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	IsDispatchDriver(ctx context.Context, driverID int64, userID int64) (bool, error)
+	IsConnectedDriver(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	GetOwnedNurseryID(ctx context.Context, userID int64) (*int64, error)
 	GetUserNurseryIDs(ctx context.Context, userID int64) ([]int64, error)
 	CreateNotification(ctx context.Context, userID int64, notifType, title, message string, data map[string]any) error
@@ -528,6 +529,18 @@ func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int6
 		WHERE nursery_id = $1 AND owner_user_id = $2 AND COALESCE(status::text, '') <> 'DELETED'
 	)`, nurseryID, userID).Scan(&exists)
 	return exists, err
+}
+
+// IsConnectedDriver: the nursery approved this driver and has not disconnected them.
+func (r *PostgresRepository) IsConnectedDriver(ctx context.Context, nurseryID int64, userID int64) (bool, error) {
+	var ok bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM public.nursery_drivers
+			WHERE nursery_id = $1 AND driver_user_id = $2
+			  AND status IN ('APPROVED', 'CONNECTED', 'ACTIVE') AND disconnected_at IS NULL
+		)`, nurseryID, userID).Scan(&ok)
+	return ok, err
 }
 
 func (r *PostgresRepository) IsDispatchDriver(ctx context.Context, driverID int64, userID int64) (bool, error) {

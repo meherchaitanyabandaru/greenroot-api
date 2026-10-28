@@ -45,7 +45,7 @@ type DispatchAccess struct {
 func NewRepository(db *sql.DB) Repository { return &PostgresRepository{db: db} }
 func (r *PostgresRepository) Create(ctx context.Context, in CreateRequest) (*TrackingPoint, error) {
 	var id int64
-	err := r.db.QueryRowContext(ctx, `INSERT INTO public.vehicle_tracking(vehicle_id,driver_id,dispatch_id,latitude,longitude,tracked_at,notes) VALUES($1,$2,$3,$4,$5,CURRENT_TIMESTAMP,NULLIF($6,'')) RETURNING tracking_id`, int64OrNil(in.VehicleID), int64OrNil(in.DriverID), int64OrNil(in.DispatchID), in.Latitude, in.Longitude, stringOrEmpty(in.Notes)).Scan(&id)
+	err := r.db.QueryRowContext(ctx, `INSERT INTO public.vehicle_tracking(vehicle_id,driver_id,dispatch_id,latitude,longitude,tracked_at,notes) VALUES($1,$2,$3,$4,$5,COALESCE($7::timestamptz,CURRENT_TIMESTAMP),NULLIF($6,'')) RETURNING tracking_id`, int64OrNil(in.VehicleID), int64OrNil(in.DriverID), int64OrNil(in.DispatchID), in.Latitude, in.Longitude, stringOrEmpty(in.Notes), in.RecordedAt).Scan(&id)
 	if err != nil {
 		return nil, err
 	}

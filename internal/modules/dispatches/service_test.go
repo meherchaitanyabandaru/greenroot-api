@@ -26,6 +26,7 @@ type mockRepo struct {
 	ownedNurseries map[int64]int64        // user_id → nursery_id
 	userNurseries  map[int64][]int64      // user_id → []nursery_id
 	driverUserIDs  map[int64]int64        // driver_id → user_id
+	connected      map[[2]int64]bool      // {nursery_id, driver user_id} approved
 	duplicates     map[string]bool
 	nextID         int64
 	nextItemID     int64
@@ -41,6 +42,7 @@ func newMock() *mockRepo {
 		ownedNurseries: make(map[int64]int64),
 		userNurseries:  make(map[int64][]int64),
 		driverUserIDs:  make(map[int64]int64),
+		connected:      make(map[[2]int64]bool),
 		duplicates:     make(map[string]bool),
 	}
 }
@@ -255,6 +257,10 @@ func (m *mockRepo) IsDispatchDriver(_ context.Context, driverID int64, userID in
 		return false, nil
 	}
 	return uid == userID, nil
+}
+
+func (m *mockRepo) IsConnectedDriver(_ context.Context, nurseryID int64, userID int64) (bool, error) {
+	return m.connected[[2]int64{nurseryID, userID}], nil
 }
 
 func (m *mockRepo) GetOwnedNurseryID(_ context.Context, userID int64) (*int64, error) {
@@ -551,6 +557,7 @@ func TestAcceptDispatch_BuyerForbidden(t *testing.T) {
 
 func TestAcceptDispatch_DriverSuccess(t *testing.T) {
 	repo := newMock()
+	repo.connected[[2]int64{1, 400}] = true
 	nid := int64(1)
 	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", SellerNurseryID: &nid})
 	d, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip)
@@ -564,6 +571,7 @@ func TestAcceptDispatch_DriverSuccess(t *testing.T) {
 
 func TestAcceptDispatch_NeedsTheTripCode(t *testing.T) {
 	repo := newMock()
+	repo.connected[[2]int64{1, 400}] = true
 	nid := int64(1)
 	repo.seedDispatch(Dispatch{ID: 10, DispatchCode: "DSP-20261026-0001", Status: "PENDING", SellerNurseryID: &nid})
 	for _, code := range []string{"", "DSP-20261026-0001", "10", "11111111-2222-3333-4444-555555555555"} {
@@ -578,6 +586,7 @@ func TestAcceptDispatch_NeedsTheTripCode(t *testing.T) {
 
 func TestGetByCode_OnlyTheTripCodeFindsATrip(t *testing.T) {
 	repo := newMock()
+	repo.connected[[2]int64{1, 400}] = true
 	nid := int64(1)
 	repo.seedDispatch(Dispatch{ID: 10, DispatchCode: "DSP-20261026-0001", Status: "PENDING", SellerNurseryID: &nid})
 	if _, err := svc(repo).GetByCode(context.Background(), driverActor(400), "DSP-20261026-0001"); !errors.Is(err, ErrNotFound) {
@@ -588,8 +597,29 @@ func TestGetByCode_OnlyTheTripCodeFindsATrip(t *testing.T) {
 	}
 }
 
+func TestQR_OnlyTheNurserysOwnDriversPreviewOrAccept(t *testing.T) {
+	repo := newMock()
+	repo.connected[[2]int64{1, 400}] = true
+	repo.seedDispatch(Dispatch{ID: 10, Status: "PENDING", NurseryID: nid(1)})
+	// Driver 401 holds the real QR but is not connected to nursery 1.
+	if _, err := svc(repo).GetByCode(context.Background(), driverActor(401), testTrip); !errors.Is(err, ErrForbidden) {
+		t.Errorf("other nursery's driver preview: want ErrForbidden, got %v", err)
+	}
+	if _, err := svc(repo).AcceptDispatch(context.Background(), driverActor(401), 10, testTrip); !errors.Is(err, ErrForbidden) {
+		t.Errorf("other nursery's driver accept: want ErrForbidden, got %v", err)
+	}
+	if d, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip); err != nil || d.Status != "ACCEPTED" {
+		t.Fatalf("connected driver accepts: %v %v", d.Status, err)
+	}
+	// Scanning again is idempotent for the same driver.
+	if _, err := svc(repo).AcceptDispatch(context.Background(), driverActor(400), 10, testTrip); err != nil {
+		t.Errorf("repeat scan: %v", err)
+	}
+}
+
 func TestAcceptDispatch_DriverWithActiveTripRejected(t *testing.T) {
 	repo := newMock()
+	repo.connected[[2]int64{1, 400}] = true
 	nid := int64(1)
 	driverID := int64(400)
 	repo.seedDispatch(Dispatch{ID: 9, Status: "IN_TRANSIT", SellerNurseryID: &nid, DriverUserID: &driverID})
@@ -602,6 +632,7 @@ func TestAcceptDispatch_DriverWithActiveTripRejected(t *testing.T) {
 
 func TestAcceptDispatch_DriverWithTerminalTripCanAccept(t *testing.T) {
 	repo := newMock()
+	repo.connected[[2]int64{1, 400}] = true
 	nid := int64(1)
 	driverID := int64(400)
 	repo.seedDispatch(Dispatch{ID: 9, Status: "DELIVERED", SellerNurseryID: &nid, DriverUserID: &driverID})
@@ -753,7 +784,8 @@ func TestGetByCode_Found(t *testing.T) {
 
 func TestGetByCode_OnlyDriversPreviewUnclaimedTrips(t *testing.T) {
 	repo := newMock()
-	repo.seedDispatch(Dispatch{ID: 10, DispatchCode: "DC-1", Status: "PENDING"})
+	repo.connected[[2]int64{1, 5}] = true
+	repo.seedDispatch(Dispatch{ID: 10, DispatchCode: "DC-1", Status: "PENDING", NurseryID: nid(1)})
 	if _, err := svc(repo).GetByCode(context.Background(), driverActor(5), testTrip); err != nil {
 		t.Errorf("driver preview of a pending trip: %v", err)
 	}
@@ -779,6 +811,30 @@ func TestUpdateStatus_BuyerAndDriverLimits(t *testing.T) {
 	}
 }
 
+func TestUpdateStatus_DriverStartsStraightFromAccepted(t *testing.T) {
+	repo := newMock()
+	drv := int64(7)
+	repo.seedDispatch(Dispatch{ID: 10, Status: "ACCEPTED", DriverUserID: &drv})
+	d, err := svc(repo).UpdateStatus(context.Background(), driverActor(7), 10, UpdateStatusRequest{Status: "IN_TRANSIT"})
+	if err != nil || d.Status != "IN_TRANSIT" {
+		t.Fatalf("driver start from ACCEPTED: %v %v", d.Status, err)
+	}
+	if !BuildCapabilities(driverActor(7), "ACCEPTED", false).CanStartTrip {
+		t.Error("driver should see Start Trip on an accepted trip")
+	}
+}
+
+func TestMarkDispatched_OfferedOnlyForOutsideLorries(t *testing.T) {
+	app := withLifecycle(ownerActor(100), Dispatch{ID: 1, Status: "ACCEPTED"})
+	if app.Capabilities.CanMarkDispatched {
+		t.Error("app-driver trip: the driver starts it, no Mark Dispatched")
+	}
+	lorry := withLifecycle(ownerActor(100), Dispatch{ID: 2, Status: "PENDING", IsOutsideTransport: true})
+	if !lorry.Capabilities.CanMarkDispatched {
+		t.Error("outside lorry: the nursery marks it dispatched")
+	}
+}
+
 func TestGetByCode_NotFound(t *testing.T) {
 	repo := newMock()
 	_, err := svc(repo).GetByCode(context.Background(), driverActor(5), "BOGUS")
@@ -800,7 +856,7 @@ func TestValidDispatchTransitions(t *testing.T) {
 		{"PENDING", "CANCELLED", true},
 		{"PENDING", "DELIVERED", false},
 		{"ACCEPTED", "DISPATCHED", true},
-		{"ACCEPTED", "IN_TRANSIT", false},
+		{"ACCEPTED", "IN_TRANSIT", true}, // driver starts without a hand-over
 		{"ACCEPTED", "CANCELLED", true},
 		{"DISPATCHED", "IN_TRANSIT", true},
 		{"DISPATCHED", "CANCELLED", false},

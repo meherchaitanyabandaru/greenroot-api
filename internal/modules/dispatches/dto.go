@@ -26,7 +26,7 @@ type CreateDispatchRequest struct {
 	OrderID            int64                 `json:"order_id"`
 	DispatchNumber     *string               `json:"dispatch_number"`
 	VehicleID          *int64                `json:"vehicle_id"`
-	DriverID           *int64                `json:"driver_id"`
+	DriverID           *int64                `json:"driver_id"` // ignored: a driver joins with the trip QR
 	DispatchDate       *string               `json:"dispatch_date"`
 	DestinationAddress *string               `json:"destination_address"`
 	Notes              *string               `json:"notes"`

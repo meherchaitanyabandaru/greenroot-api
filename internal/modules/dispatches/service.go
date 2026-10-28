@@ -200,7 +200,8 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 			dispatch = refreshed
 		}
 	}
-	if status == "DISPATCHED" && dispatch.CustomerUserID != nil {
+	// A driver may start straight from ACCEPTED: the customer still hears it left.
+	if (status == "DISPATCHED" || current.Status == "ACCEPTED" && status == "IN_TRANSIT") && dispatch.CustomerUserID != nil {
 		s.enqueueNotification(ctx, *dispatch.CustomerUserID,
 			notifyqueue.EventOrderDispatched,
 			"Order Dispatched",
@@ -323,7 +324,12 @@ func (s *Service) GetByCode(ctx context.Context, actor ActorContext, code string
 		return Dispatch{}, err
 	}
 	unclaimed := dispatch.Status == "PENDING" && dispatch.DriverID == nil && dispatch.DriverUserID == nil
-	if !(actor.HasRole("DRIVER") && unclaimed) {
+	if actor.HasRole("DRIVER") && unclaimed {
+		// A leaked QR must not show the customer's address to another nursery's driver.
+		if err := s.requireConnectedDriver(ctx, actor, *dispatch); err != nil {
+			return Dispatch{}, err
+		}
+	} else {
 		if err := s.canAccess(ctx, actor, *dispatch); err != nil {
 			return Dispatch{}, err
 		}
@@ -363,6 +369,9 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 	if dispatch.DriverID != nil || dispatch.DriverUserID != nil {
 		return Dispatch{}, ErrAlreadyAccepted
 	}
+	if err := s.requireConnectedDriver(ctx, actor, *dispatch); err != nil {
+		return Dispatch{}, err
+	}
 	active, err := s.repository.DriverHasActiveTrip(ctx, actor.UserID, dispatchID)
 	if err != nil {
 		return Dispatch{}, err
@@ -381,6 +390,25 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 			fmt.Sprintf("Dispatch %s was accepted by the driver.", updated.DispatchCode), notifyqueue.Link("dispatch", updated.ID))
 	}
 	return s.present(actor, *updated), nil
+}
+
+// requireConnectedDriver: the nursery approved this driver (nursery_drivers).
+func (s *Service) requireConnectedDriver(ctx context.Context, actor ActorContext, d Dispatch) error {
+	nurseryID := d.NurseryID
+	if nurseryID == nil {
+		nurseryID = d.SellerNurseryID
+	}
+	if nurseryID == nil {
+		return ErrForbidden
+	}
+	ok, err := s.repository.IsConnectedDriver(ctx, *nurseryID, actor.UserID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrForbidden
+	}
+	return nil
 }
 
 func (s *Service) enqueueNotification(ctx context.Context, userID int64, notifType, title, message string, data map[string]any) {
@@ -586,7 +614,7 @@ func normalizeCreate(req CreateDispatchRequest) (CreateDispatchInput, error) {
 			return CreateDispatchInput{}, ErrInvalidInput
 		}
 	}
-	input := CreateDispatchInput{OrderID: req.OrderID, DispatchNumber: req.DispatchNumber, VehicleID: req.VehicleID, DriverID: req.DriverID, DispatchDate: dispatchDate, DestinationAddress: req.DestinationAddress, Notes: req.Notes, Items: req.Items}
+	input := CreateDispatchInput{OrderID: req.OrderID, DispatchNumber: req.DispatchNumber, VehicleID: req.VehicleID, DispatchDate: dispatchDate, DestinationAddress: req.DestinationAddress, Notes: req.Notes, Items: req.Items}
 	if req.IsOutsideTransport {
 		vehicle := strings.ToUpper(strings.TrimSpace(stringOrEmpty(req.OutsideVehicleNumber)))
 		name := strings.TrimSpace(stringOrEmpty(req.OutsideDriverName))
@@ -676,6 +704,9 @@ func withLifecycle(actor ActorContext, dispatch Dispatch) Dispatch {
 	caps := BuildCapabilities(actor, dispatch.Status, buyerSide)
 	if dispatch.IsOutsideTransport { // no app driver: nothing to accept, share or start
 		caps.CanAccept, caps.CanShareCode, caps.CanStartTrip = false, false, false
+	} else {
+		// An app driver starts the trip themselves; the hand-over button only confused owners.
+		caps.CanMarkDispatched = false
 	}
 	caps.CanConfirmReceipt, caps.CanReportIssue = receiptActions(dispatch, buyerSide, time.Now())
 	dispatch.Capabilities = &caps

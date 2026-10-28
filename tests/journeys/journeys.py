@@ -989,6 +989,15 @@ def journey_dispatch():
     # GPS tracking
     expect("driver sends a GPS point", "POST", "/tracking", driver.token, {"dispatch_id": did, "latitude": 17.41, "longitude": 78.39}, status=(200, 201))
     expect("GPS point with impossible latitude", "POST", "/tracking", driver.token, {"dispatch_id": did, "latitude": 91, "longitude": 78}, status=400)
+    held = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5)).isoformat()
+    pt = expect("a point held while offline keeps its time", "POST", "/tracking", driver.token, {"dispatch_id": did, "latitude": 17.41, "longitude": 78.39, "recorded_at": held}, status=(200, 201))
+    at = datetime.datetime.fromisoformat(pt["tracking"]["tracked_at"].replace("Z", "+00:00"))
+    age = (datetime.datetime.now(datetime.timezone.utc) - at).total_seconds()
+    check("…recorded 5 minutes ago, not now", 240 < age < 420, pt)
+    old = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=13)).isoformat()
+    expect("…but not older than 12 hours", "POST", "/tracking", driver.token, {"dispatch_id": did, "latitude": 17.41, "longitude": 78.39, "recorded_at": old}, status=400)
+    future = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)).isoformat()
+    expect("…nor in the future", "POST", "/tracking", driver.token, {"dispatch_id": did, "latitude": 17.41, "longitude": 78.39, "recorded_at": future}, status=400)
     expect("buyer cannot send GPS points", "POST", "/tracking", buyer.token, {"dispatch_id": did, "latitude": 17.4, "longitude": 78.4}, status=403)
     expect("another driver cannot track this trip", "POST", "/tracking", second_driver.token, {"dispatch_id": did, "latitude": 17.4, "longitude": 78.4}, status=403)
     expect("driver shares live location", "POST", "/tracking/live", driver.token, {"dispatch_id": did, "latitude": 17.42, "longitude": 78.38}, status=(200, 201))
@@ -1073,6 +1082,34 @@ def journey_dispatch():
     check("…the customer can confirm or dispute", bd["capabilities"]["can_confirm_receipt"] and bd["capabilities"]["can_report_issue"], bd["capabilities"])
     out = expect("buyer confirms they received it", "POST", f"/dispatches/{d3['id']}/receipt", buyer.token, {})["dispatch"]
     check("…now confirmed in the app", out.get("delivery_confirmation") == "CUSTOMER_APP", out)
+
+    # Loading never sends a trip: a driver joins only by scanning the trip QR
+    o4 = loaded_order()
+    expect("start loading", "POST", f"/orders/{o4['id']}/start-loading", owner.token, {})
+    expect("complete loading", "POST", f"/orders/{o4['id']}/complete-loading", owner.token, LOADED_OK)
+    trips = expect("trips of the loaded order", "GET", f"/orders/{o4['id']}/dispatches", owner.token)
+    check("…none: completing loading assigns no driver", not (trips.get("dispatches") or []), trips)
+    d4 = expect("owner creates the trip", "POST", "/dispatches", owner.token, {"order_id": o4["id"], "driver_user_id": second_driver.id}, status=201)["dispatch"]
+    check("…PENDING with no driver, even if a driver id is sent", d4["dispatch_status"] == "PENDING" and not d4.get("driver_user_id"), d4)
+    rival_driver = approved_driver(boss, rival)
+    expect("another nursery's driver cannot preview it with the real QR", "GET", f"/dispatches/code/{d4['trip_uuid']}", rival_driver.token, status=403)
+    expect("…nor accept it", "POST", f"/dispatches/{d4['id']}/accept", rival_driver.token, {"trip_code": d4["trip_uuid"]}, status=403)
+    out = expect("the nursery's driver scans and accepts", "POST", f"/dispatches/{d4['id']}/accept", second_driver.token, {"trip_code": d4["trip_uuid"]})["dispatch"]
+    check("…Driver Assigned", out["dispatch_status"] == "ACCEPTED" and out.get("driver_user_id") == second_driver.id, out)
+    expect("scanning again is idempotent", "POST", f"/dispatches/{d4['id']}/accept", second_driver.token, {"trip_code": d4["trip_uuid"]})
+    out = expect("driver starts straight from Driver Assigned", "PUT", f"/dispatches/{d4['id']}/status", second_driver.token, {"dispatch_status": "IN_TRANSIT"})["dispatch"]
+    check("…On the Way", out["dispatch_status"] == "IN_TRANSIT", out)
+    code4 = expect("buyer opens it", "GET", f"/dispatches/{d4['id']}", buyer.token)["dispatch"].get("delivery_code")
+    expect("driver delivers with the code", "POST", f"/dispatches/{d4['id']}/deliver", second_driver.token, {"code": code4})
+    expect("no GPS after delivery (the app stops on this 409)", "POST", "/tracking", second_driver.token, {"dispatch_id": d4["id"], "latitude": 17.41, "longitude": 78.39}, status=409)
+    o5 = loaded_order()
+    expect("start loading", "POST", f"/orders/{o5['id']}/start-loading", owner.token, {})
+    expect("complete loading", "POST", f"/orders/{o5['id']}/complete-loading", owner.token, LOADED_OK)
+    d5 = expect("owner creates another trip", "POST", "/dispatches", owner.token, {"order_id": o5["id"]}, status=201)["dispatch"]
+    expect("the nursery's driver accepts", "POST", f"/dispatches/{d5['id']}/accept", second_driver.token, {"trip_code": d5["trip_uuid"]})
+    expect("owner cancels the trip", "PUT", f"/dispatches/{d5['id']}/status", owner.token, {"dispatch_status": "CANCELLED"})
+    expect("no GPS on a cancelled trip", "POST", "/tracking", second_driver.token, {"dispatch_id": d5["id"], "latitude": 17.41, "longitude": 78.39}, status=409)
+    expect("a cancelled trip cannot be accepted again", "POST", f"/dispatches/{d5['id']}/accept", second_driver.token, {"trip_code": d5["trip_uuid"]}, status=(403, 404, 409))
 
     # Ratings: only the parties, only once it is done
     stranger = User(first="Nosy", activity="CUSTOMER")
