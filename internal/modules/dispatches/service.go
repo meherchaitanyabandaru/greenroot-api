@@ -188,7 +188,7 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 	if v, ok := rowversion.Expected(ctx); ok && v != current.Version {
 		return Dispatch{}, ErrConflict
 	}
-	dispatch, err := s.repository.UpdateStatus(ctx, dispatchID, UpdateStatusInput{Status: status, DeliveryDate: deliveryDate, Notes: req.Notes, ExpectedVersion: current.Version})
+	dispatch, err := s.repository.UpdateStatus(ctx, dispatchID, UpdateStatusInput{Status: status, DeliveryDate: deliveryDate, Notes: req.Notes, ByUserID: &actor.UserID, ExpectedVersion: current.Version})
 	if err != nil {
 		return Dispatch{}, err
 	}

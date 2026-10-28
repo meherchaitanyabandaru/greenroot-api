@@ -126,16 +126,23 @@ def err_code(body):
 # ── Redis (RESP over a socket; only the commands the checks need) ───────────
 
 class Redis:
-    def __init__(self, addr):
+    def __init__(self, addr, db=0):
         host, port = addr.split(":")
         self.addr = (host, int(port))
+        self.db = db  # the API's REDIS_DB (a test API on its own DB)
+
+    @staticmethod
+    def _encode(*parts):
+        return b"*%d\r\n" % len(parts) + b"".join(b"$%d\r\n%s\r\n" % (len(str(p).encode()), str(p).encode()) for p in parts)
 
     def cmd(self, *parts):
         s = socket.create_connection(self.addr, timeout=5)
         try:
-            out = b"*%d\r\n" % len(parts) + b"".join(b"$%d\r\n%s\r\n" % (len(str(p).encode()), str(p).encode()) for p in parts)
-            s.sendall(out)
             f = s.makefile("rb")
+            if self.db:
+                s.sendall(self._encode("SELECT", self.db))
+                self._read(f)
+            s.sendall(self._encode(*parts))
             return self._read(f)
         finally:
             s.close()
@@ -173,7 +180,7 @@ class Redis:
             self.cmd("DEL", k)
 
 
-redis = Redis(os.environ["REDIS_ADDR"]) if os.environ.get("REDIS_ADDR") else None
+redis = Redis(os.environ["REDIS_ADDR"], int(os.environ.get("REDIS_DB") or 0)) if os.environ.get("REDIS_ADDR") else None
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
 
 
@@ -1096,11 +1103,16 @@ def journey_dispatch():
     expect("…nor accept it", "POST", f"/dispatches/{d4['id']}/accept", rival_driver.token, {"trip_code": d4["trip_uuid"]}, status=403)
     out = expect("the nursery's driver scans and accepts", "POST", f"/dispatches/{d4['id']}/accept", second_driver.token, {"trip_code": d4["trip_uuid"]})["dispatch"]
     check("…Driver Assigned", out["dispatch_status"] == "ACCEPTED" and out.get("driver_user_id") == second_driver.id, out)
+    check("…with the time it was accepted", bool(out.get("driver_accepted_at")), out)
     expect("scanning again is idempotent", "POST", f"/dispatches/{d4['id']}/accept", second_driver.token, {"trip_code": d4["trip_uuid"]})
     out = expect("driver starts straight from Driver Assigned", "PUT", f"/dispatches/{d4['id']}/status", second_driver.token, {"dispatch_status": "IN_TRANSIT"})["dispatch"]
     check("…On the Way", out["dispatch_status"] == "IN_TRANSIT", out)
+    check("…with when it left and who started it", bool(out.get("trip_started_at")) and bool(out.get("dispatch_date"))
+          and out.get("trip_started_by_user_id") == second_driver.id, out)
     code4 = expect("buyer opens it", "GET", f"/dispatches/{d4['id']}", buyer.token)["dispatch"].get("delivery_code")
     expect("driver delivers with the code", "POST", f"/dispatches/{d4['id']}/deliver", second_driver.token, {"code": code4})
+    expect("a delivered order's address can no longer change", "PUT", f"/orders/{o4['id']}/delivery", owner.token,
+           dict(address, emergency_update=True), status=(409, 422))
     expect("no GPS after delivery (the app stops on this 409)", "POST", "/tracking", second_driver.token, {"dispatch_id": d4["id"], "latitude": 17.41, "longitude": 78.39}, status=409)
     o5 = loaded_order()
     expect("start loading", "POST", f"/orders/{o5['id']}/start-loading", owner.token, {})

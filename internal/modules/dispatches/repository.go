@@ -85,6 +85,7 @@ type UpdateStatusInput struct {
 	Status       string
 	DeliveryDate *time.Time
 	Notes        *string
+	ByUserID     *int64 // who changed it (recorded as trip_started_by_user_id on IN_TRANSIT)
 	// ExpectedVersion is the version the service read; the update applies
 	// only if the dispatch is still at it (ErrConflict otherwise).
 	ExpectedVersion int64
@@ -207,7 +208,7 @@ func (r *PostgresRepository) SetDriverUser(ctx context.Context, dispatchID int64
 	if driverID > 0 {
 		result, execErr := r.db.ExecContext(ctx,
 			`UPDATE public.dispatches
-			 SET driver_user_id = $1, driver_id = $2, status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP
+			 SET driver_user_id = $1, driver_id = $2, status = 'ACCEPTED', driver_accepted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 			 WHERE dispatch_id = $3
 			   AND NOT EXISTS (
 			   	SELECT 1
@@ -234,7 +235,7 @@ func (r *PostgresRepository) SetDriverUser(ctx context.Context, dispatchID int64
 	} else {
 		result, execErr := r.db.ExecContext(ctx,
 			`UPDATE public.dispatches
-			 SET driver_user_id = $1, status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP
+			 SET driver_user_id = $1, status = 'ACCEPTED', driver_accepted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 			 WHERE dispatch_id = $2
 			   AND NOT EXISTS (
 			   	SELECT 1
@@ -330,11 +331,15 @@ func (r *PostgresRepository) UpdateStatus(ctx context.Context, dispatchID int64,
 		UPDATE public.dispatches
 		SET status = $2,
 			delivered_at = CASE WHEN $5 = 'DELIVERED' THEN COALESCE($3, CURRENT_TIMESTAMP) ELSE COALESCE($3, delivered_at) END,
+			-- the truck left: marked dispatched, or the driver started without a hand-over
+			dispatched_at = CASE WHEN $5 IN ('DISPATCHED', 'IN_TRANSIT') THEN COALESCE(dispatched_at, CURRENT_TIMESTAMP) ELSE dispatched_at END,
+			trip_started_at = CASE WHEN $5 = 'IN_TRANSIT' THEN COALESCE(trip_started_at, CURRENT_TIMESTAMP) ELSE trip_started_at END,
+			trip_started_by_user_id = CASE WHEN $5 = 'IN_TRANSIT' THEN COALESCE(trip_started_by_user_id, $7) ELSE trip_started_by_user_id END,
 			notes = COALESCE(NULLIF($4, ''), notes),
 			updated_at = CURRENT_TIMESTAMP
 		WHERE dispatch_id = $1 AND version = $6
 	`
-	result, err := r.db.ExecContext(ctx, query, dispatchID, input.Status, timeOrNil(input.DeliveryDate), stringOrEmpty(input.Notes), input.Status, input.ExpectedVersion)
+	result, err := r.db.ExecContext(ctx, query, dispatchID, input.Status, timeOrNil(input.DeliveryDate), stringOrEmpty(input.Notes), input.Status, input.ExpectedVersion, int64OrNil(input.ByUserID))
 	if err != nil {
 		return nil, pgerr.Map(err)
 	}
@@ -707,7 +712,8 @@ func baseSelect() string {
 			d.trip_uuid::text,
 			d.is_outside_transport, d.outside_vehicle_number, d.outside_driver_name, d.outside_driver_mobile,
 			d.delivery_confirmation, d.delivery_confirmed_by_user_id, d.delivery_confirmed_at,
-			d.delivery_override_reason, d.delivery_issue, d.delivery_issue_reported_at, d.delivery_code_attempts
+			d.delivery_override_reason, d.delivery_issue, d.delivery_issue_reported_at, d.delivery_code_attempts,
+			d.driver_accepted_at
 		FROM public.dispatches d
 		JOIN public.orders o ON o.order_id = d.order_id
 		LEFT JOIN public.nurseries sn ON sn.nursery_id = o.seller_nursery_id
@@ -811,7 +817,7 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 	var trackingUUID, tripUUID sql.NullString
 	var outsideVehicle, outsideDriverName, outsideDriverMobile, confirmation, overrideReason, issue sql.NullString
 	var confirmedBy sql.NullInt64
-	var confirmedAt, issueAt sql.NullTime
+	var confirmedAt, issueAt, acceptedAt sql.NullTime
 	if err := row.Scan(
 		&dispatch.ID, &dispatch.DispatchCode, &dispatch.OrderID, &orderNumber,
 		&orderStatus, &loadingStartedAt, &loadingCompletedAt,
@@ -829,6 +835,7 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 		&dispatch.IsOutsideTransport, &outsideVehicle, &outsideDriverName, &outsideDriverMobile,
 		&confirmation, &confirmedBy, &confirmedAt,
 		&overrideReason, &issue, &issueAt, &dispatch.DeliveryCodeAttempts,
+		&acceptedAt,
 	); err != nil {
 		return Dispatch{}, err
 	}
@@ -891,6 +898,9 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 	dispatch.CustomerMobileSnapshot = nullableString(customerMobileSnapshot)
 	if tripStartedAt.Valid {
 		dispatch.TripStartedAt = &tripStartedAt.Time
+	}
+	if acceptedAt.Valid {
+		dispatch.DriverAcceptedAt = &acceptedAt.Time
 	}
 	dispatch.TripStartedByUserID = nullableInt64(tripStartedByUserID)
 	if completedAt.Valid {

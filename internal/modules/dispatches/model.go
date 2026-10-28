@@ -33,6 +33,7 @@ type Dispatch struct {
 	CustomerUserID         *int64     `json:"customer_user_id,omitempty"`
 	CustomerNameSnapshot   *string    `json:"customer_name_snapshot,omitempty"`
 	CustomerMobileSnapshot *string    `json:"customer_mobile_snapshot,omitempty"`
+	DriverAcceptedAt       *time.Time `json:"driver_accepted_at,omitempty"`
 	TripStartedAt          *time.Time `json:"trip_started_at,omitempty"`
 	TripStartedByUserID    *int64     `json:"trip_started_by_user_id,omitempty"`
 	CompletedAt            *time.Time `json:"completed_at,omitempty"`

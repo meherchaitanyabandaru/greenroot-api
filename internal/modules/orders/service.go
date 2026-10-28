@@ -297,6 +297,10 @@ func (s *Service) UpdateDeliverySnapshot(ctx context.Context, actor ActorContext
 	if err := s.canManage(ctx, actor, *current); err != nil {
 		return Order{}, err
 	}
+	// Delivered or cancelled: the address is the record of where it went.
+	if IsTerminal(current.Status) {
+		return Order{}, ErrInvalidStatus
+	}
 	if err := validateDeliverySnapshot(input); err != nil {
 		return Order{}, err
 	}
