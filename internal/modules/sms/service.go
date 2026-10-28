@@ -84,11 +84,14 @@ func (s *Service) Deliver(ctx context.Context, msg messaging.Message) (messaging
 	if err != nil {
 		return messaging.Result{}, err
 	}
-	userID := msg.Recipient.UserID
+	var userID *int64 // nil: a number with no account yet (e.g. a quotation recipient)
+	if id := msg.Recipient.UserID; id != 0 {
+		userID = &id
+	}
 	res, err := s.Send(ctx, SendRequest{
 		TemplateCode:  msg.TemplateCode,
 		Mobile:        msg.Recipient.Mobile,
-		UserID:        &userID,
+		UserID:        userID,
 		Values:        msg.Values,
 		Sensitive:     msg.Sensitive,
 		ReferenceType: msg.ReferenceType,
