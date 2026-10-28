@@ -36,6 +36,13 @@ var SystemTemplateCodes = []string{
 	TemplatePaymentReceivedSubscription,
 	TemplatePaymentFailed,
 	TemplateDeliveryUnconfirmed,
+	TemplateQuotationReceived,
+	TemplateOrderPlaced,
+	TemplateDeliveryOnTheWay,
+	TemplateOrderPartial,
+	TemplateNurseryApproved,
+	TemplateTrialEnding,
+	TemplateDeliveryIssue,
 }
 
 // DLT template categories.
