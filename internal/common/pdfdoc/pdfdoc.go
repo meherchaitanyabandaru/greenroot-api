@@ -314,6 +314,24 @@ func (p *Page) QR(x, y, size float64, content string, c Color) {
 	p.buf.WriteString("f\n")
 }
 
+// Logo draws the GreenRoot horizontal logo at (x, y) with width w.
+// Height is automatically calculated to preserve aspect ratio, and the
+// calculated height is returned.
+func (p *Page) Logo(x, y, w float64) float64 {
+	h := w / LogoAspect
+	fmt.Fprintf(&p.buf, "q %.2f 0 0 %.2f %.2f %.2f cm /Logo Do Q\n", w, h, x, y)
+	return h
+}
+
+// LogoH draws the GreenRoot horizontal logo at (x, y) with height h.
+// Width is automatically calculated to preserve aspect ratio, and the
+// calculated width is returned.
+func (p *Page) LogoH(x, y, h float64) float64 {
+	w := h * LogoAspect
+	fmt.Fprintf(&p.buf, "q %.2f 0 0 %.2f %.2f %.2f cm /Logo Do Q\n", w, h, x, y)
+	return w
+}
+
 // Leaf draws the small GreenRoot leaf mark.
 func (p *Page) Leaf(x, y, size float64, c Color) {
 	p.fill(c)
@@ -361,8 +379,9 @@ func (d *Doc) Bytes() []byte {
 		d.NewPage()
 	}
 	n := len(d.Pages)
-	// 1 catalog, 2 pages, 3-5 fonts, 6 info, then pages, then contents.
-	const pageStart = 7
+	// 1 catalog, 2 pages, 3-5 fonts, 6 info, 7 logo XObject, then pages, then contents.
+	const logoObjID = 7
+	const pageStart = 8
 	contentStart := pageStart + n
 	font := func(base string) string {
 		return fmt.Sprintf("<< /Type /Font /Subtype /Type1 /BaseFont /%s /Encoding /WinAnsiEncoding >>", base)
@@ -375,20 +394,40 @@ func (d *Doc) Bytes() []byte {
 	if created.IsZero() {
 		created = time.Now()
 	}
-	objects := []string{
-		"<< /Type /Catalog /Pages 2 0 R /ViewerPreferences << /DisplayDocTitle true >> >>",
-		fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), n),
-		font("Helvetica"), font("Helvetica-Bold"), font("Helvetica-Oblique"),
-		fmt.Sprintf("<< /Title (%s) /Author (%s) /Subject (%s) /Creator (GreenRoot) /Producer (GreenRoot) /CreationDate (%s) >>",
-			escape(encode(d.Title)), escape(encode(d.Author)), escape(encode(d.Subject)), pdfDate(created)),
-	}
+	var objects [][]byte
+	objects = append(objects,
+		[]byte("<< /Type /Catalog /Pages 2 0 R /ViewerPreferences << /DisplayDocTitle true >> >>"),
+		[]byte(fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), n)),
+		[]byte(font("Helvetica")),
+		[]byte(font("Helvetica-Bold")),
+		[]byte(font("Helvetica-Oblique")),
+		[]byte(fmt.Sprintf("<< /Title (%s) /Author (%s) /Subject (%s) /Creator (GreenRoot) /Producer (GreenRoot) /CreationDate (%s) >>",
+			escape(encode(d.Title)), escape(encode(d.Author)), escape(encode(d.Subject)), pdfDate(created))),
+	)
+
+	// 7: GreenRoot Logo Image XObject
+	var logoObj bytes.Buffer
+	fmt.Fprintf(&logoObj, "<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length %d >>\nstream\n",
+		logoWidth, logoHeight, len(logoJPEG))
+	logoObj.Write(logoJPEG)
+	logoObj.WriteString("\nendstream")
+	objects = append(objects, logoObj.Bytes())
+
+	// Pages
 	for i := 0; i < n; i++ {
-		objects = append(objects, fmt.Sprintf(
-			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %.0f %.0f] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents %d 0 R >>",
-			PageW, PageH, contentStart+i))
+		pageObj := fmt.Sprintf(
+			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %.0f %.0f] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> /XObject << /Logo %d 0 R >> >> /Contents %d 0 R >>",
+			PageW, PageH, logoObjID, contentStart+i)
+		objects = append(objects, []byte(pageObj))
 	}
+
+	// Page contents
 	for _, p := range d.Pages {
-		objects = append(objects, fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", p.buf.Len(), p.buf.String()))
+		var contentObj bytes.Buffer
+		fmt.Fprintf(&contentObj, "<< /Length %d >>\nstream\n", p.buf.Len())
+		contentObj.Write(p.buf.Bytes())
+		contentObj.WriteString("\nendstream")
+		objects = append(objects, contentObj.Bytes())
 	}
 
 	var out bytes.Buffer
@@ -396,7 +435,9 @@ func (d *Doc) Bytes() []byte {
 	offsets := make([]int, len(objects))
 	for i, obj := range objects {
 		offsets[i] = out.Len()
-		fmt.Fprintf(&out, "%d 0 obj\n%s\nendobj\n", i+1, obj)
+		fmt.Fprintf(&out, "%d 0 obj\n", i+1)
+		out.Write(obj)
+		out.WriteString("\nendobj\n")
 	}
 	xref := out.Len()
 	fmt.Fprintf(&out, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)

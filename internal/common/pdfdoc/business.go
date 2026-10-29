@@ -136,16 +136,18 @@ func (b *Business) Render() []byte {
 func (b *Business) firstHeader(p *Page) float64 {
 	p.Rect(0, PageH-6, PageW, 6, b.Brand)
 
-	// Right: kind, code, status.
-	p.Spaced(right-SpacedWidth(b.Kind, 9, 1.6, Bold), PageH-44, 9, 1.6, Bold, b.Brand, b.Kind)
-	p.TextRight(right, PageH-64, 15, Bold, Ink, b.Code)
+	// Right: brand logo, kind, code, status.
+	const logoW = 68.0
+	p.Logo(right-logoW, PageH-34, logoW)
+	p.Spaced(right-SpacedWidth(b.Kind, 9, 1.6, Bold), PageH-49, 9, 1.6, Bold, b.Brand, b.Kind)
+	p.TextRight(right, PageH-67, 14, Bold, Ink, b.Code)
 	if b.StatusLabel != "" {
-		p.Pill(right, PageH-82, b.StatusLabel, b.StatusBG, b.StatusFG)
+		p.Pill(right, PageH-84, b.StatusLabel, b.StatusBG, b.StatusFG)
 	}
 
 	// Left: seller identity, wrapped to the space the right block leaves.
-	nameW := contentW - max(Width(b.Code, 15, Bold), 150) - 24
-	y := PageH - 50
+	nameW := contentW - max(Width(b.Code, 14, Bold), 150) - 24
+	y := PageH - 48
 	for i, line := range Wrap(b.SellerName, 19, Bold, nameW) {
 		if i == 2 {
 			break
@@ -160,7 +162,7 @@ func (b *Business) firstHeader(p *Page) float64 {
 			p.Text(left, y, 8.5, Regular, Muted, line)
 		}
 	}
-	bottom := min(y, PageH-92) - 14
+	bottom := min(y, PageH-94) - 14
 	p.Line(left, bottom, right, bottom, 0.6, Border)
 	return bottom - 14
 }
@@ -176,12 +178,11 @@ func (b *Business) continuationHeader(p *Page) float64 {
 
 func (b *Business) footer(p *Page, n, total int) {
 	p.Line(left, 50, right, 50, 0.5, Border)
-	p.Leaf(left+3, 31, 9, Forest)
-	p.Text(left+13, 34, 7.5, Bold, Dark, "GreenRoot")
-	p.Text(left+13+Width("GreenRoot", 7.5, Bold)+4, 34, 7.5, Regular, Muted, "· greenroot.app")
-	p.TextRight(right, 34, 7.5, Regular, Muted, fmt.Sprintf("%s  ·  Page %d of %d", b.Code, n, total))
+	logoW := p.LogoH(left, 28, 13)
+	p.Text(left+logoW+6, 32, 7.5, Regular, Muted, "· greenroot.app")
+	p.TextRight(right, 32, 7.5, Regular, Muted, fmt.Sprintf("%s  ·  Page %d of %d", b.Code, n, total))
 	if b.FooterNote != "" {
-		p.Text(left, 22, 6.5, Regular, Faint, Fit(b.FooterNote, 6.5, Regular, contentW))
+		p.Text(left, 18, 6.5, Regular, Faint, Fit(b.FooterNote, 6.5, Regular, contentW))
 	}
 }
 
@@ -395,8 +396,11 @@ func (b *Business) drawVerify(f *flow, v Verify) {
 	f.page.QR(left+14, top-h+14, qr, v.URL, Ink)
 
 	x := left + 14 + qr + 18
+	const verifyLogoW = 56.0
+	f.page.Logo(right-14-verifyLogoW, top-23, verifyLogoW)
+
 	f.page.Spaced(x, top-20, 7, 0.8, Bold, b.Brand, strings.ToUpper(v.Title))
-	for i, l := range Wrap(v.Subtitle, 8, Regular, right-x-14) {
+	for i, l := range Wrap(v.Subtitle, 8, Regular, right-x-14-verifyLogoW-10) {
 		f.page.Text(x, top-34-float64(i)*10.5, 8, Regular, Muted, l)
 	}
 	colW := (right - x - 14) / 3
