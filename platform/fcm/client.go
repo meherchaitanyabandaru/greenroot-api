@@ -119,7 +119,7 @@ func (c *Client) Send(ctx context.Context, m Message) error {
 		// Ring like a message: the phone's default sound on both platforms
 		// (without "sound" iOS delivers the banner silently).
 		"android": map[string]any{"priority": "HIGH", "notification": map[string]any{
-			"default_sound": true, "notification_priority": "PRIORITY_HIGH",
+			"default_sound": true, "notification_priority": "PRIORITY_HIGH", "channel_id": "greenroot_high_importance",
 		}},
 		"apns": map[string]any{
 			"headers": map[string]string{"apns-priority": "10"},

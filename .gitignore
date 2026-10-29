@@ -16,6 +16,9 @@ coverage.html
 .env
 .env.*
 !.env.example
+*service*account*.json
+serviceAccountKey.json
+*.pem
 
 # Runtime logs
 logs/**
