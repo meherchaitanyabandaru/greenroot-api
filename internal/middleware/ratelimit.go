@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -51,7 +52,7 @@ func RateLimit(rdb *redis.Client, prefix string, maxReqs int, window time.Durati
 // When rdb is nil the middleware is a no-op.
 func OTPRateLimit(rdb *redis.Client) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		if rdb == nil {
+		if rdb == nil || isDevEnv() {
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +74,15 @@ func OTPRateLimit(rdb *redis.Client) func(http.Handler) http.Handler {
 
 // VerifyRateLimit limits OTP verify attempts to 10 per IP per 15 minutes.
 func VerifyRateLimit(rdb *redis.Client) func(http.Handler) http.Handler {
+	if isDevEnv() {
+		return func(next http.Handler) http.Handler { return next }
+	}
 	return RateLimit(rdb, "verify", 10, 15*time.Minute)
+}
+
+func isDevEnv() bool {
+	env := strings.ToLower(os.Getenv("APP_ENV"))
+	return env == "local" || env == "test" || env == "development" || env == "dev"
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
