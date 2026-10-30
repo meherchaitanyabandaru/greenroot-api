@@ -2,6 +2,7 @@ package dispatches
 
 import (
 	"errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/consent"
 	"net/http"
 	"strconv"
 
@@ -102,7 +103,9 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	dispatch, err := h.service.UpdateStatus(r.Context(), actor, id, req)
 	if err != nil {
-		writeError(w, err)
+		if !consent.WriteError(w, err, consent.DriverDispatch) {
+			writeError(w, err)
+		}
 		return
 	}
 	response.OK(w, DispatchResponse{Dispatch: dispatch})
@@ -164,7 +167,9 @@ func (h *Handler) Receipt(w http.ResponseWriter, r *http.Request) {
 	}
 	dispatch, err := h.service.ConfirmReceipt(r.Context(), actor, id, req)
 	if err != nil {
-		writeError(w, err)
+		if !consent.WriteError(w, err, consent.BuyerDelivery) {
+			writeError(w, err)
+		}
 		return
 	}
 	response.OK(w, DispatchResponse{Dispatch: dispatch})
@@ -224,7 +229,7 @@ func (h *Handler) Accept(w http.ResponseWriter, r *http.Request) {
 	if !response.DecodeJSON(w, r, &req) {
 		return
 	}
-	dispatch, err := h.service.AcceptDispatch(r.Context(), actor, id, req.TripCode)
+	dispatch, err := h.service.AcceptDispatch(r.Context(), actor, id, req.TripCode, req.VehicleID)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -322,7 +327,10 @@ func intQuery(value string) int     { parsed, _ := strconv.Atoi(value); return p
 func int64Query(value string) int64 { parsed, _ := strconv.ParseInt(value, 10, 64); return parsed }
 
 func writeError(w http.ResponseWriter, err error) {
+	var blocked VehicleBlockedError
 	switch {
+	case errors.Is(err, ErrOrderOnHold):
+		response.Error(w, http.StatusConflict, "order_on_hold", "GreenRoot is reviewing this order. It can be dispatched once the review is done; contact support if it is urgent.")
 	case errors.Is(err, ErrTripTaken):
 		response.Error(w, http.StatusConflict, "trip_taken", "Another driver has already taken this trip.")
 	case errors.Is(err, ErrTripCancelled):
@@ -330,7 +338,17 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrTripInviteExpired):
 		response.Error(w, http.StatusGone, "trip_invite_expired", "This trip QR has expired. Ask the nursery for a new one.")
 	case errors.Is(err, ErrVehicleMismatch):
-		response.Error(w, http.StatusConflict, "vehicle_type_mismatch", "This trip needs a different lorry than the one you registered.")
+		response.Error(w, http.StatusConflict, "vehicle_type_mismatch", "This trip needs a different type of lorry than yours.")
+	case errors.As(err, &blocked):
+		response.Error(w, http.StatusConflict, "vehicle_not_eligible", BlockedMessage(blocked.Reason))
+	case errors.Is(err, ErrVehicleOnTrip):
+		response.Error(w, http.StatusConflict, "vehicle_on_active_trip", BlockedMessage("VEHICLE_ON_TRIP"))
+	case errors.Is(err, ErrNoEligibleVehicle):
+		response.Error(w, http.StatusConflict, "no_eligible_vehicle", "You have no lorry that can take this trip. Add a lorry in your profile, or wait for GreenRoot to approve it.")
+	case errors.Is(err, ErrVehicleRequired):
+		response.Error(w, http.StatusUnprocessableEntity, "vehicle_required", "Choose which lorry you are taking.")
+	case errors.Is(err, ErrVehicleNotYours):
+		response.Error(w, http.StatusForbidden, "vehicle_not_yours", "You can only take a trip with a lorry linked to you.")
 	case errors.Is(err, ErrDriverNotApproved):
 		response.Error(w, http.StatusForbidden, "driver_not_approved", "Only drivers approved by GreenRoot can take trips. Finish your driver registration and wait for approval.")
 	case errors.Is(err, ErrForbidden):

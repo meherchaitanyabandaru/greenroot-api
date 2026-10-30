@@ -59,6 +59,15 @@ type Quotation struct {
 	DeletedAt           *time.Time `json:"deleted_at,omitempty"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
+	// A request the customer started (CUSTOMER_REQUESTED until the nursery
+	// sends prices). RequestNote is the customer's message (both sides see it).
+	IsRequest         bool       `json:"is_request"`
+	RequestedByUserID *int64     `json:"requested_by_user_id,omitempty"`
+	RequestNote       *string    `json:"request_note,omitempty"`
+	RequestExpiresAt  *time.Time `json:"request_expires_at,omitempty"`
+	DeclineReason     *string    `json:"decline_reason,omitempty"`
+	DeclinedAt        *time.Time `json:"declined_at,omitempty"`
+	CancelledAt       *time.Time `json:"cancelled_at,omitempty"`
 	// Version changes on every update; send it back as If-Match.
 	Version       int64                        `json:"version"`
 	Items         []QuotationItem              `json:"items,omitempty"`
@@ -79,6 +88,10 @@ type QuotationCapabilities struct {
 	CanAssignManager     bool `json:"can_assign_manager"`
 	CanGenerateDocument  bool `json:"can_generate_document"`
 	CanManageVerifyToken bool `json:"can_manage_verify_token"`
+	// Requests: price the customer's lines, decline, or (the customer) cancel.
+	CanPrice         bool `json:"can_price"`
+	CanDecline       bool `json:"can_decline"`
+	CanCancelRequest bool `json:"can_cancel_request"`
 }
 
 type QuotationExpirySummary struct {
@@ -87,16 +100,28 @@ type QuotationExpirySummary struct {
 }
 
 type QuotationItem struct {
-	ID             int64     `json:"id"`
-	QuotationID    int64     `json:"quotation_id"`
-	PlantID        *int64    `json:"plant_id,omitempty"`
-	ScientificName string    `json:"scientific_name"`
-	CommonName     *string   `json:"common_name,omitempty"`
-	Description    *string   `json:"description,omitempty"`
-	Quantity       float64   `json:"quantity"`
-	UnitPrice      float64   `json:"unit_price"`
-	TotalPrice     float64   `json:"total_price"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID             int64   `json:"id"`
+	QuotationID    int64   `json:"quotation_id"`
+	PlantID        *int64  `json:"plant_id,omitempty"`
+	ScientificName string  `json:"scientific_name"` // "" for a custom plant without one
+	CommonName     *string `json:"common_name,omitempty"`
+	// A plant not in the catalog: the name exactly as the customer entered it.
+	IsCustom          bool    `json:"is_custom"`
+	CustomPlantName   *string `json:"custom_plant_name,omitempty"`
+	PlantSuggestionID *int64  `json:"plant_suggestion_id,omitempty"`
+	// LinkedPlantName: the catalog plant GreenRoot later matched the custom
+	// name to (for information; the line itself is never changed).
+	LinkedPlantName *string `json:"linked_plant_name,omitempty"`
+	Variety         *string `json:"variety,omitempty"`
+	SizeDescription *string `json:"size_description,omitempty"`
+	Grade           *string `json:"grade,omitempty"`
+	Description     *string `json:"description,omitempty"`
+	Quantity        float64 `json:"quantity"`
+	UnitPrice       float64 `json:"unit_price"`
+	// IsPriced: false on a customer\'s request line the nursery has not priced yet.
+	IsPriced   bool      `json:"is_priced"`
+	TotalPrice float64   `json:"total_price"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type QuotationVerification struct {

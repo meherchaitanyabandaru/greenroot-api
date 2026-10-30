@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 // ─── mock repository ─────────────────────────────────────────────────────────
@@ -16,6 +17,8 @@ type mockRepo struct {
 	onTrip     map[int64]bool    // userID → has an active trip
 	retired    []int64
 	nextID     int64
+	links      map[int64][]MyVehicle // userID → lorry links
+	lastOwner  ownerInput
 }
 
 func newMock() *mockRepo {
@@ -25,6 +28,7 @@ func newMock() *mockRepo {
 		owners:     make(map[int64]bool),
 		duplicates: make(map[string]bool),
 		onTrip:     make(map[int64]bool),
+		links:      make(map[int64][]MyVehicle),
 		nextID:     100,
 	}
 }
@@ -134,6 +138,29 @@ func (m *mockRepo) Approve(_ context.Context, driverUserID int64, approvedByUser
 	d.ApprovalStatus = "APPROVED"
 	d.ApprovedByUserID = &approvedByUserID
 	return d, nil
+}
+
+func (m *mockRepo) ListMyVehicles(_ context.Context, userID int64) ([]MyVehicle, error) {
+	return m.links[userID], nil
+}
+
+func (m *mockRepo) AddVehicleLink(_ context.Context, userID int64, req AddVehicleRequest, owner ownerInput) (MyVehicle, error) {
+	for _, v := range m.links[userID] {
+		if v.VehicleNumber == req.VehicleNumber {
+			return MyVehicle{}, ErrVehicleLinked
+		}
+	}
+	m.lastOwner = owner
+	v := MyVehicle{LinkID: m.next(), LinkStatus: "PENDING", VehicleNumber: req.VehicleNumber, BlockedReason: "LINK_PENDING"}
+	m.links[userID] = append(m.links[userID], v)
+	return v, nil
+}
+
+func (m *mockRepo) RemoveVehicleLink(_ context.Context, userID, linkID int64) error {
+	if m.onTrip[userID] {
+		return ErrVehicleOnTrip
+	}
+	return nil
 }
 
 func (m *mockRepo) CreateLocation(_ context.Context, driverID, actorID int64, input LocationRequest) (*DriverLocation, error) {
@@ -332,6 +359,93 @@ func TestApply_NurseryOwnerForbidden(t *testing.T) {
 	})
 	if !errors.Is(err, ErrOwnerCannotBeDriver) {
 		t.Errorf("want ErrOwnerCannotBeDriver, got %v", err)
+	}
+}
+
+func TestApply_ExpiredLicenceRefused(t *testing.T) {
+	_, err := svc(newMock()).Apply(context.Background(), buyerActor(10), ApplyDriverRequest{
+		LicenceNumber: "MH01AB1234", VehicleNumber: "MH01CD5678",
+		LicenceExpiryDate: ptr(time.Now().AddDate(0, 0, -1).Format(time.DateOnly)),
+	})
+	if !errors.Is(err, ErrLicenceExpired) {
+		t.Errorf("want ErrLicenceExpired, got %v", err)
+	}
+}
+
+func TestApply_BadOwnerMobileRefused(t *testing.T) {
+	_, err := svc(newMock()).Apply(context.Background(), buyerActor(10), ApplyDriverRequest{
+		LicenceNumber: "MH01AB1234", VehicleNumber: "MH01CD5678",
+		OwnerName: ptr("Ramesh"), OwnerMobile: ptr("12"),
+	})
+	if !errors.Is(err, ErrInvalidOwnerPhone) {
+		t.Errorf("want ErrInvalidOwnerPhone, got %v", err)
+	}
+}
+
+// ─── Lorry links ─────────────────────────────────────────────────────────────
+
+func TestAddVehicle_NeedsDriverProfile(t *testing.T) {
+	_, err := svc(newMock()).AddVehicle(context.Background(), buyerActor(10), AddVehicleRequest{
+		VehicleNumber: "TS09AB1234", VehicleType: "TRUCK", IsOwner: true,
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Errorf("want ErrForbidden without a driver profile, got %v", err)
+	}
+}
+
+func TestAddVehicle_OwnerWithoutAccount(t *testing.T) {
+	repo := newMock()
+	repo.byUserID[10] = &Driver{ID: 1}
+	v, err := svc(repo).AddVehicle(context.Background(), driverActor(10), AddVehicleRequest{
+		VehicleNumber: "ts 09 ab-1234", VehicleType: "truck", OwnerName: ptr(" Ramesh "), OwnerMobile: ptr("+91 98765 43210"),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v.VehicleNumber != "TS09AB1234" || v.LinkStatus != "PENDING" {
+		t.Errorf("want normalized number and a pending link, got %+v", v)
+	}
+	if repo.lastOwner.name != "Ramesh" || repo.lastOwner.mobile == "" || repo.lastOwner.userID != 0 {
+		t.Errorf("owner without account not passed on: %+v", repo.lastOwner)
+	}
+}
+
+func TestAddVehicle_OtherOwnerNeedsName(t *testing.T) {
+	repo := newMock()
+	repo.byUserID[10] = &Driver{ID: 1}
+	_, err := svc(repo).AddVehicle(context.Background(), driverActor(10), AddVehicleRequest{
+		VehicleNumber: "TS09AB1234", VehicleType: "TRUCK",
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("want ErrInvalidInput without owner name, got %v", err)
+	}
+}
+
+func TestAddVehicle_SameLorryTwice(t *testing.T) {
+	repo := newMock()
+	repo.byUserID[10] = &Driver{ID: 1}
+	req := AddVehicleRequest{VehicleNumber: "TS09AB1234", VehicleType: "TRUCK", IsOwner: true}
+	if _, err := svc(repo).AddVehicle(context.Background(), driverActor(10), req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc(repo).AddVehicle(context.Background(), driverActor(10), req); !errors.Is(err, ErrVehicleLinked) {
+		t.Errorf("want ErrVehicleLinked, got %v", err)
+	}
+}
+
+func TestRemoveVehicle_RefusedDuringTrip(t *testing.T) {
+	repo := newMock()
+	repo.onTrip[10] = true
+	if err := svc(repo).RemoveVehicle(context.Background(), driverActor(10), 5); !errors.Is(err, ErrVehicleOnTrip) {
+		t.Errorf("want ErrVehicleOnTrip, got %v", err)
+	}
+}
+
+func TestNormalizeVehicleNumber(t *testing.T) {
+	for in, want := range map[string]string{"ts 09 ab-1234": "TS09AB1234", "KA01MX0001": "KA01MX0001", " -- ": ""} {
+		if got := NormalizeVehicleNumber(in); got != want {
+			t.Errorf("NormalizeVehicleNumber(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

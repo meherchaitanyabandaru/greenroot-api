@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/consent"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -36,7 +38,43 @@ type Service struct {
 	auditSvc   *auditlog.Service
 	storage    *storage.Client
 	redis      redis.Cmdable
-	events     EventNotifier // SMS/email; nil = in-app only
+	events     EventNotifier  // SMS/email; nil = in-app only
+	consents   *consent.Store // nil: confirmations are checked but not stored (tests)
+}
+
+// UseConsents stores the confirmations parties give (consent_records).
+func (s *Service) UseConsents(c *consent.Store) { s.consents = c }
+
+// saveConsent records a confirmation; the action already happened, so a
+// failure to store it is logged, not undone.
+func (s *Service) saveConsent(ctx context.Context, actor ActorContext, step string, orderID int64, given *consent.Given) {
+	if s.consents == nil || given == nil {
+		return
+	}
+	role := "NURSERY_OWNER"
+	if !actor.HasRole("NURSERY_OWNER") && actor.HasRole("MANAGER") {
+		role = "MANAGER"
+	}
+	if err := s.consents.Save(ctx, consent.Record{Type: step, UserID: actor.UserID, UserRole: role, OrderID: &orderID,
+		Evidence: given.Evidence, IPAddress: actor.IPAddress, UserAgent: actor.UserAgent}); err != nil {
+		slog.Error("consent not stored", "step", step, "order_id", orderID, "error", err)
+	}
+}
+
+// Consents lists the confirmations given on an order (its quotation,
+// loading, trips and delivery), for anyone who can see the order.
+func (s *Service) Consents(ctx context.Context, actor ActorContext, orderID int64) ([]consent.Entry, error) {
+	order, err := s.repository.FindByID(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.canView(ctx, actor, *order); err != nil {
+		return nil, err
+	}
+	if s.consents == nil {
+		return []consent.Entry{}, nil
+	}
+	return s.consents.ForOrder(ctx, orderID)
 }
 
 // EventNotifier raises SMS/email events (messaging.Notifier).
@@ -419,7 +457,7 @@ func (s *Service) StartLoading(ctx context.Context, actor ActorContext, orderID 
 // whether any item's loaded_quantity is less than its ordered quantity.
 // The seller must declare the vehicle carries no prohibited items; the
 // declaration is kept in the audit log against who completed loading.
-func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, orderID int64, declaredNoProhibitedItems bool) (Order, error) {
+func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, orderID int64, declaredNoProhibitedItems bool, given *consent.Given) (Order, error) {
 	if !declaredNoProhibitedItems {
 		return Order{}, ErrLoadingNotDeclared
 	}
@@ -441,6 +479,10 @@ func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, order
 	}
 	if order.Status != "LOADING" {
 		return Order{}, ErrInvalidStatus
+	}
+	// The seller confirms varieties, quantities, condition and loading details.
+	if err := consent.Check(consent.SellerLoading, given); err != nil {
+		return Order{}, err
 	}
 	finalStatus := "LOADED"
 	for _, item := range order.Items {
@@ -470,6 +512,7 @@ func (s *Service) CompleteLoading(ctx context.Context, actor ActorContext, order
 		fmt.Sprintf("Order #%d status LOADING → %s", orderID, finalStatus),
 		map[string]any{"status": "LOADING"},
 		map[string]any{"status": finalStatus, "declared_no_prohibited_items": true})
+	s.saveConsent(ctx, actor, consent.SellerLoading, orderID, given)
 	s.enrichOrder(ctx, actor, updated)
 	return *updated, nil
 }

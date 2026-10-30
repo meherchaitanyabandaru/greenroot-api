@@ -3,6 +3,7 @@ package orders
 import (
 	"context"
 	"errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/consent"
 	"testing"
 	"time"
 
@@ -772,7 +773,7 @@ func TestCompleteLoading_AllFullBecomesLoaded(t *testing.T) {
 	repo.seedOrder(Order{ID: 10, Status: "LOADING", SellerNurseryID: &nid})
 	full := float64(10)
 	repo.seedItem(OrderItem{ID: 1, OrderID: 10, Quantity: 10, LoadedQuantity: &full})
-	o, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10, true)
+	o, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10, true, sellerOK)
 	if err != nil {
 		t.Fatalf("CompleteLoading all full: %v", err)
 	}
@@ -788,7 +789,7 @@ func TestCompleteLoading_ShortBecomesPartiallyFulfilled(t *testing.T) {
 	repo.seedOrder(Order{ID: 10, Status: "LOADING", SellerNurseryID: &nid})
 	partial := float64(5) // ordered 10, loaded only 5
 	repo.seedItem(OrderItem{ID: 1, OrderID: 10, Quantity: 10, LoadedQuantity: &partial})
-	o, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10, true)
+	o, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10, true, sellerOK)
 	if err != nil {
 		t.Fatalf("CompleteLoading partial: %v", err)
 	}
@@ -807,7 +808,7 @@ func TestCompleteLoading_PartialReturnsRecalculatedTotal(t *testing.T) {
 	repo.seedOrder(Order{ID: 10, Status: "LOADING", SellerNurseryID: &nid, TotalAmount: 500})
 	partial := float64(7) // ordered 10 @ 50/unit, loaded only 7 -> should recalc to 350
 	repo.seedItem(OrderItem{ID: 1, OrderID: 10, Quantity: 10, UnitPrice: 50, LoadedQuantity: &partial})
-	o, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10, true)
+	o, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10, true, sellerOK)
 	if err != nil {
 		t.Fatalf("CompleteLoading partial: %v", err)
 	}
@@ -824,7 +825,7 @@ func TestCompleteLoading_NotInLoading(t *testing.T) {
 	repo.seedNursery(1, 100)
 	nid := int64(1)
 	repo.seedOrder(Order{ID: 10, Status: "CONFIRMED", SellerNurseryID: &nid})
-	_, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10, true)
+	_, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10, true, sellerOK)
 	if !errors.Is(err, ErrInvalidStatus) {
 		t.Errorf("CompleteLoading not in LOADING: want ErrInvalidStatus, got %v", err)
 	}
@@ -835,7 +836,7 @@ func TestCompleteLoading_NeedsDeclaration(t *testing.T) {
 	repo.seedNursery(1, 100)
 	nid := int64(1)
 	repo.seedOrder(Order{ID: 10, Status: "LOADING", SellerNurseryID: &nid})
-	_, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10, false)
+	_, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10, false, sellerOK)
 	if !errors.Is(err, ErrLoadingNotDeclared) {
 		t.Errorf("CompleteLoading without declaration: want ErrLoadingNotDeclared, got %v", err)
 	}
@@ -1384,5 +1385,23 @@ func TestUpdateStatus_ConcurrentChangeConflicts(t *testing.T) {
 	}
 	if repo.orders[10].Status != "PENDING" {
 		t.Fatal("the lost-update must not be applied")
+	}
+}
+
+var sellerOK = &consent.Given{Version: consent.Templates[consent.SellerLoading].Version, Accepted: true}
+
+func TestCompleteLoading_NeedsSellerConfirmation(t *testing.T) {
+	for name, given := range map[string]*consent.Given{
+		"none":         nil,
+		"not accepted": {Version: sellerOK.Version},
+		"old wording":  {Version: sellerOK.Version - 1, Accepted: true},
+	} {
+		repo := newMock()
+		repo.seedNursery(1, 100)
+		nid := int64(1)
+		repo.seedOrder(Order{ID: 10, Status: "LOADING", SellerNurseryID: &nid})
+		if _, err := svc(repo).CompleteLoading(context.Background(), ownerActor(100), 10, true, given); err == nil {
+			t.Errorf("%s: loading completed without the seller's confirmation", name)
+		}
 	}
 }

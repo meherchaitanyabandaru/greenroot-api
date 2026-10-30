@@ -41,7 +41,9 @@ args = parser.parse_args()
 API = args.api.rstrip("/")
 OTP = "123456"
 # Sellers declare the vehicle carries no prohibited items when loading is done.
-LOADED_OK = {"declared_no_prohibited_items": True}
+# Each party's confirmation (GET /consents/templates gives the wording and version).
+CONSENT = {"consent_version": 1, "accepted": True}
+LOADED_OK = {"declared_no_prohibited_items": True, "consent": CONSENT}
 ADMIN_MOBILE = "9000000000"
 
 results = {"pass": 0, "fail": 0, "failures": []}
@@ -98,17 +100,59 @@ def expect(label, method, path, token=None, body=None, status=200, headers=None)
     return out
 
 
-# A 1x1 PNG: stands in for the camera selfie market sellers must have.
-SELFIE_PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+def png_image(w, h, claim=None):
+    """A real w×h RGBA PNG (transparent first row). claim=(W, H) rewrites the
+    header to say W×H pixels, CRC fixed: a decompression-bomb header."""
+    import struct, zlib
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    rows = b"".join(b"\x00" + (b"\x00\x00\x00\x00" if y == 0 else b"\x30\x90\x40\xff") * w for y in range(h))
+    cw, ch = claim or (w, h)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", cw, ch, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+
+
+# A 300×300 PNG: stands in for the camera selfie market sellers must have
+# (the SELFIE policy refuses photos under 200 px).
+SELFIE_PNG = png_image(300, 300)
+# Camera-like JPEGs (encoded once with Go's image/jpeg): 640×480 and 320×240.
+PHOTO_JPG = base64.b64decode("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ooGFLSUtIYUUUUDCiiigBaKKKBhRRRSGFLRRQAUUUUDCloooGFFFFIApaSloGFFFFAwpaKKBhRRRSAKKKWgYUUUUDCiiigApaKKBhRRRSGLRRRQMKKKKAClpKWgYUUUUhhRRRQAtFFFAwpaSloGFFFFIYUUUUALRRRQMKKKWgYUUUUhhRRRQAUtFFAwooooGFLSUtIAooooGZtFFLXUeGFFFFAwooooAKWkpaBhRRRQMKWiikMKKKKAClpKWgYUUUUDCiiikAtFFFAwpaSloGFFFFAwooopAFLRRQMKKKKBi0UUUAFFFFIYUtFFAwooooGFFFLQAUUUUhhS0UUDCiiigAooooGLRRRSGFFFFAwpaKKACiiigYtFFFAwooopAFLSUtAwooooGFLRRSGFFFFABRRS0DCiiigYUUUUAFLRRSGFFFLQMzKWkpa6jwwooooGFFFLQAUUUUDClpKWkMKKKKACiiigYtFFFAwooopDClpKWgAooooGFLRRQMKKKKQwoopaACiiigYUtJS0DCiiigAoopaQwooooGFFFFABS0lLQMKKKKQxaKKKBhRRRQAUtJS0DCiiikMKKKWgAooooGFLSUtAwooopDCiiigBaKKKBhRRS0DCiiikMKKKKACloooGFFFFAwoopaQBRRRQMKWkpaBmbRRRXUeGFFFFABS0lLQMKKKKBi0UUUgCiiigYUtJS0DCiiigYUUUUgFooooGFFFLQMKKKKACiiikMWiiigYUUUtAwooooAKKKKBhS0lLSGFFFFAwoopaACiiigYUtJS0hhRRRQAUUUtAwooooGFFFFIApaKKBhRRRQMWiiigYUUUUgClpKWgYUUUUDFooooGFFFFIAoopaBhRRRQMKKKKAFooopDCiiloGFFFFAzNooorqPDCiiloAKKKKBhS0lLQMKKKKQBRRRQMWiiigYUUUUDCloopAFFFFAwpaKKBhRRRQAUtJS0hhRRRQMKWiigYUUUUAFFFLQMKKKKQwooooGFLRRQAUUUUDFooopDCiiigApaKKBhRRRQMKKKKQC0UUUDClpKWgYUUUUDCiiikAtFFFAwoopaBhRRRQAUUUUhi0UUUDCiiigYUtJS0AFFFFIYUtFFAwooooAzaKKK6jwwpaKKBhRRRQMWiiigAooopDClpKWgYUUUUDCiiigBaKKKQwpaSloGFFFFABRRRQMKWiikMKKKKBi0UUUAFFFFAwpaKKQwooooAKWkpaBhRRRQMKWiikMKKKKACiiigYtFFFAwooopDCloooAKKKKBhS0UUDCiiigApaSlpDCiiigYUtFFABRRRQMKWkpaQwooooGFFFFABS0UUDCiiikMWiiigYUUUUAZtFFLXUeGFFFFAwpaSloGFFFFABRRRSGLRRRQMKKKKBhS0lLQAUUUUhhS0UUDCiiigAoopaBhRRRSGFLSUtAwooooAKKKWgYUUUUhhRRRQAUtFFAwooooGLRRRSGFFFFABS0lLQMKKKKBhRRS0gCiiigYUtJS0DCiiigAooooGLRRRSGFLSUtAwooooAKKKKBhS0UUhhRRRQMKWkpaACiiigYUtFFIYUUUUAFFFLQMzKWkpa6jwwooooGLRRRQMKKKKQBS0lLQMKKKKBhRRS0AFFFFAwoopaQwooooAKKKKBi0UUUDCiilpDCiiigAooooGFLRRQMKKKKQBRRS0DCiiigYUtJS0DCiiikAUUUtAwooooGFFFFABS0UUhhRRS0DCiiigYUUUUAFLSUtAwooopDFooooGFFFFABRRS0DCiiikMKKKKAFooooGFFFLQMKKKKQBRRRQMKWiigZm0UUV1HhhRRS0DCiiigAooopDFooooGFFFFABS0lLQMKKKKQxaKKKBhRRRQAUtJS0DCiiigYUtFFIYUUUUAFFFLQMKKKKBhRRRSAKWiigYUUUUDFooooAKKKKQwpaKKBhRRRQMKKKKAFooopDClpKWgYUUUUDCiiigBaKKKQwoopaBhRRRQAUUUUDFooopDCiiigApaSloGFFFFAwpaKKQwooooAKKKWgYUUUUDM2iiiuo8MWiiigAooooGFLSUtIYUUUUDCiiigBaKKKBhS0lLSGFFFFAwooooAWiiigYUUUUDFooopAFFFFAwpaKKBhRRRQAUUUtIYUUUUDCloooGFFFFABRRS0hhRRRQMKKKKACloooGFFFFIYtFFFAwooooAKWiigYUUUUhhS0UUAFFFFAwpaSloGFFFFIYUUUUAFLRRQMKKKKBi0UUUhhRRRQAUtFFAwooooGZtLRRXUeGFFFFABRRRQMWiiikMKKKKACloooGFFFFAwpaKKQwooooAKWkpaBhRRRQMKWiikAUUUUDCiiloGFFFFAwooopAFLRRQMKKKKBi0UUUAFFFFAwpaKKQwooooGFFFLQAUUUUDClpKWkMKKKKACiiloGFFFFAwpaSlpDCiiigAooooGFLRRQMKKKKQBS0lLQMKKKKBhS0UUDCiiikAUUUtAwooooGFFFFAGdRRRXUeGFFFFAwpaSlpDCiiigYUUUtABRRRQMKWkpaBhRRRSAKKKKBi0UUUDCiiloGFFFFIAooooGFLRRQMKKKKBhRRS0gCiiigYUtJS0DCiiigAoopaQwooooGFFFFABS0UUDCiiigYtFFFIYUUUUAFLSUtAwooooGLRRRSAKKKKBhRRS0DCiiigYUUUUgFooooGFFFLQMKKKKBhRRRSAKWiigYUUUUDCiiloAzaKKK6jwwoopaBhRRRQMKKKKQBS0UUDCiiigYtFFFAwooopAFLSUtAwooooGLRRRQAUUUUhhRRS0DCiiigYUUUUAFLRRSGFFFLQMKKKKACiiigYUtFFIYUUUUDCiiloAKKKKBhS0lLQMKKKKQBRRRQMWiiigYUUUtAwooopAFFFFAxaKKKBhRRRQAUtJS0hhRRRQMKWiigYUUUUAFFFLSGFFFFAwooooAKWiigZm0UUV1HhhS0UUDCiiikMKKKKAFooooGFLSUtAwooopAFFFFAxaKKKBhRRS0DCiiigAooopDCloooGFFFFABRRS0DCiiikMKWiigYUUUUAFFFLQMKKKKQwooooGFLRRQAUUUUDFooopDCiiigApaSloGFFFFAwpaKKQBRRRQMKWkpaBhRRRQMKKKKACloopDCiiloGFFFFAwooopAFLRRQMKKKKBhS0lLQAUUUUhmbRRRXWeGLRRRQMKKKKQBS0lLQMKKKKBhS0UUAFFFFIYUtJS0DCiiigYUtFFABRRRSGFFFLQMKKKKBhRRRQAUtFFIYUUUUDFooooAKKKKBhS0UUDCiiikMKKKWgAooooGFLSUtAwooopAFFFLQMKKKKBhRRS0DCiiikAUUUUDFooooGFFFFABRRS0hhRRRQMKWiigAooooGFFFLSGFFFFAwooooAWiiigYUUUtIZmUtJS11nhhRRRQMKKKWkAUUUUDClpKWgYUUUUAFFFFIYtFFFAwoopaBhRRRQAUUUUhhS0UUDCiiigApaSloGFFFFAwpaKKQwooooAKKKWgYUUUUDCiiikAUtFFAwooooGLRRRQMKKKKQBS0lLQMKKKKBi0UUUDCiiikAUtJS0DCiiigYUUUUALRRRSGFFFLQMKKKKACiiigYtFFFIYUUUUDCiiloAKKKKBhS0lLSGZtFFFdZ4YUUUUAFLRRSGFFFFAxaKKKBhRRRQAUtJS0hhRRRQMWiiigAooooGFFFLSGFFFFABRRRQMWiiigYUUUtIYUUUUAFFFFAwpaKKBhRRRSAKKKWgYUUUUDClpKWgYUUUUAFFFFIYtFFFAwoopaACiiigYUUUUhi0UUUDCiiigApaSloGFFFFIYUtFFAwooooAKKKWgYUUUUhhRRRQAUtFFAwooooGLRRRSAzaKKK6zxAooopALRRRQMKWkpaBhRRRQAUUUUDFooopDCiiloGFFFFABRRRQMKWiikMKKKKAClpKWgYUUUUDCloopDCiiigAoopaBhRRRQMKKKKQBS0UUDCiiigYtFFFAwooopAFLSUtAwooooGFLRRQAUUUUhhS0lLQMKKKKBhRRRQAtFFFAwoopaQwooooAKKKKBhS0UUDCiiikMKWkpaACiiigYUtFFAwooopAf/9k=")
+SMALL_JPG = base64.b64decode("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")
+
+
+def multipart(fields, file_field, data, filename, content_type):
+    boundary = "journey" + str(random.randint(10**8, 10**9))
+    body = b"".join(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode() for k, v in fields)
+    body += (f'--{boundary}\r\nContent-Disposition: form-data; name="{file_field}"; filename="{filename}"\r\n'
+             f"Content-Type: {content_type}\r\n\r\n").encode() + data + f"\r\n--{boundary}--\r\n".encode()
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
+def upload_image(label, user, category, data, want=201, filename="photo.jpg", content_type="image/jpeg"):
+    """POST /storage/images (category, file); returns the response body."""
+    body, ctype = multipart([("category", category)], "file", data, filename, content_type)
+    req = urllib.request.Request(API + "/storage/images", data=body, method="POST")
+    req.add_header("Content-Type", ctype)
+    if user:
+        req.add_header("Authorization", "Bearer " + user.token)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            code, out = r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try:
+            code, out = e.code, json.loads(raw)
+        except ValueError:
+            code, out = e.code, {"raw": raw[:200].decode(errors="replace")}
+    check(f"{label}  [POST /storage/images {category} → {code}]", code == want, out)
+    return out
 
 
 def upload_selfie(label, user, data=SELFIE_PNG, want=200):
     """POST /users/me/avatar as multipart; returns the stored photo URL."""
-    boundary = "journey" + str(random.randint(10**8, 10**9))
-    body = (f'--{boundary}\r\nContent-Disposition: form-data; name="avatar"; filename="selfie.png"\r\n'
-            "Content-Type: image/png\r\n\r\n").encode() + data + f"\r\n--{boundary}--\r\n".encode()
+    body, ctype = multipart([], "avatar", data, "selfie.png", "image/png")
     req = urllib.request.Request(API + "/users/me/avatar", data=body, method="POST")
-    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    req.add_header("Content-Type", ctype)
     req.add_header("Authorization", "Bearer " + user.token)
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
@@ -706,7 +750,7 @@ def journey_quotation():
     out = expect("customers before the buyer answers", "GET", f"/nurseries/{nid}/customers", owner.token)
     check("…a buyer who was only sent a quotation is not a customer yet", buyer.id not in [c["user_id"] for c in out["customers"]], out)
     expect("…so the owner cannot pick them by account", "POST", "/quotations", owner.token, quote(customer_user_id=buyer.id), status=403)
-    out = expect("buyer accepts", "POST", f"/quotations/{qid}/buyer-accept", buyer.token, {})
+    out = expect("buyer accepts", "POST", f"/quotations/{qid}/buyer-accept", buyer.token, {"consent": CONSENT})
     check("…CUSTOMER_ACCEPTED", out["quotation"]["status"] == "CUSTOMER_ACCEPTED", out["quotation"]["status"])
     out = expect("customers after the buyer accepted", "GET", f"/nurseries/{nid}/customers", owner.token)
     check("…the buyer is a connected customer now, no invite needed", buyer.id in [c["user_id"] for c in out["customers"]], out)
@@ -976,7 +1020,7 @@ def journey_dispatch():
     expect("a driver with an active trip cannot accept another", "POST", f"/dispatches/{d2['id']}/accept", driver.token, {"trip_code": d2["trip_uuid"]}, status=409)
 
     # Moving the trip
-    st = lambda who, status, code=200: expect(f"{who[0]} sets {status}", "PUT", f"/dispatches/{did}/status", who[1].token, {"dispatch_status": status}, status=code)
+    st = lambda who, status, code=200: expect(f"{who[0]} sets {status}", "PUT", f"/dispatches/{did}/status", who[1].token, {"dispatch_status": status, "consent": CONSENT}, status=code)
     st(("buyer", buyer), "DELIVERED", 403)
     st(("buyer", buyer), "CANCELLED", 403)
     st(("driver", driver), "CANCELLED", 403)
@@ -1088,7 +1132,7 @@ def journey_dispatch():
     check("…UNCONFIRMED, reason kept", out.get("delivery_confirmation") == "UNCONFIRMED" and "son" in (out.get("delivery_override_reason") or ""), out)
     bd = expect("buyer opens it", "GET", f"/dispatches/{d3['id']}", buyer.token)["dispatch"]
     check("…the customer can confirm or dispute", bd["capabilities"]["can_confirm_receipt"] and bd["capabilities"]["can_report_issue"], bd["capabilities"])
-    out = expect("buyer confirms they received it", "POST", f"/dispatches/{d3['id']}/receipt", buyer.token, {})["dispatch"]
+    out = expect("buyer confirms they received it", "POST", f"/dispatches/{d3['id']}/receipt", buyer.token, {"consent": CONSENT})["dispatch"]
     check("…now confirmed in the app", out.get("delivery_confirmation") == "CUSTOMER_APP", out)
 
     # Loading never sends a trip: a driver joins only by scanning the trip QR
@@ -1125,7 +1169,7 @@ def journey_dispatch():
     check("…Driver Assigned", out["dispatch_status"] == "ACCEPTED" and out.get("driver_user_id") == winner.id, out)
     check("…with the time it was accepted", bool(out.get("driver_accepted_at")), out)
     expect("scanning again is idempotent", "POST", f"/dispatches/{d4['id']}/accept", winner.token, {"trip_code": d4["trip_uuid"]})
-    out = expect("driver starts straight from Driver Assigned", "PUT", f"/dispatches/{d4['id']}/status", winner.token, {"dispatch_status": "IN_TRANSIT"})["dispatch"]
+    out = expect("driver starts straight from Driver Assigned", "PUT", f"/dispatches/{d4['id']}/status", winner.token, {"dispatch_status": "IN_TRANSIT", "consent": CONSENT})["dispatch"]
     check("…On the Way", out["dispatch_status"] == "IN_TRANSIT", out)
     check("…with when it left and who started it", bool(out.get("trip_started_at")) and bool(out.get("dispatch_date"))
           and out.get("trip_started_by_user_id") == winner.id, out)
@@ -1360,8 +1404,9 @@ def journey_market():
     expect("four photos are refused", "POST", "/market/ads", owner.token, dict(ad, photos=["https://cdn.example/p.jpg"] * 4), status=400)
     expect("a truck with no road is refused", "POST", "/market/ads", owner.token, dict(ad, road_accessible=False, truck_accessible=True, pickup_landmark="Gate"), status=400)
     expect("no road and no pickup point is refused", "POST", "/market/ads", owner.token, dict(ad, road_accessible=False, truck_accessible=False), status=400)
+    ad_photo = upload_image("owner uploads an ad photo", owner, "MARKET_AD", PHOTO_JPG)["file_url"]
     acc = expect("road yes, truck no, with a pickup point and notes", "POST", "/market/ads", owner.token,
-                 dict(ad, photos=["https://cdn.example/p.jpg"] * 3, road_accessible=True, truck_accessible=False,
+                 dict(ad, photos=[ad_photo] * 3, road_accessible=True, truck_accessible=False,
                       pickup_landmark="Banyan tree on the village road", access_instructions="Narrow lane, tractors only"), status=201)["ad"]
     check("…stored as sent", acc["road_accessible"] is True and acc["truck_accessible"] is False
           and acc["pickup_landmark"] == "Banyan tree on the village road" and acc["access_instructions"] == "Narrow lane, tractors only", acc)
@@ -1466,9 +1511,13 @@ def journey_moderation():
     owner, _, _, _, _ = team(boss)
     rival = approved_owner(boss, "Reporter")
 
+    photo = upload_image("owner uploads an ad photo", owner, "MARKET_AD", PHOTO_JPG)["file_url"]
+    out = expect("an ad photo from elsewhere is refused", "POST", "/market/ads", owner.token,
+                 {"plant_name": "Rose", "title": "Outside photo", "price_per_unit": 50, "photos": ["https://example.com/a.jpg"]}, status=400)
+
     def live_ad(title):
         a = expect(f"owner posts '{title}'", "POST", "/market/ads", owner.token,
-                   {"plant_name": "Rose", "title": title, "price_per_unit": 50, "photos": ["https://example.com/a.jpg"]}, status=201)["ad"]
+                   {"plant_name": "Rose", "title": title, "price_per_unit": 50, "photos": [photo]}, status=201)["ad"]
         expect("…and publishes it", "POST", f"/market/ads/{a['id']}/publish", owner.token, {})
         return a["id"]
 
@@ -1733,11 +1782,7 @@ def journey_roles():
     body = {"licence_number": "TS09" + lic.mobile, "vehicle_number": "TS09" + lic.mobile[-4:], "vehicle_type": "VAN"}
     expect("a licence photo link from elsewhere is refused", "POST", "/drivers/apply", lic.token,
            dict(body, licence_photo_url="https://example.com/licence.png"), status=400)
-    pre = expect("presign a licence photo upload", "POST", "/storage/presign", lic.token,
-                 {"bucket": "attachments", "file_name": "licence.png", "content_type": "image/png", "size": len(SELFIE_PNG)})
-    put = urllib.request.Request(pre["upload_url"], data=SELFIE_PNG, method="PUT", headers={"Content-Type": "image/png"})
-    with urllib.request.urlopen(put, timeout=30) as r:
-        check("…uploaded to storage", r.status in (200, 204), r.status)
+    pre = upload_image("upload a licence photo", lic, "DRIVER_LICENCE", png_image(1000, 640), filename="licence.png", content_type="image/png")
     check("…the private key carries its uploader", pre["key"].startswith(f"u{lic.id}/"), pre["key"])
     peeker = User(first="Other", activity="DRIVER")
     expect("someone else's private file cannot be used as a licence photo", "POST", "/drivers/apply", peeker.token,
@@ -1751,7 +1796,7 @@ def journey_roles():
     check("…with a link to the photo", bool(link), out)
     if link:
         with urllib.request.urlopen(link, timeout=30) as r:
-            check("…the link serves the photo", r.read() == SELFIE_PNG)
+            check("…the link serves the photo", r.read() == png_image(1000, 640))
     try:
         urllib.request.urlopen(pre["file_url"], timeout=30)
         check("the plain file URL is not public", False)
@@ -1929,38 +1974,95 @@ def journey_plant_suggestions():
 
 
 def journey_storage():
-    """Direct uploads: only the buckets apps upload to, only allowed file types, and the signed type is enforced."""
+    """Uploads: documents may be presigned; every photo goes through the API and is checked against its category's image policy."""
     u = User(first="Uploader", activity="CUSTOMER")
     expect("server-only bucket refused", "POST", "/storage/presign", u.token,
-           {"bucket": "plant-images", "file_name": "a.jpg", "content_type": "image/jpeg"}, status=400)
-    expect("a web page in a public bucket refused", "POST", "/storage/presign", u.token,
-           {"bucket": "market-ads", "file_name": "a.html", "content_type": "text/html"}, status=400)
-    expect("SVG in a public bucket refused", "POST", "/storage/presign", u.token,
-           {"bucket": "market-ads", "file_name": "a.svg", "content_type": "image/svg+xml"}, status=400)
+           {"bucket": "plant-images", "file_name": "a.pdf", "content_type": "application/pdf", "size": 10}, status=400)
+    expect("a web page refused", "POST", "/storage/presign", u.token,
+           {"bucket": "attachments", "file_name": "a.html", "content_type": "text/html", "size": 10}, status=400)
+    for bucket in ("market-ads", "attachments", "delivery-photos"):
+        out = expect(f"a photo is never presigned ({bucket})", "POST", "/storage/presign", u.token,
+                     {"bucket": bucket, "file_name": "a.jpg", "content_type": "image/jpeg", "size": 1000}, status=400)
+        check("…use_image_upload", err_code(out) == "use_image_upload", out)
     expect("an upload without its size is refused", "POST", "/storage/presign", u.token,
-           {"bucket": "market-ads", "file_name": "a.jpg", "content_type": "image/jpeg"}, status=400)
-    out = expect("a photo over 10 MB is refused", "POST", "/storage/presign", u.token,
-                 {"bucket": "market-ads", "file_name": "a.jpg", "content_type": "image/jpeg", "size": 10 * 1024 * 1024 + 1}, status=400)
+           {"bucket": "attachments", "file_name": "a.pdf", "content_type": "application/pdf"}, status=400)
+    out = expect("a document over 20 MB is refused", "POST", "/storage/presign", u.token,
+                 {"bucket": "attachments", "file_name": "a.pdf", "content_type": "application/pdf", "size": 20 * 1024 * 1024 + 1}, status=400)
     check("…file_too_large", err_code(out) == "file_too_large", out)
-    expect("an attachment up to 20 MB is allowed", "POST", "/storage/presign", u.token,
-           {"bucket": "attachments", "file_name": "a.pdf", "content_type": "application/pdf", "size": 20 * 1024 * 1024})
-    pre = expect("photo upload allowed", "POST", "/storage/presign", u.token,
-                 {"bucket": "market-ads", "file_name": "evil.html", "content_type": "image/jpeg", "size": len(SELFIE_PNG)})
-    check("…extension comes from the type, not the file name", pre["key"].endswith(".jpg"), pre["key"])
+    pre = expect("an attachment up to 20 MB is allowed", "POST", "/storage/presign", u.token,
+                 {"bucket": "attachments", "file_name": "evil.html", "content_type": "application/pdf", "size": 20 * 1024 * 1024})
+    check("…extension comes from the type, not the file name", pre["key"].endswith(".pdf"), pre["key"])
 
-    def put(content_type, data=SELFIE_PNG):
-        req = urllib.request.Request(pre["upload_url"], data=data, method="PUT", headers={"Content-Type": content_type})
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                return r.status
-        except urllib.error.HTTPError as e:
-            return e.code
-    check("uploading as a different type is refused", put("text/html") == 403)
-    check("uploading a bigger file than declared is refused", put("image/jpeg", SELFIE_PNG * 50) == 403)
-    check("uploading as the signed type works", put("image/jpeg") in (200, 204))
-    with urllib.request.urlopen(pre["file_url"], timeout=30) as r:
-        check("…served as an image", r.headers.get("Content-Type") == "image/jpeg", r.headers.get("Content-Type"))
+    # Photos: one upload per category, checked by the API
+    upload_image("no sign-in, no upload", None, "MARKET_AD", PHOTO_JPG, want=401)
+    ad = upload_image("a market ad photo", u, "MARKET_AD", PHOTO_JPG)
+    check("…stored in the public ad bucket with its size", ad.get("bucket") == "market-ads" and ad.get("width") == 640 and ad.get("height") == 480
+          and ad.get("policy_version", 0) >= 1, ad)
+    with urllib.request.urlopen(ad["file_url"], timeout=30) as r:
+        check("…served as a JPEG", r.headers.get("Content-Type") == "image/jpeg", r.headers.get("Content-Type"))
+    out = upload_image("a PNG where ads take only JPEG", u, "MARKET_AD", png_image(800, 600), want=422, filename="a.png", content_type="image/png")
+    check("…invalid_image_format", err_code(out) == "invalid_image_format", out)
+    out = upload_image("a photo too small to read", u, "MARKET_AD", SMALL_JPG, want=422)
+    check("…image_too_small, with what to do", err_code(out) == "image_too_small" and "pixels" in out["error"]["message"], out)
+    out = upload_image("a web page named photo.jpg", u, "MARKET_AD", b"<html><script>alert(1)</script></html>", want=422)
+    check("…invalid_image_format (the bytes decide, not the name)", err_code(out) == "invalid_image_format", out)
+    out = upload_image("a truncated JPEG", u, "MARKET_AD", PHOTO_JPG[: len(PHOTO_JPG) // 2], want=422)
+    check("…invalid_image", err_code(out) == "invalid_image", out)
+    out = upload_image("a decompression-bomb header", u, "NURSERY_BRANDING", png_image(300, 300, claim=(60000, 60000)), want=422, filename="a.png", content_type="image/png")
+    check("…image_too_big, never decoded", err_code(out) == "image_too_big", out)
+    upload_image("an unknown category", u, "MEME", PHOTO_JPG, want=400)
+    logo = upload_image("a nursery logo with transparency (PNG)", u, "NURSERY_BRANDING", png_image(400, 400), filename="logo.png", content_type="image/png")
+    check("…kept as PNG in the logo bucket", logo.get("content_type") == "image/png" and logo.get("bucket") == "nursery-logos", logo)
+    proof = upload_image("a delivery proof photo", u, "DELIVERY_PROOF", PHOTO_JPG)
+    check("…private, under the uploader", proof.get("bucket") == "delivery-photos" and proof.get("key", "").startswith(f"u{u.id}/"), proof)
+    upload_image("a loading photo", u, "LOADING_PROOF", PHOTO_JPG)
+    out = upload_image("a licence photo too small to read", u, "DRIVER_LICENCE", PHOTO_JPG, want=422)
+    check("…image_too_small (licences need 600 px)", err_code(out) == "image_too_small", out)
+    lic = upload_image("a readable licence photo", u, "DRIVER_LICENCE", png_image(1000, 640), filename="licence.png", content_type="image/png")
+    check("…private attachment under the uploader", lic.get("bucket") == "attachments" and lic.get("key", "").startswith(f"u{u.id}/"), lic)
     upload_selfie("a web page posing as a profile photo is refused", u, data=b"<html><script>alert(1)</script></html>", want=400)
+    upload_selfie("a 1-pixel profile photo is refused", u, data=png_image(1, 1), want=400)
+    upload_selfie("a real selfie is accepted", u)
+
+
+def journey_image_policies():
+    """Image policies: everyone reads them; only a super admin changes them, within safe bounds, with a reason; history kept; uploads follow the change."""
+    boss = admin()
+    u = User(first="Policy", activity="CUSTOMER")
+    pols = {p["category"]: p for p in expect("the app reads the policies", "GET", "/image-policies", u.token)["policies"]}
+    check("…all seven categories", set(pols) == {"SELFIE", "MARKET_AD", "NURSERY_BRANDING", "DELIVERY_PROOF", "LOADING_PROOF", "DRIVER_LICENCE", "ATTACHMENT"}, list(pols))
+    expect("a customer cannot open the admin view", "GET", "/admin/image-policies", u.token, status=403)
+    out = expect("admin view", "GET", "/admin/image-policies", boss.token)
+    ad = next(p for p in out["policies"] if p["category"] == "MARKET_AD")
+    check("…with defaults, bounds and who may edit", ad.get("default") and ad.get("bounds", {}).get("quality_max") == 95 and out.get("can_edit") is True, ad)
+    body = {k: ad[k] for k in ("max_side", "min_side", "quality", "max_bytes", "allowed_formats", "is_compression_enabled", "version")}
+    put = lambda label, b, status, who=boss: expect(label, "PUT", "/admin/image-policies/MARKET_AD", who.token, b, status=status)
+    put("a customer cannot change a policy", dict(body, change_note="try"), 403, who=u)
+    out = put("…a reason is required", body, 400)
+    check("…change_note_required", err_code(out) == "change_note_required", out)
+    for label, change in [("quality 99", {"quality": 99}), ("50 MB photos", {"max_bytes": 50 << 20}), ("min side above max", {"min_side": 5000}),
+                          ("GIF", {"allowed_formats": ["GIF"]}), ("no formats", {"allowed_formats": []})]:
+        out = put(f"unsafe: {label}", dict(body, change_note="journey test", **change), 400)
+        check("…unsafe_policy", err_code(out) == "unsafe_policy", out)
+    lic = next(p for p in out_policies(boss) if p["category"] == "DRIVER_LICENCE")
+    out = expect("an unreadable licence policy is refused", "PUT", "/admin/image-policies/DRIVER_LICENCE", boss.token,
+                 dict({k: lic[k] for k in body}, quality=60, change_note="smaller files"), status=400)
+    check("…unsafe_policy", err_code(out) == "unsafe_policy", out)
+    upload_image("before: a 320×240 ad photo is too small", u, "MARKET_AD", SMALL_JPG, want=422)
+    saved = put("super admin lowers the ad minimum to 200 px", dict(body, min_side=200, change_note="journey: allow small ad photos"), 200)["policy"]
+    check("…a new version", saved["version"] == body["version"] + 1 and saved["min_side"] == 200, saved)
+    out = put("…saving over a newer version is refused", dict(body, min_side=250, change_note="stale edit"), 409)
+    check("…version_conflict", err_code(out) == "version_conflict", out)
+    upload_image("after: the same photo is accepted", u, "MARKET_AD", SMALL_JPG)
+    hist = expect("history", "GET", "/admin/image-policies/MARKET_AD/history", boss.token)["history"]
+    check("…newest first, with who and why", hist[0]["version"] == saved["version"] and hist[0].get("change_note") == "journey: allow small ad photos"
+          and hist[0].get("changed_by_user_id") == boss.id and any(h["version"] == body["version"] for h in hist), hist[:2])
+    put("restore the ad policy", dict(body, version=saved["version"], change_note="journey: restore"), 200)
+    upload_image("restored: the small photo is refused again", u, "MARKET_AD", SMALL_JPG, want=422)
+
+
+def out_policies(boss):
+    return expect("admin view", "GET", "/admin/image-policies", boss.token)["policies"]
 
 
 def journey_reports():
@@ -2139,7 +2241,7 @@ def journey_messages():
         expect(f"{step} their order", "POST", f"/orders/{o2['id']}/{step}", owner.token, LOADED_OK if step == "complete-loading" else {})
     d2 = expect("trip for their order", "POST", "/dispatches", owner.token, {"order_id": o2["id"]}, status=201)["dispatch"]
     expect("driver accepts", "POST", f"/dispatches/{d2['id']}/accept", driver.token, {"trip_code": d2["trip_uuid"]})
-    expect("driver starts the trip", "PUT", f"/dispatches/{d2['id']}/status", driver.token, {"dispatch_status": "IN_TRANSIT"})
+    expect("driver starts the trip", "PUT", f"/dispatches/{d2['id']}/status", driver.token, {"dispatch_status": "IN_TRANSIT", "consent": CONSENT})
     rows = texted(newbie, "DELIVERY_ON_THE_WAY")
     check("…the delivery code goes to them by SMS (they have no app to see it), masked in the SMS log",
           bool(rows) and "Give code **** to the driver" in rows[0].get("message_body", "") and not re.search(r"code \d{4}", rows[0]["message_body"]), rows)
@@ -2162,16 +2264,385 @@ def journey_messages():
     check("…the driver is told it was cancelled", told(driver, "TRIP_CANCELLED"), d["id"])
 
 
+def journey_vehicles():
+    """Lorries: owners need no account; one lorry many drivers, one driver many lorries; GreenRoot approves links; the QR trip is taken with an eligible lorry the driver picks; nothing is unlinked or parked mid-trip."""
+    boss = admin()
+    owner, _, buyer, other_driver, plants = team(boss)
+    nid = owner.nursery_id
+    future = (datetime.date.today() + datetime.timedelta(days=400)).isoformat()
+    past = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    address = {"contact_name": "Ravi", "contact_mobile": buyer.mobile, "address_line1": "12 Lake Road", "city": "Hyderabad", "latitude": 17.44, "longitude": 78.38}
+
+    def trip(need=None):
+        o = expect("order", "POST", "/orders", owner.token, {"seller_nursery_id": nid, "buyer_mobile": buyer.mobile, "delivery": address,
+                    "items": [{"plant_id": plants[0], "quantity": 5, "unit_price": 100, "total_price": 500}]}, status=201)["order"]
+        expect("confirm", "POST", f"/orders/{o['id']}/confirm", owner.token, {})
+        expect("start loading", "POST", f"/orders/{o['id']}/start-loading", owner.token, {})
+        expect("complete loading", "POST", f"/orders/{o['id']}/complete-loading", owner.token, LOADED_OK)
+        body = {"order_id": o["id"]}
+        if need:
+            body["required_vehicle_type"] = need
+        return expect("dispatch", "POST", "/dispatches", owner.token, body, status=201)["dispatch"]
+
+    def mine(user):
+        return {v["vehicle_number"]: v for v in expect("my lorries", "GET", "/drivers/me/vehicles", user.token)["vehicles"]}
+
+    # An owner with no GreenRoot account
+    d1 = User(first="Fleet", activity="DRIVER")
+    lorry = "TS10" + d1.mobile[-6:]
+    owner_mobile = new_mobile()
+    late = User(first="Late", activity="DRIVER")
+    out = expect("an expired licence cannot register", "POST", "/drivers/apply", late.token,
+                 {"licence_number": "TS09" + late.mobile, "licence_expiry_date": past, "vehicle_number": "TS12" + late.mobile[-6:], "vehicle_type": "TRUCK"}, status=400)
+    check("…licence_expired", err_code(out) == "licence_expired", out)
+    app = expect("driver registers a lorry owned by someone without the app", "POST", "/drivers/apply", d1.token,
+                 {"licence_number": "TS09" + d1.mobile, "licence_expiry_date": future, "vehicle_number": lorry[:4].lower() + " " + lorry[4:],
+                  "vehicle_type": "TRUCK", "owner_name": "Lorry Owner", "owner_mobile": owner_mobile}, status=(200, 201))
+    v = mine(d1).get(lorry)
+    check("…the number is normalized and the link waits for GreenRoot", v and v["link_status"] == "PENDING" and v["blocked_reason"] == "LINK_PENDING", mine(d1))
+    check("…the owner is someone else", v and not v["is_owner"] and v.get("owner_name") == "Lorry Owner", v)
+    expect("admin approves the driver", "POST", f"/drivers/{app['driver']['id']}/approve", boss.token, {"driver_user_id": d1.id})
+    d1.refresh()
+    v = mine(d1)[lorry]
+    check("…which approves the lorry and link in the application", v["is_eligible"] and v["vehicle_approval_status"] == "APPROVED", v)
+    owners = expect("admin finds the owner", "GET", f"/vehicle-owners?search={owner_mobile}", boss.token)["owners"]
+    check("…an owner record without an account, with one lorry", len(owners) == 1 and not owners[0]["has_account"] and owners[0]["vehicle_count"] == 1, owners)
+    expect("a driver cannot list owners", "GET", "/vehicle-owners", d1.token, status=403)
+    expect("an owner record needs only a name", "POST", "/vehicle-owners", boss.token, {"name": "Cash Owner " + d1.mobile[-4:]}, status=201)
+    expect("…a bad mobile is refused", "POST", "/vehicle-owners", boss.token, {"name": "X", "mobile": "123"}, status=400)
+    expect("…one record per mobile", "POST", "/vehicle-owners", boss.token, {"name": "Twin", "mobile": owner_mobile}, status=409)
+
+    # The owner also drives: their own lorry, on the same driver account
+    own = "TS11" + d1.mobile[-6:]
+    v = expect("driver adds a lorry they own", "POST", "/drivers/me/vehicles", d1.token, {"vehicle_number": own, "vehicle_type": "VAN", "is_owner": True}, status=201)["vehicle"]
+    check("…owned by the driver, waiting for approval", v["is_owner"] and v["link_status"] == "PENDING", v)
+    own_id = v["vehicle_id"]
+    out = expect("…adding it twice is refused", "POST", "/drivers/me/vehicles", d1.token, {"vehicle_number": own, "vehicle_type": "VAN", "is_owner": True}, status=409)
+    check("…vehicle_already_linked", err_code(out) == "vehicle_already_linked", out)
+    expect("…someone else's lorry needs the owner's name", "POST", "/drivers/me/vehicles", d1.token, {"vehicle_number": "TS13" + d1.mobile[-6:], "vehicle_type": "VAN"}, status=400)
+    expect("…a buyer cannot add lorries", "POST", "/drivers/me/vehicles", buyer.token, {"vehicle_number": "TS14" + d1.mobile[-6:], "vehicle_type": "VAN", "is_owner": True}, status=403)
+    links = expect("admin sees the request", "GET", f"/vehicle-drivers?driver_user_id={d1.id}&status=PENDING", boss.token)["links"]
+    require("…one pending link", len(links) == 1 and links[0]["vehicle_id"] == own_id, links)
+    expect("a driver cannot approve their own link", "PUT", f"/vehicle-drivers/{links[0]['id']}/status", d1.token, {"status": "APPROVED"}, status=403)
+    expect("…a rejection needs a reason", "PUT", f"/vehicle-drivers/{links[0]['id']}/status", boss.token, {"status": "REJECTED"}, status=400)
+    expect("admin approves the link", "PUT", f"/vehicle-drivers/{links[0]['id']}/status", boss.token, {"status": "APPROVED"})
+    check("…but the new lorry itself is not approved yet", mine(d1)[own]["blocked_reason"] == "VEHICLE_NOT_APPROVED", mine(d1)[own])
+    expect("…rejecting a lorry needs a reason", "PUT", f"/vehicles/{own_id}/approval", boss.token, {"status": "REJECTED"}, status=400)
+    expect("admin approves the lorry", "PUT", f"/vehicles/{own_id}/approval", boss.token, {"status": "APPROVED"})
+    check("…now both lorries can take trips", all(x["is_eligible"] for x in mine(d1).values()) and len(mine(d1)) == 2, mine(d1))
+
+    # A second driver for the same lorry (any spelling of the number)
+    d2 = User(first="Relief", activity="DRIVER")
+    app2 = expect("a second driver registers the same lorry", "POST", "/drivers/apply", d2.token,
+                  {"licence_number": "TS09" + d2.mobile, "licence_expiry_date": future, "vehicle_number": lorry[:4] + "-" + lorry[4:], "vehicle_type": "AUTO", "owner_name": "Someone Else"}, status=(200, 201))
+    expect("admin approves the second driver", "POST", f"/drivers/{app2['driver']['id']}/approve", boss.token, {"driver_user_id": d2.id})
+    d2.refresh()
+    v2 = mine(d2).get(lorry)
+    check("…the same lorry, owner and type unchanged", v2 and v2["vehicle_type"] == "TRUCK" and v2.get("owner_name") == "Lorry Owner", mine(d2))
+    links = expect("admin lists the lorry's drivers", "GET", f"/vehicle-drivers?vehicle_id={v2['vehicle_id']}", boss.token)["links"]
+    check("…two approved drivers", sorted(l["driver_user_id"] for l in links if l["status"] == "APPROVED") == sorted([d1.id, d2.id]), links)
+
+    # Taking a trip from its QR with a chosen lorry
+    d = trip("TRUCK")
+    pv = expect("driver previews a trip that needs a truck", "GET", f"/dispatches/code/{d['trip_uuid']}", d1.token)["dispatch"]
+    lorries = {x["vehicle_number"]: x for x in pv.get("driver_vehicles", [])}
+    check("…their truck can take it, their van cannot", lorries.get(lorry, {}).get("is_eligible") and lorries.get(own, {}).get("blocked_reason") == "VEHICLE_TYPE_MISMATCH"
+          and lorries[own].get("blocked_message"), lorries)
+    out = expect("…taking it with the van is refused", "POST", f"/dispatches/{d['id']}/accept", d1.token, {"trip_code": d["trip_uuid"], "vehicle_id": own_id}, status=409)
+    check("…vehicle_type_mismatch", err_code(out) == "vehicle_type_mismatch", out)
+    theirs = mine(other_driver)
+    out = expect("…someone else's lorry is refused", "POST", f"/dispatches/{d['id']}/accept", d1.token,
+                 {"trip_code": d["trip_uuid"], "vehicle_id": list(theirs.values())[0]["vehicle_id"]}, status=403)
+    check("…vehicle_not_yours", err_code(out) == "vehicle_not_yours", out)
+    expect("owner cancels the truck trip", "PUT", f"/dispatches/{d['id']}/status", owner.token, {"dispatch_status": "CANCELLED"})
+
+    d = trip()
+    out = expect("with two eligible lorries the driver must choose", "POST", f"/dispatches/{d['id']}/accept", d1.token, {"trip_code": d["trip_uuid"]}, status=422)
+    check("…vehicle_required", err_code(out) == "vehicle_required", out)
+    truck = expect("admin opens the truck", "GET", f"/vehicles/{v2['vehicle_id']}", boss.token)["vehicle"]
+    body = {"vehicle_number": truck["vehicle_number"], "vehicle_type": truck.get("vehicle_type"), "owner_id": truck.get("owner_id"), "status": "MAINTENANCE"}
+    expect("admin parks the truck for maintenance", "PUT", f"/vehicles/{truck['id']}", boss.token, body)
+    out = expect("…a lorry in maintenance cannot take the trip", "POST", f"/dispatches/{d['id']}/accept", d1.token, {"trip_code": d["trip_uuid"], "vehicle_id": truck["id"]}, status=409)
+    check("…vehicle_not_eligible", err_code(out) == "vehicle_not_eligible", out)
+    expect("admin puts the truck back on the road", "PUT", f"/vehicles/{truck['id']}", boss.token, dict(body, status="ACTIVE"))
+    out = expect("driver takes the trip with the truck", "POST", f"/dispatches/{d['id']}/accept", d1.token, {"trip_code": d["trip_uuid"], "vehicle_id": truck["id"]})
+    check("…the trip carries the truck", out["dispatch"].get("vehicle_id") == truck["id"] and out["dispatch"].get("vehicle_number") == lorry, out["dispatch"])
+
+    # Nothing is unlinked or parked while the truck is on the trip
+    d_b = trip()
+    pv = expect("the other driver of the truck previews another trip", "GET", f"/dispatches/code/{d_b['trip_uuid']}", d2.token)["dispatch"]
+    check("…the truck shows as on a trip", {x["vehicle_number"]: x for x in pv.get("driver_vehicles", [])}.get(lorry, {}).get("blocked_reason") == "VEHICLE_ON_TRIP", pv.get("driver_vehicles"))
+    out = expect("…so they cannot take it", "POST", f"/dispatches/{d_b['id']}/accept", d2.token, {"trip_code": d_b["trip_uuid"]}, status=409)
+    check("…no_eligible_vehicle", err_code(out) == "no_eligible_vehicle", out)
+    link1 = mine(d1)[lorry]["link_id"]
+    out = expect("the driver cannot drop the truck mid-trip", "DELETE", f"/drivers/me/vehicles/{link1}", d1.token, status=409)
+    check("…vehicle_on_active_trip", err_code(out) == "vehicle_on_active_trip", out)
+    expect("…nor can admin remove the link", "PUT", f"/vehicle-drivers/{link1}/status", boss.token, {"status": "REMOVED", "note": "test"}, status=409)
+    expect("…nor park the truck", "PUT", f"/vehicles/{truck['id']}", boss.token, body, status=409)
+    expect("…nor retire it", "DELETE", f"/vehicles/{truck['id']}", boss.token, status=409)
+    link2 = mine(d2)[lorry]["link_id"]
+    expect("admin may suspend the other driver's link (future trips only)", "PUT", f"/vehicle-drivers/{link2}/status", boss.token, {"status": "SUSPENDED", "note": "documents due"})
+    check("…which the driver sees", mine(d2)[lorry]["blocked_reason"] == "LINK_SUSPENDED", mine(d2))
+    expect("…a suspended link can be approved again", "PUT", f"/vehicle-drivers/{link2}/status", boss.token, {"status": "APPROVED"})
+    expect("…the van link can be dropped (not on the trip)", "DELETE", f"/drivers/me/vehicles/{mine(d1)[own]['link_id']}", d1.token)
+    check("…and is gone from the driver's list", own not in mine(d1), mine(d1))
+
+    # An expired licence blocks trips
+    d3 = User(first="Expiring", activity="DRIVER")
+    app3 = expect("a third driver registers their own auto", "POST", "/drivers/apply", d3.token,
+                  {"licence_number": "TS09" + d3.mobile, "licence_expiry_date": future, "vehicle_number": "TS15" + d3.mobile[-6:], "vehicle_type": "AUTO", "is_owner": True}, status=(200, 201))
+    expect("admin approves", "POST", f"/drivers/{app3['driver']['id']}/approve", boss.token, {"driver_user_id": d3.id})
+    d3.refresh()
+    expect("the licence runs out", "PUT", f"/drivers/{app3['driver']['id']}", boss.token,
+           {"user_id": d3.id, "license_number": "TS09" + d3.mobile, "license_expiry_date": past, "status": "ACTIVE"})
+    check("…their lorry shows why", list(mine(d3).values())[0]["blocked_reason"] == "LICENCE_EXPIRED", mine(d3))
+    out = expect("…and they cannot take a trip", "POST", f"/dispatches/{d_b['id']}/accept", d3.token, {"trip_code": d_b["trip_uuid"]}, status=409)
+    check("…no_eligible_vehicle", err_code(out) == "no_eligible_vehicle", out)
+
+
+def journey_quotation_requests():
+    """Customer quotation requests: catalog and unlisted plants by the customer's own names; the nursery prices and sends; the normal quotation flow to an order; admin maps names later without changing history."""
+    boss = admin()
+    owner, manager, buyer, driver, plants = team(boss)
+    rival = approved_owner(boss, "Rival")
+    nid, mango = owner.nursery_id, plants[0]
+    tag = buyer.mobile[-5:]
+    local = f"Nela Vemu {tag}"   # unique per run: a name GreenRoot does not know
+    lines = [{"plant_id": mango, "quantity": 50, "size_description": "2 ft", "grade": "A"},
+             {"custom_plant_name": f"  {local.lower()}  ", "variety": "dwarf", "quantity": 20},
+             {"custom_plant_name": f"Banginapalli {tag}", "scientific_name": "Mangifera indica", "size_description": "3 ft", "quantity": 10}]
+    body = {"nursery_id": nid, "note": "Needed by next Friday", "items": lines}
+
+    expect("a driver cannot ask for a quotation", "POST", "/quotations/requests", driver.token, body, status=403)
+    expect("an admin cannot ask for a quotation", "POST", "/quotations/requests", boss.token, body, status=403)
+    out = expect("the owner cannot ask their own nursery", "POST", "/quotations/requests", owner.token, body, status=409)
+    check("…own_nursery", err_code(out) == "own_nursery", out)
+    expect("a line with neither a plant nor a name is refused", "POST", "/quotations/requests", buyer.token,
+           dict(body, items=[{"quantity": 3}]), status=400)
+    expect("a line with both a plant and a name is refused", "POST", "/quotations/requests", buyer.token,
+           dict(body, items=[{"plant_id": mango, "custom_plant_name": "Neem", "quantity": 3}]), status=400)
+    expect("an unknown nursery", "POST", "/quotations/requests", buyer.token, dict(body, nursery_id=999999999), status=404)
+
+    key = {"Idempotency-Key": "journey-req-" + tag + str(random.randint(1000, 9999))}
+    q = expect("buyer asks the nursery for prices", "POST", "/quotations/requests", buyer.token, body, status=201, headers=key)["quotation"]
+    qid = q["id"]
+    again = expect("…a retry with the same key replays it", "POST", "/quotations/requests", buyer.token, body, status=201, headers=key)["quotation"]
+    check("…the same request", again["id"] == qid, (again["id"], qid))
+    out = expect("…the same request again (no key) is refused", "POST", "/quotations/requests", buyer.token, body, status=409)
+    check("…duplicate_request", err_code(out) == "duplicate_request", out)
+    check("…CUSTOMER_REQUESTED, a request with a window to answer", q["status"] == "CUSTOMER_REQUESTED" and q["is_request"] and q.get("request_expires_at"), q)
+    by_name = {(i.get("custom_plant_name") or "catalog"): i for i in q["items"]}
+    check("…unlisted plants keep the customer's name, marked custom", by_name.get(local.lower(), {}).get("is_custom") is True
+          and by_name.get("catalog", {}).get("is_custom") is False, q["items"])
+    check("…nothing priced yet", all(not i["is_priced"] for i in q["items"]), q["items"])
+    check("…the customer may cancel, not price", q["capabilities"]["can_cancel_request"] and not q["capabilities"]["can_price"], q["capabilities"])
+
+    notes = call("GET", "/notifications", owner.token)[1].get("notifications", [])
+    check("the owner is told about the request", any(n.get("notification_type") == "QUOTATION_REQUESTED" for n in notes) or
+          any("quotation request" in (n.get("title") or "").lower() for n in notes), [n.get("title") for n in notes[:5]])
+    out = expect("buyer sees it in their list", "GET", "/quotations?buying=true", buyer.token)
+    check("…as a request", qid in [x["id"] for x in out["quotations"]], [x["id"] for x in out["quotations"]])
+    expect("an unassigned manager cannot see it", "GET", f"/quotations/{qid}", manager.token, status=403)
+    expect("a rival nursery cannot see it", "GET", f"/quotations/{qid}", rival.token, status=403)
+    seen = expect("the owner opens it", "GET", f"/quotations/{qid}", owner.token)["quotation"]
+    check("…with the customer's note and exact names", seen.get("request_note") == "Needed by next Friday"
+          and any(i.get("custom_plant_name") == local.lower() for i in seen["items"]) and seen["capabilities"]["can_price"], seen)
+
+    out = expect("sending before pricing is refused", "POST", f"/quotations/{qid}/send", owner.token, {}, status=422)
+    check("…request_not_priced", err_code(out) == "request_not_priced", out)
+    items = seen["items"]
+    expect("the buyer cannot price", "POST", f"/quotations/{qid}/price", buyer.token, {"items": [{"item_id": items[0]["id"], "unit_price": 1}]}, status=403)
+    expect("a rival cannot price", "POST", f"/quotations/{qid}/price", rival.token, {"items": [{"item_id": items[0]["id"], "unit_price": 1}]}, status=403)
+    expect("a negative price is refused", "POST", f"/quotations/{qid}/price", owner.token, {"items": [{"item_id": items[0]["id"], "unit_price": -1}]}, status=400)
+    expect("another quotation's line is refused", "POST", f"/quotations/{qid}/price", owner.token, {"items": [{"item_id": 999999999, "unit_price": 1}]}, status=400)
+    priced = expect("the owner prices two lines", "POST", f"/quotations/{qid}/price", owner.token,
+                    {"items": [{"item_id": items[0]["id"], "unit_price": 120}, {"item_id": items[1]["id"], "unit_price": 35, "quantity": 15, "description": "15 available now"}]})["quotation"]
+    check("…totals computed by the API, one line still open", priced["total_amount"] == 50 * 120 + 15 * 35
+          and sum(1 for i in priced["items"] if i["is_priced"]) == 2 and not priced["capabilities"]["can_send"], priced)
+    check("…the custom line is still the customer's plant", any(i.get("custom_plant_name") == local.lower() and i["is_custom"] and i["quantity"] == 15 for i in priced["items"]), priced["items"])
+    priced = expect("…and the last line", "POST", f"/quotations/{qid}/price", owner.token,
+                    {"items": [{"item_id": items[2]["id"], "unit_price": 300}], "valid_until": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=10)).isoformat()})["quotation"]
+    check("…ready to send", priced["capabilities"]["can_send"], priced["capabilities"])
+    sent = expect("the owner sends the quotation", "POST", f"/quotations/{qid}/send", owner.token, {})["quotation"]
+    check("…CUSTOMER_SENT", sent["status"] == "CUSTOMER_SENT", sent["status"])
+    expect("a sent request can no longer be priced", "POST", f"/quotations/{qid}/price", owner.token, {"items": [{"item_id": items[0]["id"], "unit_price": 1}]}, status=(409, 422))
+    expect("…nor cancelled by the customer", "POST", f"/quotations/{qid}/cancel-request", buyer.token, {}, status=(409, 422))
+    notes = call("GET", "/notifications", buyer.token)[1].get("notifications", [])
+    check("the buyer is told the quotation is ready", any("quotation" in (n.get("title") or "").lower() for n in notes), [n.get("title") for n in notes[:5]])
+    back = expect("the owner recalls it", "POST", f"/quotations/{qid}/recall", owner.token, {})["quotation"]
+    check("…back to the request (never a free draft that could swap plants)", back["status"] == "CUSTOMER_REQUESTED", back["status"])
+    expect("…and sends it again", "POST", f"/quotations/{qid}/send", owner.token, {})
+    expect("the buyer accepts", "POST", f"/quotations/{qid}/buyer-accept", buyer.token, {"consent": CONSENT})
+    cq = expect("the owner converts it to an order", "POST", f"/quotations/{qid}/convert-to-order", owner.token, {})["quotation"]
+    order = expect("…the order", "GET", f"/orders/{cq['converted_order_id']}", owner.token)["order"]
+    customs = [i for i in order["items"] if i.get("is_custom")]
+    check("…carries the unlisted plants by the customer's names", len(order["items"]) == 3 and len(customs) == 2
+          and any(i.get("custom_plant_name") == local.lower() for i in customs), order["items"])
+
+    # Admin maps the customer's local name to a catalog plant later
+    found = expect("admin finds the name customers used", "GET", f"/plants/suggestions?status=PENDING&search={urllib.parse.quote(local)}", boss.token)
+    sug = next((x for x in found["suggestions"] if x["name"].lower() == local.lower()), None)
+    require("…from a quotation line, with its usage", sug and sug["source"] == "QUOTATION_ITEM" and sug["usage_count"] >= 1, found)
+    expect("a customer cannot map names", "POST", f"/plants/suggestions/{sug['id']}/review", buyer.token, {"action": "LINKED", "plant_id": plants[1]}, status=403)
+    expect("admin links it to the plant it is", "POST", f"/plants/suggestions/{sug['id']}/review", boss.token, {"action": "LINKED", "plant_id": plants[1]})
+    for spelling in (local, local.upper().replace(" ", "-"), "  " + local.lower() + "  "):
+        res = expect(f"search '{spelling.strip()}'", "GET", f"/plants/lookup?q={urllib.parse.quote(spelling)}", buyer.token)["results"]
+        check("…finds the plant by its local name", any(r.get("plant", {}).get("id") == plants[1] and r.get("match_type") == "ALIAS" for r in res), res[:3])
+    typo = local.lower().replace("vemu", "vemmu")
+    res = expect("a typo of the local name", "GET", f"/plants/lookup?q={urllib.parse.quote(typo)}", buyer.token)["results"]
+    check("…offers the plant as a near spelling", any(r.get("plant", {}).get("id") == plants[1] and r.get("match_type") in ("FUZZY", "ALIAS") for r in res), res[:3])
+    hist = expect("the old quotation", "GET", f"/quotations/{qid}", owner.token)["quotation"]
+    line = next(i for i in hist["items"] if i.get("custom_plant_name") == local.lower())
+    check("…is unchanged: still the customer's name, now with GreenRoot's match shown", line["is_custom"] and not line.get("plant_id") and line.get("linked_plant_name"), line)
+    order = expect("the order", "GET", f"/orders/{cq['converted_order_id']}", owner.token)["order"]
+    check("…is unchanged too", sum(1 for i in order["items"] if i.get("is_custom")) == 2, order["items"])
+    aliases = expect("admin sees the new alias", "GET", f"/plants/{plants[1]}/aliases", boss.token)["aliases"]
+    alias = next((a for a in aliases if a["name"].lower() == local.lower()), None)
+    check("…made from the mapping", alias and alias["source"] == "SUGGESTION" and alias["is_active"], aliases)
+    other = expect("admin re-links the name to another plant (a wrong mapping)", "POST", f"/plants/suggestions/{sug['id']}/review", boss.token, {"action": "LINKED", "plant_id": mango})
+    check("…the old alias is retired", not any(a["is_active"] for a in expect("aliases", "GET", f"/plants/{plants[1]}/aliases", boss.token)["aliases"] if a["name"].lower() == local.lower()), other)
+    expect("admin adds a regional name by hand", "POST", f"/plants/{mango}/aliases", boss.token, {"name": f"Maamidi {tag}", "alias_type": "LOCAL", "language": "te", "region": "Andhra Pradesh"}, status=201)
+    expect("…the same name twice is refused", "POST", f"/plants/{mango}/aliases", boss.token, {"name": f"maamidi  {tag}"}, status=409)
+    expect("…a customer cannot add aliases", "POST", f"/plants/{mango}/aliases", buyer.token, {"name": "x mango"}, status=403)
+
+    # Several custom plants; the nursery declines; another is cancelled
+    req2 = expect("a request with only unlisted plants", "POST", "/quotations/requests", buyer.token,
+                  {"nursery_id": nid, "items": [{"custom_plant_name": f"Kadamba {tag}", "quantity": 5}, {"custom_plant_name": f"Pogada {tag}", "quantity": 7}]}, status=201)["quotation"]
+    check("…both custom", all(i["is_custom"] for i in req2["items"]) and len(req2["items"]) == 2, req2["items"])
+    expect("declining needs a reason", "POST", f"/quotations/{req2['id']}/decline", owner.token, {"reason": "no"}, status=400)
+    d = expect("the owner declines it", "POST", f"/quotations/{req2['id']}/decline", owner.token, {"reason": "Not in stock this season"})["quotation"]
+    check("…REQUEST_DECLINED with the reason the customer sees", d["status"] == "REQUEST_DECLINED", d)
+    seen = expect("the buyer opens it", "GET", f"/quotations/{req2['id']}", buyer.token)["quotation"]
+    check("…and sees why", seen.get("decline_reason") == "Not in stock this season" and not seen.get("notes"), seen)
+    req3 = expect("a third request", "POST", "/quotations/requests", buyer.token,
+                  {"nursery_id": nid, "items": [{"plant_id": mango, "quantity": 3}]}, status=201)["quotation"]
+    expect("someone else cannot cancel it", "POST", f"/quotations/{req3['id']}/cancel-request", rival.token, {}, status=403)
+    c = expect("the buyer cancels it", "POST", f"/quotations/{req3['id']}/cancel-request", buyer.token, {})["quotation"]
+    check("…REQUEST_CANCELLED", c["status"] == "REQUEST_CANCELLED", c["status"])
+    expect("a cancelled request cannot be declined", "POST", f"/quotations/{req3['id']}/decline", owner.token, {"reason": "too late anyway"}, status=(409, 422))
+    expect("…nor priced", "POST", f"/quotations/{req3['id']}/price", owner.token, {"items": [{"item_id": req3["items"][0]["id"], "unit_price": 1}]}, status=(409, 422))
+    expect("an identical request after cancelling is allowed again", "POST", "/quotations/requests", buyer.token,
+           {"nursery_id": nid, "items": [{"plant_id": mango, "quantity": 3}]}, status=201)
+
+
+def journey_consent_and_risk():
+    """Confirmations at each step (seller loading, driver trip start, buyer acceptance and delivery) stored with their wording; unusual activity flagged for admins, who hold, review and resolve with notes."""
+    boss = admin()
+    owner, manager, buyer, driver, plants = team(boss)
+    nid = owner.nursery_id
+    address = {"contact_name": "Ravi", "contact_mobile": buyer.mobile, "address_line1": "12 Lake Road", "city": "Hyderabad", "latitude": 17.44, "longitude": 78.38}
+    tpl = {t["consent_type"]: t for t in expect("the apps read the wording", "GET", "/consents/templates")["templates"]}
+    check("…four steps, each with a version and statements", set(tpl) == {"SELLER_LOADING", "DRIVER_DISPATCH", "BUYER_QUOTATION_ACCEPT", "BUYER_DELIVERY"}
+          and all(t["consent_version"] >= 1 and t["statements"] for t in tpl.values()), tpl)
+    check("…the buyer is told their rights are not affected", any("not affected" in x for x in tpl["BUYER_QUOTATION_ACCEPT"]["statements"]), tpl["BUYER_QUOTATION_ACCEPT"])
+
+    def order(qty=5, price=100):
+        o = expect("order", "POST", "/orders", owner.token, {"seller_nursery_id": nid, "buyer_mobile": buyer.mobile, "delivery": address,
+                    "items": [{"plant_id": plants[0], "quantity": qty, "unit_price": price, "total_price": qty * price}]}, status=201)["order"]
+        expect("confirm", "POST", f"/orders/{o['id']}/confirm", owner.token, {})
+        expect("start loading", "POST", f"/orders/{o['id']}/start-loading", owner.token, {})
+        return o
+
+    o = order()
+    out = expect("loading cannot finish without the seller's confirmation", "POST", f"/orders/{o['id']}/complete-loading", owner.token,
+                 {"declared_no_prohibited_items": True}, status=422)
+    check("…consent_required", err_code(out) == "consent_required", out)
+    out = expect("…nor with an older wording", "POST", f"/orders/{o['id']}/complete-loading", owner.token,
+                 {"declared_no_prohibited_items": True, "consent": {"consent_version": 0, "accepted": True}}, status=409)
+    check("…consent_outdated", err_code(out) == "consent_outdated", out)
+    expect("…nor when not ticked", "POST", f"/orders/{o['id']}/complete-loading", owner.token,
+           {"declared_no_prohibited_items": True, "consent": {"consent_version": 1, "accepted": False}}, status=422)
+    expect("the seller confirms and loading completes", "POST", f"/orders/{o['id']}/complete-loading", owner.token,
+           dict(LOADED_OK, consent=dict(CONSENT, evidence=["loading photo 1"])))
+    d = expect("dispatch", "POST", "/dispatches", owner.token, {"order_id": o["id"]}, status=201)["dispatch"]
+    check("…a new trip asks for the driver's confirmation", d.get("requires_consent") is True, d)
+    expect("driver takes the trip", "POST", f"/dispatches/{d['id']}/accept", driver.token, {"trip_code": d["trip_uuid"]})
+    out = expect("the driver cannot start without confirming the load", "PUT", f"/dispatches/{d['id']}/status", driver.token, {"dispatch_status": "IN_TRANSIT"}, status=422)
+    check("…consent_required", err_code(out) == "consent_required", out)
+    expect("the driver confirms and starts", "PUT", f"/dispatches/{d['id']}/status", driver.token, {"dispatch_status": "IN_TRANSIT", "consent": CONSENT})
+    out = expect("the buyer cannot confirm delivery without acknowledging it", "POST", f"/dispatches/{d['id']}/receipt", buyer.token, {}, status=422)
+    check("…consent_required", err_code(out) == "consent_required", out)
+    expect("the buyer acknowledges and confirms delivery", "POST", f"/dispatches/{d['id']}/receipt", buyer.token, {"consent": CONSENT})
+    rec = expect("the order's confirmations", "GET", f"/orders/{o['id']}/consents", owner.token)["consents"]
+    kinds = {c["consent_type"]: c for c in rec}
+    check("…seller, driver and buyer, each with the exact words, role and time", set(kinds) == {"SELLER_LOADING", "DRIVER_DISPATCH", "BUYER_DELIVERY"}
+          and kinds["SELLER_LOADING"]["statements"] == tpl["SELLER_LOADING"]["statements"] and kinds["DRIVER_DISPATCH"]["user_role"] == "DRIVER"
+          and kinds["SELLER_LOADING"]["evidence"] == ["loading photo 1"] and all(c.get("created_at") for c in rec), rec)
+    expect("the buyer sees them too", "GET", f"/orders/{o['id']}/consents", buyer.token)
+    expect("a stranger does not", "GET", f"/orders/{o['id']}/consents", User(first="Nosy", activity="CUSTOMER").token, status=403)
+
+    q = expect("owner quotes the buyer", "POST", "/quotations", owner.token, {"quotation_type": "CUSTOMER", "nursery_id": nid, "recipient_name": "Ravi",
+               "recipient_mobile": buyer.mobile, "items": [{"plant_id": plants[0], "quantity": 2, "unit_price": 50, "total_price": 100}]}, status=201)["quotation"]
+    expect("send", "POST", f"/quotations/{q['id']}/send", owner.token, {})
+    out = expect("the buyer cannot accept without acknowledging prices and payment terms", "POST", f"/quotations/{q['id']}/buyer-accept", buyer.token, {}, status=422)
+    check("…consent_required", err_code(out) == "consent_required", out)
+    expect("the buyer acknowledges and accepts", "POST", f"/quotations/{q['id']}/buyer-accept", buyer.token, {"consent": CONSENT})
+    cq = expect("convert", "POST", f"/quotations/{q['id']}/convert-to-order", owner.token, {})["quotation"]
+    rec = expect("the new order's confirmations", "GET", f"/orders/{cq['converted_order_id']}/consents", owner.token)["consents"]
+    check("…include the buyer's acceptance of the quotation", any(c["consent_type"] == "BUYER_QUOTATION_ACCEPT" and c["user_role"] == "BUYER" for c in rec), rec)
+
+    # Unusual activity
+    big = order(qty=5000, price=150)  # ₹7,50,000: above the large-order threshold
+    expect("a customer cannot open the risk queue", "GET", "/admin/risk-signals", buyer.token, status=403)
+    expect("a customer cannot run the detector", "POST", "/admin/risk-signals/scan", buyer.token, {}, status=403)
+    expect("admin runs the detector", "POST", "/admin/risk-signals/scan", boss.token, {})
+    again = expect("…again: nothing new for the same finding", "POST", "/admin/risk-signals/scan", boss.token, {})
+    sig = next((x for x in expect("the queue", "GET", "/admin/risk-signals?entity_type=ORDER&status=OPEN", boss.token)["signals"]
+                if x["entity_id"] == big["id"] and x["signal_code"] == "HIGH_AMOUNT"), None)
+    require("…the large order is flagged MEDIUM, not as fraud", sig and sig["risk_level"] == "MEDIUM" and sig["status"] == "OPEN", sig)
+    check("…with what was found", sig["details"].get("total_amount") and sig.get("entity_label"), sig)
+    act = lambda label, action, note, status=200, who=boss: expect(label, "POST", f"/admin/risk-signals/{sig['id']}/actions", who.token, {"action": action, "note": note}, status=status)
+    act("a decision needs a note", "HOLD", "", 400)
+    act("…and a known action", "DELETE", "remove it", 400)
+    act("a customer cannot decide", "HOLD", "looks odd", 403, who=buyer)
+    held = act("admin holds the order while checking", "HOLD", "Confirming the buyer by phone")["signal"]
+    check("…held, under review", held["is_hold"] and held["status"] == "UNDER_REVIEW", held)
+    expect("finish loading", "POST", f"/orders/{big['id']}/complete-loading", owner.token, LOADED_OK)
+    out = expect("a held order cannot be dispatched", "POST", "/dispatches", owner.token, {"order_id": big["id"]}, status=409)
+    check("…order_on_hold", err_code(out) == "order_on_hold", out)
+    act("admin asks the nursery to verify", "REQUEST_VERIFICATION", "Please share the buyer's GST invoice")
+    notes = call("GET", "/notifications", owner.token)[1].get("notifications", [])
+    check("…the nursery owner is told", any(n.get("notification_type") == "VERIFICATION_REQUESTED" or "details" in (n.get("title") or "") for n in notes), [n.get("title") for n in notes[:5]])
+    act("admin releases the hold", "RELEASE_HOLD", "Buyer confirmed by phone")
+    expect("…now it can be dispatched", "POST", "/dispatches", owner.token, {"order_id": big["id"]}, status=201)
+    done = act("admin resolves it", "RESOLVE", "Genuine bulk order for a resort")["signal"]
+    check("…resolved, with every note kept in order", done["status"] == "RESOLVED" and [n["action"] for n in done["notes"]] == ["HOLD", "REQUEST_VERIFICATION", "RELEASE_HOLD", "RESOLVE"], done)
+    act("a closed signal takes no hold", "HOLD", "second thoughts", 409)
+    reopened = act("…but can be reopened for review", "REVIEW", "New information from the nursery")["signal"]
+    check("…UNDER_REVIEW again", reopened["status"] == "UNDER_REVIEW", reopened)
+    fraud = act("a super admin may confirm fraud", "CONFIRM_FRAUD", "Payment proof was forged")["signal"]
+    check("…CONFIRMED_FRAUD only by that decision", fraud["risk_level"] == "CONFIRMED_FRAUD", fraud)
+
+    o1 = order(qty=7, price=111)
+    o2 = order(qty=7, price=111)
+    expect("admin runs the detector", "POST", "/admin/risk-signals/scan", boss.token, {})
+    dup = [x for x in expect("duplicates", "GET", "/admin/risk-signals?status=OPEN", boss.token)["signals"] if x["signal_code"] == "DUPLICATE_ORDER" and x["entity_id"] == o2["id"]]
+    check("the same order twice in minutes is flagged once, on the second", len(dup) == 1 and dup[0]["details"].get("same_as_order_id") == o1["id"], dup)
+
+    rules = {r["signal_code"]: r for r in expect("risk rules", "GET", "/admin/risk-rules", boss.token)["rules"]}
+    check("…every check has a rule; price alone is LOW", len(rules) == 8 and rules["PRICE_OUTLIER"]["risk_level"] == "LOW", rules)
+    expect("an unusual price can never be more than LOW", "PUT", "/admin/risk-rules/PRICE_OUTLIER", boss.token, {"is_enabled": True, "threshold": 5, "risk_level": "HIGH"}, status=400)
+    expect("a rule cannot claim fraud", "PUT", "/admin/risk-rules/HIGH_AMOUNT", boss.token, {"is_enabled": True, "threshold": 500000, "risk_level": "CONFIRMED_FRAUD"}, status=400)
+    expect("a threshold must be positive", "PUT", "/admin/risk-rules/HIGH_AMOUNT", boss.token, {"is_enabled": True, "threshold": 0, "risk_level": "MEDIUM"}, status=400)
+    expect("a customer cannot change rules", "PUT", "/admin/risk-rules/HIGH_AMOUNT", buyer.token, {"is_enabled": True, "threshold": 1, "risk_level": "LOW"}, status=403)
+    expect("admin tunes a threshold", "PUT", "/admin/risk-rules/HIGH_AMOUNT", boss.token, {"is_enabled": True, "threshold": 600000, "risk_level": "MEDIUM"})
+    expect("…and sets it back", "PUT", "/admin/risk-rules/HIGH_AMOUNT", boss.token, {"is_enabled": True, "threshold": 500000, "risk_level": "MEDIUM"})
+
+
 JOURNEYS = [
     ("auth", journey_auth),
     ("accounts", journey_accounts),
     ("nursery", journey_nursery),
     ("quotation", journey_quotation),
+    ("quotation_requests", journey_quotation_requests),
     ("order", journey_order),
     ("dispatch", journey_dispatch),
+    ("vehicles", journey_vehicles),
+    ("consent_and_risk", journey_consent_and_risk),
     ("top_items", journey_top_items),
     ("plant_suggestions", journey_plant_suggestions),
     ("storage", journey_storage),
+    ("image_policies", journey_image_policies),
     ("payments", journey_payments),
     ("market", journey_market),
     ("wanted", journey_wanted),

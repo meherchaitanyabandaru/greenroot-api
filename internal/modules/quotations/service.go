@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/consent"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -41,8 +42,12 @@ type Service struct {
 	auditSvc   *auditlog.Service
 	storage    *storage.Client
 	redis      redis.Cmdable
-	events     EventNotifier // SMS; nil = in-app only
+	events     EventNotifier  // SMS; nil = in-app only
+	consents   *consent.Store // nil: confirmations checked, not stored (tests)
 }
+
+// UseConsents stores the buyer's acknowledgement on accepting.
+func (s *Service) UseConsents(c *consent.Store) { s.consents = c }
 
 func NewService(repository Repository, auditSvc *auditlog.Service, storageCli *storage.Client, redisClients ...redis.Cmdable) *Service {
 	var rdb redis.Cmdable
@@ -275,12 +280,9 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, inpu
 		}
 		input.RecipientMobile = &normalized
 	}
-	for _, item := range input.Items {
-		if item.PlantID <= 0 || item.Quantity <= 0 || item.UnitPrice < 0 || item.TotalPrice < 0 {
-			return Quotation{}, ErrInvalidInput
-		}
-		if !validateItemMath(item) {
-			return Quotation{}, ErrInvalidInput
+	for i := range input.Items {
+		if err := normalizeItem(&input.Items[i], true); err != nil {
+			return Quotation{}, err
 		}
 	}
 	q, err := s.repository.FindByID(ctx, id)
@@ -313,7 +315,7 @@ func (s *Service) Update(ctx context.Context, actor ActorContext, id int64, inpu
 	if err := s.validateCustomerSelection(ctx, *q, input.CustomerUserID); err != nil {
 		return Quotation{}, err
 	}
-	updated, err := s.repository.Update(ctx, id, input)
+	updated, err := s.repository.Update(ctx, id, actor.UserID, input)
 	if err != nil {
 		return Quotation{}, err
 	}
@@ -404,7 +406,16 @@ func (s *Service) SendToCustomer(ctx context.Context, actor ActorContext, quotat
 	if err := s.canManage(ctx, actor, *q); err != nil {
 		return Quotation{}, err
 	}
-	if q.Status != "CUSTOMER_DRAFT" {
+	switch q.Status {
+	case "CUSTOMER_DRAFT":
+	case "CUSTOMER_REQUESTED":
+		if !requestOpen(*q) {
+			return Quotation{}, ErrRequestExpired
+		}
+		if !allPriced(q.Items) {
+			return Quotation{}, ErrRequestNotPriced
+		}
+	default:
 		return Quotation{}, ErrInvalidTransition
 	}
 	if isExpiredTime(q.ValidUntil) {
@@ -571,7 +582,9 @@ func (s *Service) UnassignManager(ctx context.Context, actor ActorContext, quota
 }
 
 // BuyerAccept lets the buyer accept a quotation that has been sent to them.
-func (s *Service) BuyerAccept(ctx context.Context, actor ActorContext, quotationID int64) (Quotation, error) {
+// given is the buyer's acknowledgement (BUYER_QUOTATION_ACCEPT): plants,
+// quantities, prices and that payment is between them and the nursery.
+func (s *Service) BuyerAccept(ctx context.Context, actor ActorContext, quotationID int64, given *consent.Given) (Quotation, error) {
 	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "quotations", quotationID)
 	if err != nil {
 		return Quotation{}, err
@@ -588,11 +601,21 @@ func (s *Service) BuyerAccept(ctx context.Context, actor ActorContext, quotation
 	if q.Status != "CUSTOMER_SENT" {
 		return Quotation{}, ErrInvalidTransition
 	}
+	// Asked only of someone who may accept, of a quotation that can be accepted.
+	if err := consent.Check(consent.BuyerQuotationAccept, given); err != nil {
+		return Quotation{}, err
+	}
 	updated, err := s.repository.BuyerAccept(ctx, quotationID, actor.UserID)
 	if err != nil {
 		return Quotation{}, err
 	}
 	s.audit(ctx, actor, auditlog.EntityQuotation, quotationID, actionUpdate, map[string]any{"status": "CUSTOMER_ACCEPTED"})
+	if s.consents != nil {
+		if err := s.consents.Save(ctx, consent.Record{Type: consent.BuyerQuotationAccept, UserID: actor.UserID, UserRole: "BUYER",
+			QuotationID: &quotationID, Evidence: given.Evidence, IPAddress: actor.IPAddress, UserAgent: actor.UserAgent}); err != nil {
+			slog.Error("consent not stored", "step", consent.BuyerQuotationAccept, "quotation_id", quotationID, "error", err)
+		}
+	}
 	if ownerID, err := s.repository.FindNurseryOwnerID(ctx, quotationID); err == nil {
 		s.enqueueNotification(ctx, ownerID,
 			notifyqueue.EventQuotationAccepted,
@@ -727,12 +750,9 @@ func validateCreate(input CreateQuotationRequest) error {
 	if len(input.Items) == 0 || isExpiredTime(input.ValidUntil) {
 		return ErrInvalidInput
 	}
-	for _, item := range input.Items {
-		if item.PlantID <= 0 || item.Quantity <= 0 || item.UnitPrice < 0 || item.TotalPrice < 0 {
-			return ErrInvalidInput
-		}
-		if !validateItemMath(item) {
-			return ErrInvalidInput
+	for i := range input.Items {
+		if err := normalizeItem(&input.Items[i], true); err != nil {
+			return err
 		}
 	}
 	// CUSTOMER quotations require at least one recipient identifier.

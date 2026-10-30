@@ -44,7 +44,9 @@ func baseSelect() string {
 		       o.order_code AS converted_order_code,
 		       q.converted_at,
 		       n.brand_color AS nursery_brand_color,
-		       na.latitude::double precision, na.longitude::double precision
+		       na.latitude::double precision, na.longitude::double precision,
+		       q.requested_by_user_id, q.request_note, q.request_expires_at,
+		       q.decline_reason, q.declined_at, q.cancelled_at
 		FROM public.quotations q
 		LEFT JOIN public.users um ON um.user_id = q.assigned_manager_user_id
 		LEFT JOIN public.orders o ON o.order_id = q.converted_order_id
@@ -66,9 +68,14 @@ func baseCount() string {
 func itemSelect() string {
 	return `
 		SELECT qi.quotation_item_id, qi.quotation_id, qi.plant_id,
-		       qi.scientific_name, qi.common_name, qi.description,
-		       qi.quantity, qi.unit_price, qi.total_price, qi.created_at
+		       COALESCE(qi.scientific_name, ''), qi.common_name, qi.description,
+		       qi.quantity, qi.unit_price, qi.total_price, qi.created_at,
+		       qi.custom_plant_name, qi.plant_suggestion_id,
+		       CASE WHEN ps.status IN ('LINKED', 'APPROVED') THEN COALESCE(NULLIF(lp.common_name, ''), lp.scientific_name) END,
+		       qi.variety, qi.size_description, qi.grade
 		FROM public.quotation_items qi
+		LEFT JOIN public.plant_suggestions ps ON ps.suggestion_id = qi.plant_suggestion_id
+		LEFT JOIN public.plants lp ON lp.plant_id = ps.plant_id
 	`
 }
 
@@ -79,7 +86,7 @@ func buildWhere(input ListQuotationsRequest) (string, []any) {
 	if input.Buying {
 		// Buyer perspective: quotations where this user (or their nursery) is the buyer/recipient.
 		// Matches both linked accounts (customer_user_id) and unlinked mobile-only quotations.
-		clauses = append(clauses, "q.status IN ('CUSTOMER_SENT', 'CUSTOMER_ACCEPTED', 'CUSTOMER_REJECTED', 'CONVERTED')")
+		clauses = append(clauses, "q.status IN ('CUSTOMER_SENT', 'CUSTOMER_ACCEPTED', 'CUSTOMER_REJECTED', 'CONVERTED', 'CUSTOMER_REQUESTED', 'REQUEST_DECLINED', 'REQUEST_CANCELLED')")
 		buyerClauses := make([]string, 0)
 		if input.UserID > 0 {
 			args = append(args, input.UserID)
@@ -221,12 +228,15 @@ func scanQuotation(row interface{ Scan(dest ...any) error }) (Quotation, error) 
 		&convertedOrderCode, &convertedAt,
 		&nurseryBrandColor,
 		&nurseryLat, &nurseryLon,
+		&q.RequestedByUserID, &q.RequestNote, &q.RequestExpiresAt,
+		&q.DeclineReason, &q.DeclinedAt, &q.CancelledAt,
 	); err != nil {
 		return Quotation{}, err
 	}
 	if totalAmount.Valid && totalAmount.String != "" {
 		q.TotalAmount, _ = strconv.ParseFloat(totalAmount.String, 64)
 	}
+	q.IsRequest = q.RequestedByUserID != nil
 	q.CreatedByName = nullableString(createdByName)
 	q.NurseryID = nullableInt64(nurseryID)
 	q.NurseryName = nullableString(nurseryName)
@@ -275,14 +285,18 @@ func scanItem(row interface{ Scan(dest ...any) error }) (QuotationItem, error) {
 		&item.ID, &item.QuotationID, &item.PlantID,
 		&item.ScientificName, &commonName, &description,
 		&quantity, &unitPrice, &totalPrice, &item.CreatedAt,
+		&item.CustomPlantName, &item.PlantSuggestionID, &item.LinkedPlantName,
+		&item.Variety, &item.SizeDescription, &item.Grade,
 	); err != nil {
 		return QuotationItem{}, err
 	}
+	item.IsCustom = item.PlantID == nil
 	if quantity.Valid && quantity.String != "" {
 		item.Quantity, _ = strconv.ParseFloat(quantity.String, 64)
 	}
 	if unitPrice.Valid && unitPrice.String != "" {
 		item.UnitPrice, _ = strconv.ParseFloat(unitPrice.String, 64)
+		item.IsPriced = true
 	}
 	if totalPrice.Valid && totalPrice.String != "" {
 		item.TotalPrice, _ = strconv.ParseFloat(totalPrice.String, 64)
@@ -325,6 +339,52 @@ func int64OrNil(v *int64) any {
 		return nil
 	}
 	return *v
+}
+
+// Item field limits.
+const (
+	maxCustomName = 255
+	maxSpecLength = 120
+)
+
+// normalizeItem trims an item and checks it: one catalog plant or one custom
+// name, a positive quantity, short specifications and, when priced, prices
+// that add up. Requests from customers are not priced yet.
+func normalizeItem(item *QuotationItemRequest, priced bool) error {
+	trim := func(v **string, max int) bool {
+		if *v == nil {
+			return true
+		}
+		t := strings.Join(strings.Fields(**v), " ")
+		if t == "" {
+			*v = nil
+			return true
+		}
+		*v = &t
+		return len([]rune(t)) <= max
+	}
+	if !trim(&item.CustomPlantName, maxCustomName) || !trim(&item.ScientificName, maxCustomName) ||
+		!trim(&item.Variety, maxSpecLength) || !trim(&item.SizeDescription, maxSpecLength) ||
+		!trim(&item.Grade, maxSpecLength) || !trim(&item.Description, 1000) {
+		return ErrInvalidInput
+	}
+	custom := item.CustomPlantName != nil
+	if (item.PlantID > 0) == custom || item.PlantID < 0 || item.Quantity <= 0 {
+		return ErrInvalidInput // exactly one of a catalog plant or a custom name
+	}
+	if custom && len([]rune(*item.CustomPlantName)) < 2 {
+		return ErrInvalidInput
+	}
+	if !custom {
+		item.ScientificName = nil // the catalog's name is used
+	}
+	if !priced {
+		return nil
+	}
+	if item.UnitPrice < 0 || item.TotalPrice < 0 || !validateItemMath(*item) {
+		return ErrInvalidInput
+	}
+	return nil
 }
 
 func validateItemMath(item QuotationItemRequest) bool {

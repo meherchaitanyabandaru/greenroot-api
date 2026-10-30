@@ -15,8 +15,14 @@ type Vehicle struct {
 	VehicleNumber        string                     `json:"vehicle_number"`
 	VehicleType          *string                    `json:"vehicle_type,omitempty"`
 	CapacityKG           *float64                   `json:"capacity_kg,omitempty"`
+	OwnerID              *int64                     `json:"owner_id,omitempty"`
 	OwnerName            *string                    `json:"owner_name,omitempty"`
-	Mobile               *string                    `json:"mobile,omitempty"`
+	Mobile               *string                    `json:"mobile,omitempty"` // owner's mobile
+	OwnerHasAccount      bool                       `json:"owner_has_account"`
+	ApprovalStatus       string                     `json:"approval_status"`
+	ApprovalNote         *string                    `json:"approval_note,omitempty"`
+	DriverCount          int                        `json:"driver_count"` // approved driver links
+	IsOnActiveTrip       bool                       `json:"is_on_active_trip"`
 	DriverID             *int64                     `json:"driver_id,omitempty"`
 	DriverName           *string                    `json:"driver_name,omitempty"`
 	DriverMobile         *string                    `json:"driver_mobile,omitempty"`

@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/imagepolicy"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 	platformstorage "github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
@@ -29,6 +30,13 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service, storage *platformstorage.Cl
 		service.WithSMS(smsSender)
 	}
 	return Module{handler: NewHandler(service, jwt)}
+}
+
+// WithImagePolicies checks profile photos against the SELFIE image policy
+// (without it, the built-in default policy).
+func (m Module) WithImagePolicies(policies *imagepolicy.Store) Module {
+	m.handler.policies = policies
+	return m
 }
 
 func (m Module) RegisterRoutes(router chi.Router) {

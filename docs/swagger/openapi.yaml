@@ -466,6 +466,80 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+  /api/v1/plants/aliases:
+    get:
+      tags: [Plants]
+      summary: Search plant aliases (admin)
+      description: "Other names of catalog plants (local, common, synonym, trade, misspelling). other_plant_ids lists other plants with an active alias of the same name (possible duplicate)."
+      security:
+        - BearerAuth: []
+      parameters:
+        - { name: search, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer } }
+        - { name: per_page, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: "{aliases, total}"
+        "403":
+          $ref: '#/components/responses/Error'
+  /api/v1/plants/aliases/{aliasId}:
+    put:
+      tags: [Plants]
+      summary: Edit or retire an alias (admin)
+      description: "is_active false retires a wrong mapping or a duplicate. Quotations keep the names they were made with."
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: aliasId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlantAliasRequest'
+      responses:
+        "200":
+          description: "{alias}"
+        "409":
+          $ref: '#/components/responses/Error'
+  /api/v1/plants/{id}/aliases:
+    get:
+      tags: [Plants]
+      summary: A plant's other names (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: "{aliases, total}"
+    post:
+      tags: [Plants]
+      summary: Add another name for a plant (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlantAliasRequest'
+      responses:
+        "201":
+          description: "{alias}"
+        "409":
+          $ref: '#/components/responses/Error'
   /api/v1/plants/{id}:
     get:
       tags: [Plants]
@@ -1434,6 +1508,149 @@ paths:
       responses:
         "200":
           description: Vehicle retired
+  /api/v1/vehicles/{id}/approval:
+    put:
+      tags: [Vehicles]
+      summary: Approve, reject or suspend a lorry (admin)
+      description: "status APPROVED, REJECTED, SUSPENDED or PENDING; note required to reject or suspend. Drivers linked to the lorry are notified. Only APPROVED lorries can take trips."
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [PENDING, APPROVED, REJECTED, SUSPENDED] }
+                note: { type: string }
+      responses:
+        "200":
+          description: Vehicle with its new approval_status
+        "400":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+  /api/v1/vehicle-owners:
+    get:
+      tags: [Vehicles]
+      summary: List lorry owners (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+        - { name: search, in: query, schema: { type: string }, description: "name or mobile" }
+      responses:
+        "200":
+          description: "{owners: [...], pagination}"
+        "403":
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [Vehicles]
+      summary: Create a lorry owner (admin)
+      description: "An owner needs no GreenRoot account; name is required, mobile optional (unique). A mobile that belongs to a GreenRoot user links the owner to that account."
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VehicleOwnerRequest'
+      responses:
+        "201":
+          description: "{owner}"
+        "409":
+          $ref: '#/components/responses/Error'
+  /api/v1/vehicle-owners/{id}:
+    get:
+      tags: [Vehicles]
+      summary: Get a lorry owner (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: "{owner}"
+        "404":
+          $ref: '#/components/responses/Error'
+    put:
+      tags: [Vehicles]
+      summary: Update a lorry owner (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VehicleOwnerRequest'
+      responses:
+        "200":
+          description: "{owner}"
+        "409":
+          $ref: '#/components/responses/Error'
+  /api/v1/vehicle-drivers:
+    get:
+      tags: [Vehicles]
+      summary: List driver-lorry links (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - { name: status, in: query, schema: { type: string }, description: "comma list of PENDING, APPROVED, REJECTED, SUSPENDED, REMOVED" }
+        - { name: vehicle_id, in: query, schema: { type: integer } }
+        - { name: driver_user_id, in: query, schema: { type: integer } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        "200":
+          description: "{links: [...], pagination}; pending first"
+        "403":
+          $ref: '#/components/responses/Error'
+  /api/v1/vehicle-drivers/{id}/status:
+    put:
+      tags: [Vehicles]
+      summary: Decide on a driver-lorry link (admin)
+      description: "PENDING → APPROVED/REJECTED/REMOVED, APPROVED → SUSPENDED/REMOVED, SUSPENDED → APPROVED/REMOVED. A note is required except to approve. 409 vehicle_on_active_trip when removing while that driver is on a trip with that lorry. The driver is notified."
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [APPROVED, REJECTED, SUSPENDED, REMOVED] }
+                note: { type: string }
+      responses:
+        "200":
+          description: "{link}"
+        "409":
+          $ref: '#/components/responses/Error'
   /api/v1/drivers:
     get:
       tags: [Drivers]
@@ -2135,7 +2352,7 @@ paths:
       tags:
         - Dispatches
       summary: Accept
-      description: "Driver joins the trip. trip_code must be the trip's QR code (TRIP-<trip_uuid> or the trip_uuid); anything else is 404, so ids cannot be guessed."
+      description: "Driver joins the trip with one of their lorries. trip_code must be the trip's QR code (TRIP-<trip_uuid> or the trip_uuid); anything else is 404, so ids cannot be guessed. vehicle_id is one of the driver's lorries (see driver_vehicles on GET /dispatches/code/{code}); it may be left out when exactly one can take the trip. 409 no_eligible_vehicle, vehicle_not_eligible, vehicle_on_active_trip, vehicle_type_mismatch; 422 vehicle_required; 403 vehicle_not_yours."
       operationId: postDispatchesByidAccept
       security:
         - BearerAuth: []
@@ -2157,6 +2374,9 @@ paths:
                 trip_code:
                   type: string
                   example: TRIP-0f8fad5b-d9cb-469f-a165-70867728950e
+                vehicle_id:
+                  type: integer
+                  format: int64
       responses:
         "200":
           content:
@@ -2447,6 +2667,64 @@ paths:
         "409":
           $ref: '#/components/responses/Error'
         "500":
+          $ref: '#/components/responses/Error'
+  /api/v1/drivers/me/vehicles:
+    get:
+      tags: [Drivers]
+      summary: My lorries
+      description: "The caller's open lorry links with whether each can take a trip now (blocked_reason: LINK_PENDING, LINK_SUSPENDED, VEHICLE_NOT_APPROVED, VEHICLE_MAINTENANCE, VEHICLE_INACTIVE, LICENCE_EXPIRED, VEHICLE_ON_TRIP)."
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: "{vehicles: [...]}"
+        "403":
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [Drivers]
+      summary: Add a lorry
+      description: "Links the caller to a lorry by registration number; GreenRoot approves the link. A lorry new to GreenRoot is created with its owner: the driver (is_owner) or someone named in owner_name (owner_mobile optional; the owner needs no account). For a lorry already registered, type and owner are not changed. 409 vehicle_already_linked."
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vehicle_number, vehicle_type]
+              properties:
+                vehicle_number: { type: string, example: TS09AB1234 }
+                vehicle_type: { type: string, enum: [TRUCK, VAN, PICKUP, AUTO] }
+                capacity_kg: { type: number }
+                is_owner: { type: boolean }
+                owner_name: { type: string }
+                owner_mobile: { type: string }
+      responses:
+        "201":
+          description: "{vehicle}"
+        "400":
+          $ref: '#/components/responses/Error'
+        "409":
+          $ref: '#/components/responses/Error'
+  /api/v1/drivers/me/vehicles/{linkId}:
+    delete:
+      tags: [Drivers]
+      summary: Remove a lorry
+      description: "Ends the caller's link to a lorry. 409 vehicle_on_active_trip during a trip with it."
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: linkId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Removed
+        "404":
+          $ref: '#/components/responses/Error'
+        "409":
           $ref: '#/components/responses/Error'
   /api/v1/drivers/{id}/approve:
     post:
@@ -5513,6 +5791,130 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+  /api/v1/quotations/requests:
+    post:
+      tags: [Quotations]
+      summary: Ask a nursery for a quotation (customer)
+      description: "The customer lists plants and quantities for one APPROVED nursery: catalog plants (plant_id) or plants not in the catalog (custom_plant_name exactly as they know it, optional scientific_name), with optional variety, size_description and grade. Creates a CUSTOMER_REQUESTED quotation (unpriced) and notifies the nursery owner; the nursery has 7 days to send prices. Not for admins, drivers or the nursery's own staff. One open identical request per customer (409 duplicate_request); send an Idempotency-Key so a retry replays the first answer. 20 requests a day (429 too_many_requests)."
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nursery_id, items]
+              properties:
+                nursery_id: { type: integer, format: int64 }
+                note: { type: string, description: "the customer's message; both sides see it" }
+                items:
+                  type: array
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: [quantity]
+                    properties:
+                      plant_id: { type: integer, format: int64, description: "a catalog plant, or 0/absent with custom_plant_name" }
+                      custom_plant_name: { type: string }
+                      scientific_name: { type: string }
+                      variety: { type: string }
+                      size_description: { type: string }
+                      grade: { type: string }
+                      description: { type: string }
+                      quantity: { type: number }
+      responses:
+        "201":
+          description: "{quotation} with status CUSTOMER_REQUESTED, is_request true, request_expires_at"
+        "400":
+          $ref: '#/components/responses/Error'
+        "409":
+          $ref: '#/components/responses/Error'
+        "429":
+          $ref: '#/components/responses/Error'
+  /api/v1/quotations/{id}/price:
+    post:
+      tags: [Quotations]
+      summary: Price a customer's request (nursery)
+      description: "Sets unit_price (and optionally the quantity the nursery can supply, and a line note) on some or all lines of a CUSTOMER_REQUESTED quotation; totals are computed by the API. The plant of a line never changes. Then POST /quotations/{id}/send (all lines priced, else 422 request_not_priced). 409 request_expired after the 7-day window. Exclusive-editor rule as for drafts."
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                valid_until: { type: string, format: date-time, description: "quotation validity (≤ 90 days); default 15 days after sending" }
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [item_id, unit_price]
+                    properties:
+                      item_id: { type: integer, format: int64 }
+                      unit_price: { type: number }
+                      quantity: { type: number }
+                      description: { type: string }
+      responses:
+        "200":
+          description: "{quotation}"
+        "403":
+          $ref: '#/components/responses/Error'
+        "409":
+          $ref: '#/components/responses/Error'
+  /api/v1/quotations/{id}/decline:
+    post:
+      tags: [Quotations]
+      summary: Decline a customer's request (nursery)
+      description: "CUSTOMER_REQUESTED → REQUEST_DECLINED with a reason (5–500 chars) the customer sees; the customer is notified."
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        "200":
+          description: "{quotation}"
+        "409":
+          $ref: '#/components/responses/Error'
+  /api/v1/quotations/{id}/cancel-request:
+    post:
+      tags: [Quotations]
+      summary: Cancel my request (customer)
+      description: "CUSTOMER_REQUESTED → REQUEST_CANCELLED, by the customer who asked, while it is unanswered; the nursery is notified."
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: "{quotation}"
+        "403":
+          $ref: '#/components/responses/Error'
+        "409":
+          $ref: '#/components/responses/Error'
   /api/v1/quotations/{id}:
     delete:
       tags:
@@ -7189,6 +7591,225 @@ paths:
           $ref: '#/components/responses/Error'
         "500":
           $ref: '#/components/responses/Error'
+  /api/v1/consents/templates:
+    get:
+      tags: [Consents]
+      summary: Current confirmation wording
+      description: "The statements each party confirms (SELLER_LOADING, DRIVER_DISPATCH, BUYER_QUOTATION_ACCEPT, BUYER_DELIVERY) and their version. Apps show them and send {consent: {consent_version, accepted: true, evidence?}} with complete-loading, the driver's trip start (dispatch status DISPATCHED/IN_TRANSIT), buyer-accept and receipt confirmation. Missing: 422 consent_required; older wording: 409 consent_outdated. Each confirmation is stored once with the exact wording (append-only)."
+      responses:
+        "200":
+          description: "{templates: [...]}"
+  /api/v1/orders/{id}/consents:
+    get:
+      tags: [Consents]
+      summary: Confirmations given on an order
+      description: "Quotation acceptance, loading, trip start and delivery confirmations, with wording, who, role, when and evidence. Anyone who can see the order."
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: "{consents: [...]}"
+        "403":
+          $ref: '#/components/responses/Error'
+  /api/v1/admin/risk-signals:
+    get:
+      tags: [Risk]
+      summary: Risk review queue (admin)
+      description: "Unusual activity flagged by the detector (every 10 minutes): open first, highest level first. Filters status (comma list), risk_level, entity_type."
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: "{signals, total}"
+        "403":
+          $ref: '#/components/responses/Error'
+  /api/v1/admin/risk-signals/scan:
+    post:
+      tags: [Risk]
+      summary: Run the detector now (admin)
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: "{raised}"
+  /api/v1/admin/risk-signals/{id}:
+    get:
+      tags: [Risk]
+      summary: A risk signal with its notes (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: "{signal}"
+        "404":
+          $ref: '#/components/responses/Error'
+  /api/v1/admin/risk-signals/{id}/actions:
+    post:
+      tags: [Risk]
+      summary: Decide on a risk signal (admin)
+      description: "action REVIEW, HOLD (orders only: pauses their dispatch, 409 order_on_hold), RELEASE_HOLD, REQUEST_VERIFICATION (notifies the partner), RESOLVE, DISMISS, CONFIRM_FRAUD (super admin), NOTE; note ≥ 5 chars, kept append-only. Suspending a partner is done on the partner's own page."
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, note]
+              properties:
+                action: { type: string }
+                note: { type: string }
+      responses:
+        "200":
+          description: "{signal}"
+        "409":
+          $ref: '#/components/responses/Error'
+  /api/v1/admin/risk-rules:
+    get:
+      tags: [Risk]
+      summary: Risk rules and thresholds (admin)
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: "{rules}"
+  /api/v1/admin/risk-rules/{code}:
+    put:
+      tags: [Risk]
+      summary: Change a risk rule (super admin)
+      description: "is_enabled, threshold (> 0), risk_level LOW/MEDIUM/HIGH; PRICE_OUTLIER stays LOW."
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_enabled: { type: boolean }
+                threshold: { type: number }
+                risk_level: { type: string }
+      responses:
+        "200":
+          description: Saved
+  /api/v1/storage/images:
+    post:
+      tags: [Storage]
+      summary: Upload a photo (checked against its image policy)
+      description: "multipart/form-data with `category` first, then `file`. The API reads the bytes, not the file name or header: JPEG/PNG only (as the category allows), whole and decodable, within max_bytes, the longest side ≤ max_side, the shortest ≥ min_side, and at most 40 MP in the header (decompression-bomb guard). Stored in the category's bucket (MARKET_AD → market-ads, NURSERY_BRANDING → nursery-logos: public; DELIVERY_PROOF/LOADING_PROOF → delivery-photos, DRIVER_LICENCE/ATTACHMENT → attachments: private, key prefixed u<user_id>/). Selfies use POST /users/me/avatar. 422 file_too_large, invalid_image_format, image_too_small, image_too_big, invalid_image (message says what to do)."
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [category, file]
+              properties:
+                category: { type: string, enum: [MARKET_AD, NURSERY_BRANDING, DELIVERY_PROOF, LOADING_PROOF, DRIVER_LICENCE, ATTACHMENT] }
+                file: { type: string, format: binary }
+      responses:
+        "201":
+          description: "{file_url, key, bucket, category, content_type, size, width, height, policy_version}"
+        "400":
+          $ref: '#/components/responses/Error'
+        "422":
+          $ref: '#/components/responses/Error'
+  /api/v1/image-policies:
+    get:
+      tags: [Storage]
+      summary: Image policies the apps compress to
+      description: "Every category's max_side, min_side, quality, max_bytes, allowed_formats, is_compression_enabled and version. The API checks uploads against the same values (it is the final authority)."
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: "{policies: [...]}"
+  /api/v1/admin/image-policies:
+    get:
+      tags: [Storage]
+      summary: Image policies with defaults and safe bounds (admin)
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: "{policies: [{...policy, default, bounds}], can_edit} — can_edit only for SUPER_ADMIN"
+        "403":
+          $ref: '#/components/responses/Error'
+  /api/v1/admin/image-policies/{category}:
+    put:
+      tags: [Storage]
+      summary: Change a category's image policy (super admin)
+      description: "Values must stay inside the category's bounds (licence photos have higher floors so they stay readable); formats are JPEG and/or PNG; change_note (≥ 5 chars) is required; version is the one edited (409 version_conflict if someone saved since). Server checks (format, decode, pixel cap) cannot be turned off. Saved as a new version in the history and the audit log; stored images are not changed. Other API instances pick it up within a minute."
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: category
+          in: path
+          required: true
+          schema: { type: string, enum: [SELFIE, MARKET_AD, NURSERY_BRANDING, DELIVERY_PROOF, LOADING_PROOF, DRIVER_LICENCE, ATTACHMENT] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [max_side, min_side, quality, max_bytes, allowed_formats, is_compression_enabled, version, change_note]
+              properties:
+                max_side: { type: integer }
+                min_side: { type: integer }
+                quality: { type: integer }
+                max_bytes: { type: integer }
+                allowed_formats: { type: array, items: { type: string, enum: [JPEG, PNG] } }
+                is_compression_enabled: { type: boolean }
+                version: { type: integer }
+                change_note: { type: string }
+      responses:
+        "200":
+          description: "{policy}"
+        "400":
+          $ref: '#/components/responses/Error'
+        "403":
+          $ref: '#/components/responses/Error'
+        "409":
+          $ref: '#/components/responses/Error'
+  /api/v1/admin/image-policies/{category}/history:
+    get:
+      tags: [Storage]
+      summary: Saved versions of a category's image policy (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: category
+          in: path
+          required: true
+          schema: { type: string, enum: [SELFIE, MARKET_AD, NURSERY_BRANDING, DELIVERY_PROOF, LOADING_PROOF, DRIVER_LICENCE, ATTACHMENT] }
+      responses:
+        "200":
+          description: "{history: [{version, policy, changed_by_user_id, changed_by_name, change_note, created_at}]} newest first"
   /api/v1/storage/presign:
     post:
       tags:
@@ -8995,6 +9616,22 @@ components:
         reason:
           type: string
           nullable: true
+    PlantAliasRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        alias_type: { type: string, enum: [COMMON, LOCAL, SYNONYM, TRADE, MISSPELLING], default: LOCAL }
+        language: { type: string, example: te }
+        region: { type: string, example: Andhra Pradesh }
+        is_active: { type: boolean }
+    VehicleOwnerRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        mobile: { type: string, description: "optional; unique" }
+        notes: { type: string }
     VehicleRequest:
       type: object
       required: [vehicle_number]
@@ -9009,15 +9646,15 @@ components:
         capacity_kg:
           type: number
           nullable: true
-        owner_name:
-          type: string
+        owner_id:
+          type: integer
+          format: int64
           nullable: true
-        mobile:
-          type: string
-          nullable: true
+          description: "vehicle_owners id (GET /vehicle-owners)"
         status:
           type: string
           enum: [ACTIVE, INACTIVE, MAINTENANCE, RETIRED]
+          description: "A lorry on an active trip stays ACTIVE until the trip ends (409 vehicle_on_active_trip)."
     DriverRequest:
       type: object
       properties:

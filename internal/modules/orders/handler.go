@@ -3,6 +3,7 @@ package orders
 import (
 	"encoding/json"
 	"errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/consent"
 	"io"
 	"net/http"
 	"strconv"
@@ -359,15 +360,18 @@ func (h *Handler) CompleteLoading(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		DeclaredNoProhibitedItems bool `json:"declared_no_prohibited_items"`
+		DeclaredNoProhibitedItems bool           `json:"declared_no_prohibited_items"`
+		Consent                   *consent.Given `json:"consent"` // SELLER_LOADING, see GET /consents/templates
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid request body")
 		return
 	}
-	order, err := h.service.CompleteLoading(r.Context(), actor, orderID, req.DeclaredNoProhibitedItems)
+	order, err := h.service.CompleteLoading(r.Context(), actor, orderID, req.DeclaredNoProhibitedItems, req.Consent)
 	if err != nil {
-		writeOrdersError(w, err)
+		if !consent.WriteError(w, err, consent.SellerLoading) {
+			writeOrdersError(w, err)
+		}
 		return
 	}
 	response.OK(w, OrderResponse{Order: order})
@@ -508,6 +512,24 @@ func intQuery(value string) int {
 func int64Query(value string) int64 {
 	parsed, _ := strconv.ParseInt(value, 10, 64)
 	return parsed
+}
+
+// Consents handles GET /orders/{id}/consents.
+func (h *Handler) Consents(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	orderID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	entries, err := h.service.Consents(r.Context(), actor, orderID)
+	if err != nil {
+		writeOrdersError(w, err)
+		return
+	}
+	response.OK(w, map[string]any{"consents": entries})
 }
 
 func writeOrdersError(w http.ResponseWriter, err error) {

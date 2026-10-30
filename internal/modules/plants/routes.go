@@ -27,6 +27,7 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, re
 	}
 	handler := NewHandler(service, jwt)
 	handler.suggestions = &Suggestions{db: db, plants: service}
+	handler.aliases = &Aliases{db: db, plants: service}
 	return Module{handler: handler}
 }
 
@@ -44,6 +45,10 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Get("/suggestions", m.handler.ListSuggestions)
 		r.Post("/suggestions", m.handler.CreateSuggestion)
 		r.Post("/suggestions/{suggestionId}/review", m.handler.ReviewSuggestion)
+		r.Get("/aliases", m.handler.ListAliases) // admin: search every plant's other names
+		r.Put("/aliases/{aliasId}", m.handler.UpdateAlias)
+		r.Get("/{id}/aliases", m.handler.ListAliases)
+		r.Post("/{id}/aliases", m.handler.CreateAlias)
 		r.Get("/{id}", m.handler.Get)
 		r.Put("/{id}", m.handler.Update)
 		r.Delete("/{id}", m.handler.Delete)

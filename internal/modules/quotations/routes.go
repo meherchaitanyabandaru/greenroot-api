@@ -2,6 +2,7 @@ package quotations
 
 import (
 	"database/sql"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/consent"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
@@ -36,10 +37,17 @@ func (m Module) WithEvents(n EventNotifier) Module {
 	return m
 }
 
+// WithConsents stores the buyer's acknowledgement on accepting.
+func (m Module) WithConsents(c *consent.Store) Module {
+	m.service.UseConsents(c)
+	return m
+}
+
 func (m Module) RegisterRoutes(router chi.Router) {
 	router.Route("/quotations", func(r chi.Router) {
 		r.Get("/", m.handler.List)
 		r.Post("/", m.handler.Create)
+		r.Post("/requests", m.handler.CreateRequest) // a customer asks a nursery for prices
 		// by-token must be registered before /{id} to avoid chi matching "by-token" as an id
 		r.Get("/by-token/{token}", m.handler.GetByToken)
 		r.Get("/{id}", m.handler.Get)
@@ -51,6 +59,9 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Post("/{id}/send", m.handler.SendToCustomer)
 		r.Post("/{id}/approve", m.handler.Approve)
 		r.Post("/{id}/recall", m.handler.Recall)
+		r.Post("/{id}/price", m.handler.PriceRequest)           // nursery: prices on a request's lines
+		r.Post("/{id}/decline", m.handler.DeclineRequest)       // nursery: cannot quote
+		r.Post("/{id}/cancel-request", m.handler.CancelRequest) // customer: withdraw
 		r.Post("/{id}/convert-to-order", m.handler.ConvertToOrder)
 		r.Post("/{id}/record-download", m.handler.RecordDownload)
 		// Buyer actions

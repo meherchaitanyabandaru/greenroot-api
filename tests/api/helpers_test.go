@@ -2,6 +2,7 @@ package apitest
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -17,9 +18,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const (
-	baseURL = "http://localhost:8080"
+// baseURL is the API under test; API_BASE_URL points elsewhere (e.g. a
+// second local API while the dev one keeps :8080).
+var baseURL = cmp.Or(os.Getenv("API_BASE_URL"), "http://localhost:8080")
 
+const (
 	adminPhone       = "9000000000"
 	ownerPhone       = "9100000000"
 	managerPhone     = "9200000000"

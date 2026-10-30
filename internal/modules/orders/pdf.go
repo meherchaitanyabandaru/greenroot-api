@@ -54,6 +54,9 @@ func buildOrderPDF(o Order, nursery PDFNurseryExtras, verifyURL string) []byte {
 	var ordered, orderedQty, loadedQty float64
 	for _, it := range o.Items {
 		title, sub := plantNames(it.ScientificName, it.CommonName)
+		if it.IsCustom && it.CustomPlantName != nil {
+			title, sub = *it.CustomPlantName, "Not in GreenRoot's plant list" // as the customer named it
+		}
 		amount := it.TotalPrice
 		if billedOnLoaded && it.LoadedQuantity != nil {
 			amount = *it.LoadedQuantity * it.UnitPrice

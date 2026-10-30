@@ -173,6 +173,23 @@ func (s *Service) Apply(ctx context.Context, actor ActorContext, req ApplyDriver
 	if strings.TrimSpace(req.LicenceNumber) == "" || strings.TrimSpace(req.VehicleNumber) == "" {
 		return Driver{}, ErrInvalidInput
 	}
+	if req.LicenceExpiryDate != nil && strings.TrimSpace(*req.LicenceExpiryDate) != "" {
+		expiry, err := time.Parse(time.DateOnly, strings.TrimSpace(*req.LicenceExpiryDate))
+		if err != nil {
+			return Driver{}, ErrInvalidInput
+		}
+		if expiry.Before(time.Now().Truncate(24 * time.Hour)) {
+			return Driver{}, ErrLicenceExpired
+		}
+		req.expiry = &expiry
+	}
+	vehicle := AddVehicleRequest{VehicleNumber: req.VehicleNumber, VehicleType: req.VehicleType,
+		IsOwner: req.IsOwner || req.OwnerName == nil, OwnerName: req.OwnerName, OwnerMobile: req.OwnerMobile}
+	owner, err := normalizeAddVehicle(&vehicle)
+	if err != nil {
+		return Driver{}, err
+	}
+	req.VehicleNumber, req.VehicleType, req.owner = vehicle.VehicleNumber, vehicle.VehicleType, owner
 	// Optional. Only a file uploaded to our private bucket: never a link elsewhere.
 	if req.LicencePhotoURL != nil {
 		photo := strings.TrimSpace(*req.LicencePhotoURL)

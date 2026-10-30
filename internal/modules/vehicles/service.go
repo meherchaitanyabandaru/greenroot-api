@@ -2,6 +2,7 @@ package vehicles
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"math"
@@ -10,6 +11,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/lifecycle"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -22,11 +24,16 @@ var (
 type Service struct {
 	repository Repository
 	auditSvc   *auditlog.Service
+	redis      redis.Cmdable // notification queue; nil = stored in-app only
+	db         *sql.DB       // notification fallback
 }
 
 func NewService(repository Repository, auditSvc *auditlog.Service) *Service {
 	return &Service{repository: repository, auditSvc: auditSvc}
 }
+
+// UseNotifications lets decisions on lorries and links reach the drivers.
+func (s *Service) UseNotifications(rdb redis.Cmdable, db *sql.DB) { s.redis, s.db = rdb, db }
 
 func (s *Service) List(ctx context.Context, actor ActorContext, input ListVehiclesRequest) ([]Vehicle, Pagination, error) {
 	if !actor.HasRole("ADMIN") {
@@ -135,6 +142,7 @@ func normalizeList(input ListVehiclesRequest) ListVehiclesRequest {
 		input.PerPage = 100
 	}
 	input.Status = strings.ToUpper(strings.TrimSpace(input.Status))
+	input.Approval = strings.ToUpper(strings.TrimSpace(input.Approval))
 	input.Type = strings.TrimSpace(input.Type)
 	input.Search = strings.TrimSpace(input.Search)
 	input.SortBy = strings.TrimSpace(input.SortBy)
@@ -158,7 +166,7 @@ func enrichVehicle(actor ActorContext, vehicle Vehicle) Vehicle {
 	status := strings.ToUpper(strings.TrimSpace(vehicle.Status))
 	isAdmin := actor.HasRole("ADMIN") || actor.HasRole("SUPER_ADMIN")
 	isRetired := status == "RETIRED"
-	isAssigned := vehicle.DriverID != nil
+	isAssigned := vehicle.DriverCount > 0
 
 	vehicle.Lifecycle = vehiclePtr(lifecycle.Vehicle(status))
 	vehicle.Summary = &VehicleSummary{
@@ -170,8 +178,8 @@ func enrichVehicle(actor ActorContext, vehicle Vehicle) Vehicle {
 	}
 	vehicle.Capabilities = &VehicleCapabilities{
 		CanEdit:   isAdmin && !isRetired,
-		CanDelete: isAdmin && !isRetired && !isAssigned,
-		CanRetire: isAdmin && !isRetired && !isAssigned,
+		CanDelete: isAdmin && !isRetired && !vehicle.IsOnActiveTrip,
+		CanRetire: isAdmin && !isRetired && !vehicle.IsOnActiveTrip,
 		CanTrack:  isAdmin && !isRetired,
 	}
 	return vehicle

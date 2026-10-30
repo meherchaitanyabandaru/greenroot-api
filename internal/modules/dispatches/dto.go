@@ -1,6 +1,7 @@
 package dispatches
 
 import (
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/consent"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	"time"
 
@@ -43,8 +44,11 @@ type CreateDispatchRequest struct {
 // DeliverRequest marks a trip delivered: with the customer's delivery code,
 // or (nursery staff only) without it, giving the reason.
 // AcceptRequest carries the trip code from the nursery's QR ("TRIP-<uuid>" or the uuid).
+// VehicleID is the driver's lorry for the trip; optional when they have only
+// one that can take it.
 type AcceptRequest struct {
-	TripCode string `json:"trip_code"`
+	TripCode  string `json:"trip_code"`
+	VehicleID *int64 `json:"vehicle_id"`
 }
 
 type DeliverRequest struct {
@@ -54,8 +58,10 @@ type DeliverRequest struct {
 
 // ReceiptRequest is the customer's side: confirm they received the plants
 // and/or report a problem.
+// Consent (BUYER_DELIVERY) is needed to confirm; reporting a problem needs none.
 type ReceiptRequest struct {
-	Issue *string `json:"issue"`
+	Issue   *string        `json:"issue"`
+	Consent *consent.Given `json:"consent"`
 }
 
 type UpdateStatusRequest struct {
@@ -63,6 +69,8 @@ type UpdateStatusRequest struct {
 	StatusAlias  string  `json:"status"`
 	DeliveryDate *string `json:"delivery_date"`
 	Notes        *string `json:"notes"`
+	// Consent (DRIVER_DISPATCH): the driver's confirmation when starting the trip.
+	Consent *consent.Given `json:"consent"`
 }
 
 type DispatchItemRequest struct {

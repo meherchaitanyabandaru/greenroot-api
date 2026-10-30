@@ -38,6 +38,9 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Post("/apply", m.handler.Apply)
 		r.Get("/me", m.handler.GetMine)
 		r.Delete("/me", m.handler.StopDriving)
+		r.Get("/me/vehicles", m.handler.MyVehicles)
+		r.Post("/me/vehicles", m.handler.AddVehicle)
+		r.Delete("/me/vehicles/{linkId}", m.handler.RemoveVehicle)
 
 		// Admin endpoints
 		r.Get("/", m.handler.List)

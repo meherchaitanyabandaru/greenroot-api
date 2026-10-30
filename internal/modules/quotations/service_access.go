@@ -181,5 +181,6 @@ func redactCustomerContact(q *Quotation) {
 	q.RecipientName = nil
 	q.RecipientMobile = nil
 	q.CustomerUserID = nil
+	q.RequestedByUserID = nil
 	q.RejectionReason = nil
 }

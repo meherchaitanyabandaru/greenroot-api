@@ -11,6 +11,7 @@ import (
 
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/redisutil"
+	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -98,6 +99,31 @@ func (s *Service) SellerProfile(ctx context.Context, actor ActorContext, nursery
 type Service struct {
 	repo  Repository
 	redis redis.Cmdable
+	files photoFiles // nil without object storage: photo links are not checked
+}
+
+// photoFiles says which bucket a stored file is in.
+type photoFiles interface {
+	Locate(fileURL string) (bucket, key string, ok bool)
+}
+
+// UseStorage makes ads accept only photos the API stored (POST /storage/images,
+// category MARKET_AD), so every ad photo passed the image policy.
+func (s *Service) UseStorage(files photoFiles) { s.files = files }
+
+func (s *Service) checkPhotos(photos []string) error {
+	if len(photos) > MaxAdPhotos {
+		return fmt.Errorf("%w: at most %d photos per ad", ErrInvalidInput, MaxAdPhotos)
+	}
+	if s.files == nil {
+		return nil
+	}
+	for _, p := range photos {
+		if bucket, _, ok := s.files.Locate(p); !ok || bucket != storage.BucketMarketAds {
+			return fmt.Errorf("%w: upload ad photos in the app (only GreenRoot photo uploads are accepted)", ErrInvalidInput)
+		}
+	}
+	return nil
 }
 
 func NewService(repo Repository, redisClients ...redis.Cmdable) *Service {
@@ -129,8 +155,8 @@ func (s *Service) CreateAd(ctx context.Context, actor ActorContext, req CreateAd
 	if err := validateAdType(&req); err != nil {
 		return Ad{}, err
 	}
-	if len(req.Photos) > MaxAdPhotos {
-		return Ad{}, fmt.Errorf("%w: at most %d photos per ad", ErrInvalidInput, MaxAdPhotos)
+	if err := s.checkPhotos(req.Photos); err != nil {
+		return Ad{}, err
 	}
 	if err := s.checkSize(ctx, req.SizeDescription); err != nil {
 		return Ad{}, err
@@ -357,8 +383,8 @@ func (s *Service) UpdateAd(ctx context.Context, actor ActorContext, id int64, re
 	case StatusSuspended:
 		return Ad{}, fmt.Errorf("%w: this ad is under review and cannot be edited", ErrConflict)
 	}
-	if len(req.Photos) > MaxAdPhotos {
-		return Ad{}, fmt.Errorf("%w: at most %d photos per ad", ErrInvalidInput, MaxAdPhotos)
+	if err := s.checkPhotos(req.Photos); err != nil {
+		return Ad{}, err
 	}
 	if err := s.checkSize(ctx, req.SizeDescription); err != nil {
 		return Ad{}, err

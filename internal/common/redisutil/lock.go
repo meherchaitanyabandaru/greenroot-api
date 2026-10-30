@@ -13,6 +13,9 @@ import (
 
 var ErrLockBusy = errors.New("redis lock busy")
 
+// errLockUnavailable marks a busy answer caused by Redis being down (still ErrLockBusy for callers).
+var errLockUnavailable = errors.New("redis unavailable")
+
 const LockTTL = 10 * time.Second
 
 type Lock struct {
@@ -38,12 +41,30 @@ func AcquireLock(ctx context.Context, client redis.Cmdable, log *slog.Logger, mo
 		// unlocked is exactly when parallel requests double-apply. The caller
 		// answers "busy, try again".
 		logger(log).Error("redis lock unavailable; refusing to run unlocked", "key", key, "error", err)
-		return nil, fmt.Errorf("%w: redis unavailable: %w", ErrLockBusy, err)
+		return nil, fmt.Errorf("%w: %w: %w", ErrLockBusy, errLockUnavailable, err)
 	}
 	if !ok {
 		return nil, ErrLockBusy
 	}
 	return &Lock{client: client, key: key, token: token, log: log}, nil
+}
+
+// AcquireLockWait is AcquireLock that waits up to wait for a busy lock, for
+// requests whose loser should get the real answer (e.g. "trip taken") rather
+// than "busy, try again". Redis errors are not retried.
+func AcquireLockWait(ctx context.Context, client redis.Cmdable, log *slog.Logger, module string, id int64, wait time.Duration) (*Lock, error) {
+	deadline := time.Now().Add(wait)
+	for {
+		lock, err := AcquireLock(ctx, client, log, module, id)
+		if !errors.Is(err, ErrLockBusy) || errors.Is(err, errLockUnavailable) || !time.Now().Before(deadline) {
+			return lock, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 // releaseScript deletes the lock only if it is still ours: after LockTTL

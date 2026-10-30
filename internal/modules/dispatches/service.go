@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/consent"
 	"log/slog"
 	"math"
 	"strings"
@@ -51,6 +52,7 @@ var (
 	ErrReceiptWindowClosed  = errors.New("receipt window closed")
 	ErrAlreadyConfirmed     = errors.New("delivery already confirmed")
 	ErrOutsideTransport     = errors.New("trip uses an outside lorry")
+	ErrOrderOnHold          = errors.New("order on hold for review")
 )
 
 type Service struct {
@@ -58,8 +60,37 @@ type Service struct {
 	auditSvc   *auditlog.Service
 	redis      redis.Cmdable
 	liveGeo    *redisgeo.Service
-	codeKey    []byte        // derives delivery codes; see deliveryCode
-	events     EventNotifier // SMS/email events; nil = in-app only
+	codeKey    []byte         // derives delivery codes; see deliveryCode
+	events     EventNotifier  // SMS/email events; nil = in-app only
+	consents   *consent.Store // nil: confirmations checked, not stored (tests)
+}
+
+// UseConsents stores the parties' confirmations.
+func (s *Service) UseConsents(c *consent.Store) { s.consents = c }
+
+func (s *Service) saveConsent(ctx context.Context, actor ActorContext, step, role string, d Dispatch, given *consent.Given) {
+	if s.consents == nil || given == nil {
+		return
+	}
+	id, orderID := d.ID, d.OrderID
+	if err := s.consents.Save(ctx, consent.Record{Type: step, UserID: actor.UserID, UserRole: role, DispatchID: &id, OrderID: &orderID,
+		Evidence: given.Evidence, IPAddress: actor.IPAddress, UserAgent: actor.UserAgent}); err != nil {
+		slog.Error("consent not stored", "step", step, "dispatch_id", id, "error", err)
+	}
+}
+
+// needsDriverConsent: the driver starts a trip that asks for their
+// confirmation and they have not given it yet.
+func (s *Service) needsDriverConsent(ctx context.Context, actor ActorContext, d Dispatch, status string) (bool, error) {
+	starting := d.Status == "ACCEPTED" && (status == "DISPATCHED" || status == "IN_TRANSIT")
+	if !starting || !d.RequiresConsent || !isTripDriver(actor, d) {
+		return false, nil
+	}
+	if s.consents == nil {
+		return true, nil
+	}
+	given, err := s.consents.GivenForDispatch(ctx, consent.DriverDispatch, d.ID, actor.UserID)
+	return !given, err
 }
 
 // SetDeliveryCodeKey sets the server secret delivery codes are derived from.
@@ -139,6 +170,12 @@ func (s *Service) Create(ctx context.Context, actor ActorContext, req CreateDisp
 	if exists {
 		return Dispatch{}, ErrActiveDispatch
 	}
+	// An admin reviewing a risk signal may hold the order's dispatch.
+	if held, err := s.repository.OrderOnHold(ctx, input.OrderID); err != nil {
+		return Dispatch{}, err
+	} else if held {
+		return Dispatch{}, ErrOrderOnHold
+	}
 	if input.DispatchNumber != nil {
 		duplicate, err := s.repository.HasDuplicate(ctx, *input.DispatchNumber)
 		if err != nil {
@@ -189,6 +226,16 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 	if !CanTransition(current.Status, status) {
 		return Dispatch{}, ErrInvalidStatus
 	}
+	// The driver confirms load, lorry and trip details before leaving.
+	needConsent, err := s.needsDriverConsent(ctx, actor, *current, status)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if needConsent {
+		if err := consent.Check(consent.DriverDispatch, req.Consent); err != nil {
+			return Dispatch{}, err
+		}
+	}
 	deliveryDate, err := parseOptionalTime(req.DeliveryDate)
 	if err != nil {
 		return Dispatch{}, ErrInvalidInput
@@ -232,6 +279,9 @@ func (s *Service) UpdateStatus(ctx context.Context, actor ActorContext, dispatch
 	}
 	if IsLiveTrackingTerminal(status) {
 		s.removeLiveDriverLocation(ctx, *dispatch)
+	}
+	if needConsent {
+		s.saveConsent(ctx, actor, consent.DriverDispatch, "DRIVER", *dispatch, req.Consent)
 	}
 	s.audit(ctx, actor, "dispatches", dispatch.ID, actionUpdate, req)
 	return s.present(actor, *dispatch), nil
@@ -352,7 +402,14 @@ func (s *Service) GetByCode(ctx context.Context, actor ActorContext, code string
 		if err := openForDrivers(*dispatch, time.Now()); err != nil {
 			return Dispatch{}, err
 		}
-		return s.present(actor, *dispatch), nil
+		// The driver picks which of their lorries takes the trip.
+		vehicles, err := s.repository.DriverVehicles(ctx, actor.UserID)
+		if err != nil {
+			return Dispatch{}, err
+		}
+		preview := s.present(actor, *dispatch)
+		preview.DriverVehicles = forTrip(*dispatch, vehicles)
+		return preview, nil
 	}
 	if err := s.canAccess(ctx, actor, *dispatch); err != nil {
 		return Dispatch{}, err
@@ -360,8 +417,12 @@ func (s *Service) GetByCode(ctx context.Context, actor ActorContext, code string
 	return s.present(actor, *dispatch), nil
 }
 
-func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispatchID int64, tripCode string) (Dispatch, error) {
-	lock, err := redisutil.AcquireLock(ctx, s.redis, nil, "dispatches", dispatchID)
+// AcceptDispatch claims the trip for the driver with one of their lorries:
+// vehicleID, or their only eligible lorry when nil (older apps).
+func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispatchID int64, tripCode string, vehicleID *int64) (Dispatch, error) {
+	// Two drivers scanning at once: the second waits for the first, then is
+	// told the trip is taken (not "busy, try again").
+	lock, err := redisutil.AcquireLockWait(ctx, s.redis, nil, "dispatches", dispatchID, 3*time.Second)
 	if err != nil {
 		return Dispatch{}, err
 	}
@@ -386,7 +447,7 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 	if err := openForDrivers(*dispatch, time.Now()); err != nil {
 		return Dispatch{}, err
 	}
-	if err := s.requireEligibleDriver(ctx, actor, *dispatch); err != nil {
+	if err := s.requireEligibleDriver(ctx, actor); err != nil {
 		return Dispatch{}, err
 	}
 	active, err := s.repository.DriverHasActiveTrip(ctx, actor.UserID, dispatchID)
@@ -396,7 +457,11 @@ func (s *Service) AcceptDispatch(ctx context.Context, actor ActorContext, dispat
 	if active {
 		return Dispatch{}, ErrActiveDriverTrip
 	}
-	updated, err := s.repository.SetDriverUser(ctx, dispatchID, actor.UserID)
+	chosen, err := s.pickVehicle(ctx, actor, *dispatch, vehicleID)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	updated, err := s.repository.SetDriverUser(ctx, dispatchID, actor.UserID, chosen)
 	if err != nil {
 		return Dispatch{}, err
 	}
@@ -467,18 +532,15 @@ func openForDrivers(d Dispatch, now time.Time) error {
 	return nil
 }
 
-// requireEligibleDriver: any driver GreenRoot approved who is still driving,
-// with the lorry the trip asks for. No link to the nursery is needed.
-func (s *Service) requireEligibleDriver(ctx context.Context, actor ActorContext, d Dispatch) error {
+// requireEligibleDriver: any driver GreenRoot approved who is still driving.
+// No link to the nursery is needed; the lorry is checked by pickVehicle.
+func (s *Service) requireEligibleDriver(ctx context.Context, actor ActorContext) error {
 	e, err := s.repository.DriverEligibility(ctx, actor.UserID)
 	if err != nil {
 		return err
 	}
 	if !e.Found || e.ApprovalStatus != "APPROVED" || e.Status != "ACTIVE" {
 		return ErrDriverNotApproved
-	}
-	if d.RequiredVehicleType != nil && !strings.EqualFold(*d.RequiredVehicleType, e.VehicleType) {
-		return ErrVehicleMismatch
 	}
 	return nil
 }
@@ -977,6 +1039,9 @@ func (s *Service) ConfirmReceipt(ctx context.Context, actor ActorContext, dispat
 	var dispatch Dispatch
 	switch {
 	case onTheWay(current.Status):
+		if err := needsDeliveryConsent(issuePtr, req.Consent); err != nil {
+			return Dispatch{}, err
+		}
 		dispatch, err = s.markDelivered(ctx, actor, *current, ConfirmationApp, nil, issuePtr)
 	case current.Status == "DELIVERED":
 		if current.DeliveryDate == nil || time.Since(*current.DeliveryDate) > receiptWindow {
@@ -988,6 +1053,9 @@ func (s *Service) ConfirmReceipt(ctx context.Context, actor ActorContext, dispat
 		}
 		if !canReport {
 			issuePtr = nil
+		}
+		if err := needsDeliveryConsent(issuePtr, req.Consent); err != nil {
+			return Dispatch{}, err
 		}
 		if err = s.repository.RecordReceipt(ctx, dispatchID, actor.UserID, canConfirm, issuePtr); err == nil {
 			var refreshed *Dispatch
@@ -1011,8 +1079,20 @@ func (s *Service) ConfirmReceipt(ctx context.Context, actor ActorContext, dispat
 				Values: map[string]string{"dispatch_code": dispatch.DispatchCode}, ReferenceType: "DISPATCH", ReferenceID: &id})
 		}
 	}
+	if issuePtr == nil {
+		s.saveConsent(ctx, actor, consent.BuyerDelivery, "BUYER", dispatch, req.Consent)
+	}
 	s.audit(ctx, actor, "dispatches", dispatchID, actionUpdate, map[string]any{"receipt_confirmed": true, "issue": issuePtr})
 	return s.present(actor, dispatch), nil
+}
+
+// needsDeliveryConsent: confirming delivery is acknowledged in words;
+// reporting a problem is not.
+func needsDeliveryConsent(issue *string, given *consent.Given) error {
+	if issue != nil {
+		return nil
+	}
+	return consent.Check(consent.BuyerDelivery, given)
 }
 
 func (s *Service) markDelivered(ctx context.Context, actor ActorContext, current Dispatch, confirmation string, reason, issue *string) (Dispatch, error) {

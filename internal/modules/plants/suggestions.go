@@ -7,6 +7,7 @@ package plants
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,7 +24,11 @@ const (
 	SuggestionApproved  = "APPROVED" // added to the catalog as a new plant
 	SuggestionLinked    = "LINKED"   // another name for an existing plant
 	SuggestionRejected  = "REJECTED"
+	SuggestionMerged    = "MERGED" // a duplicate name, folded into another suggestion
 	suggestionNotifType = "PLANT_SUGGESTION"
+	// SourceQuotationItem: a name a customer entered for a quotation because
+	// they could not find the plant (not a suggestion they sent).
+	SourceQuotationItem = "QUOTATION_ITEM"
 )
 
 var (
@@ -45,6 +50,17 @@ type PlantSuggestion struct {
 	ReviewNote      *string    `json:"review_note,omitempty"`
 	ReviewedAt      *time.Time `json:"reviewed_at,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
+	Source          string     `json:"source"`
+	MergedInto      *int64     `json:"merged_into_suggestion_id,omitempty"`
+	// UsageCount: quotation lines that used this name (and names merged into it).
+	UsageCount int64 `json:"usage_count"`
+	// Similar: other open names spelt alike (possible duplicates to merge).
+	Similar []SimilarName `json:"similar"`
+}
+
+type SimilarName struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
 }
 
 type CreateSuggestionRequest struct {
@@ -61,10 +77,14 @@ type CreateSuggestionResponse struct {
 	Plant      *Plant           `json:"plant,omitempty"`
 }
 
+// ReviewSuggestionRequest: APPROVED / LINKED name the plant (LINKED again on a
+// linked suggestion corrects a wrong mapping), REJECTED needs a note, MERGED
+// names the suggestion this duplicate folds into.
 type ReviewSuggestionRequest struct {
-	Action  string `json:"action"` // APPROVED | LINKED | REJECTED
-	PlantID *int64 `json:"plant_id"`
-	Note    string `json:"note"`
+	Action      string `json:"action"`
+	PlantID     *int64 `json:"plant_id"`
+	Note        string `json:"note"`
+	IntoSuggest *int64 `json:"into_suggestion_id"`
 }
 
 type SuggestionsResponse struct {
@@ -90,7 +110,8 @@ func (s *Suggestions) Create(ctx context.Context, actor ActorContext, in CreateS
 	err := s.db.QueryRowContext(ctx, `
 		SELECT plant_id FROM public.plants
 		WHERE is_active AND (lower(scientific_name) = lower($1) OR lower(common_name) = lower($1)
-			OR ($2 <> '' AND lower(scientific_name) = lower($2)))
+			OR ($2 <> '' AND lower(scientific_name) = lower($2))
+			OR plant_id IN (SELECT plant_id FROM public.plant_aliases WHERE is_active AND search_key = public.plant_search_key($1)))
 		ORDER BY plant_id LIMIT 1`, name, sci).Scan(&plantID)
 	if err == nil {
 		plant, err := s.plants.repository.FindByID(ctx, plantID)
@@ -135,15 +156,28 @@ func (s *Suggestions) Create(ctx context.Context, actor ActorContext, in CreateS
 const suggestionSelect = `
 	SELECT s.suggestion_id, s.name, s.scientific_name, s.notes, s.status, s.suggested_by_user_id,
 		COALESCE(NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''), ''), COALESCE(u.mobile, ''),
-		s.plant_id, COALESCE(p.common_name, p.scientific_name), s.review_note, s.reviewed_at, s.created_at
+		s.plant_id, COALESCE(p.common_name, p.scientific_name), s.review_note, s.reviewed_at, s.created_at,
+		s.source, s.merged_into_suggestion_id,
+		(SELECT COUNT(*) FROM public.quotation_items qi
+			WHERE qi.plant_suggestion_id = s.suggestion_id
+			   OR qi.plant_suggestion_id IN (SELECT m.suggestion_id FROM public.plant_suggestions m WHERE m.merged_into_suggestion_id = s.suggestion_id)),
+		COALESCE((SELECT jsonb_agg(jsonb_build_object('id', o.suggestion_id, 'name', o.name) ORDER BY similarity(o.search_key, s.search_key) DESC)
+			FROM (SELECT o.suggestion_id, o.name, o.search_key FROM public.plant_suggestions o
+				WHERE o.status = 'PENDING' AND o.suggestion_id <> s.suggestion_id AND o.search_key % s.search_key
+				ORDER BY similarity(o.search_key, s.search_key) DESC LIMIT 3) o), '[]')
 	FROM public.plant_suggestions s
 	JOIN public.users u ON u.user_id = s.suggested_by_user_id
 	LEFT JOIN public.plants p ON p.plant_id = s.plant_id`
 
 func scanSuggestion(row interface{ Scan(...any) error }) (PlantSuggestion, error) {
 	var sg PlantSuggestion
+	var similar []byte
 	err := row.Scan(&sg.ID, &sg.Name, &sg.ScientificName, &sg.Notes, &sg.Status, &sg.SuggestedByID,
-		&sg.SuggestedByName, &sg.SuggestedByMob, &sg.PlantID, &sg.PlantName, &sg.ReviewNote, &sg.ReviewedAt, &sg.CreatedAt)
+		&sg.SuggestedByName, &sg.SuggestedByMob, &sg.PlantID, &sg.PlantName, &sg.ReviewNote, &sg.ReviewedAt, &sg.CreatedAt,
+		&sg.Source, &sg.MergedInto, &sg.UsageCount, &similar)
+	if err == nil {
+		err = json.Unmarshal(similar, &sg.Similar)
+	}
 	return sg, err
 }
 
@@ -156,7 +190,7 @@ func (s *Suggestions) get(ctx context.Context, id int64) (PlantSuggestion, error
 }
 
 // List is the admin review queue (status "" = all), newest first.
-func (s *Suggestions) List(ctx context.Context, actor ActorContext, status string, page, perPage int) (SuggestionsResponse, error) {
+func (s *Suggestions) List(ctx context.Context, actor ActorContext, status, search string, page, perPage int) (SuggestionsResponse, error) {
 	if !canManagePlants(actor) {
 		return SuggestionsResponse{}, ErrForbidden
 	}
@@ -168,12 +202,14 @@ func (s *Suggestions) List(ctx context.Context, actor ActorContext, status strin
 		perPage = 50
 	}
 	out := SuggestionsResponse{Suggestions: []PlantSuggestion{}}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM public.plant_suggestions WHERE $1 = '' OR status = $1`, status).Scan(&out.Total); err != nil {
+	search = strings.TrimSpace(search)
+	const filter = ` WHERE ($1 = '' OR s.status = $1) AND ($2 = '' OR s.search_key LIKE '%' || public.plant_search_key($2) || '%'
+		OR s.search_key % public.plant_search_key($2))`
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM public.plant_suggestions s`+filter, status, search).Scan(&out.Total); err != nil {
 		return out, err
 	}
-	rows, err := s.db.QueryContext(ctx, suggestionSelect+`
-		WHERE $1 = '' OR s.status = $1
-		ORDER BY s.created_at DESC, s.suggestion_id DESC LIMIT $2 OFFSET $3`, status, perPage, (page-1)*perPage)
+	rows, err := s.db.QueryContext(ctx, suggestionSelect+filter+`
+		ORDER BY s.created_at DESC, s.suggestion_id DESC LIMIT $3 OFFSET $4`, status, search, perPage, (page-1)*perPage)
 	if err != nil {
 		return out, err
 	}
@@ -207,6 +243,11 @@ func (s *Suggestions) Review(ctx context.Context, actor ActorContext, id int64, 
 			return PlantSuggestion{}, ErrInvalidInput
 		}
 		in.PlantID = nil
+	case SuggestionMerged:
+		if in.IntoSuggest == nil || *in.IntoSuggest == id {
+			return PlantSuggestion{}, ErrInvalidInput
+		}
+		in.PlantID = nil
 	default:
 		return PlantSuggestion{}, ErrInvalidInput
 	}
@@ -217,16 +258,31 @@ func (s *Suggestions) Review(ctx context.Context, actor ActorContext, id int64, 
 	}
 	defer tx.Rollback()
 
-	var name, status string
-	err = tx.QueryRowContext(ctx, `SELECT name, status FROM public.plant_suggestions WHERE suggestion_id = $1 FOR UPDATE`, id).Scan(&name, &status)
+	var name, status, source string
+	err = tx.QueryRowContext(ctx, `SELECT name, status, source FROM public.plant_suggestions WHERE suggestion_id = $1 FOR UPDATE`, id).Scan(&name, &status, &source)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PlantSuggestion{}, ErrNotFound
 	}
 	if err != nil {
 		return PlantSuggestion{}, err
 	}
-	if status != SuggestionPending {
+	// A linked name may be linked again to correct a wrong mapping; anything
+	// else is decided once.
+	if status != SuggestionPending && (status != SuggestionLinked || action != SuggestionLinked) {
 		return PlantSuggestion{}, ErrSuggestionReviewed
+	}
+	if action == SuggestionMerged {
+		var intoStatus string
+		err := tx.QueryRowContext(ctx, `SELECT status FROM public.plant_suggestions WHERE suggestion_id = $1`, *in.IntoSuggest).Scan(&intoStatus)
+		if errors.Is(err, sql.ErrNoRows) {
+			return PlantSuggestion{}, ErrNotFound
+		}
+		if err != nil {
+			return PlantSuggestion{}, err
+		}
+		if intoStatus == SuggestionMerged {
+			return PlantSuggestion{}, ErrInvalidInput // merge into the surviving name
+		}
 	}
 
 	var plantName string
@@ -243,13 +299,18 @@ func (s *Suggestions) Review(ctx context.Context, actor ActorContext, id int64, 
 			WHERE plant_id = $1 AND COALESCE(common_name, '') = ''`, *in.PlantID, name); err != nil {
 			return PlantSuggestion{}, err
 		}
+		// The name people used now finds the plant. Quotations made with it
+		// keep the name as entered.
+		if err := addSuggestionAliasTx(ctx, tx, id, *in.PlantID, actor.UserID, name); err != nil {
+			return PlantSuggestion{}, err
+		}
 	}
 
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE public.plant_suggestions
 		SET status = $2, plant_id = $3, review_note = NULLIF($4, ''), reviewed_by_user_id = $5,
-			reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-		WHERE suggestion_id = $1`, id, action, in.PlantID, note, actor.UserID); err != nil {
+			merged_into_suggestion_id = $6, reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		WHERE suggestion_id = $1`, id, action, in.PlantID, note, actor.UserID, in.IntoSuggest); err != nil {
 		return PlantSuggestion{}, err
 	}
 
@@ -261,10 +322,14 @@ func (s *Suggestions) Review(ctx context.Context, actor ActorContext, id int64, 
 	if action == SuggestionRejected {
 		title, msg = "About your plant suggestion", fmt.Sprintf("%q was not added: %s", name, note)
 	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO public.notifications (user_id, notification_type, title, message, channel, status)
-		VALUES ($1, $2, $3, $4, 'IN_APP', 'PENDING')`, suggester, suggestionNotifType, title, msg); err != nil {
-		return PlantSuggestion{}, err
+	// Only people who sent a suggestion hear back: a name typed into a
+	// quotation request was not one, and a merge or re-link is housekeeping.
+	if source != SourceQuotationItem && action != SuggestionMerged && status == SuggestionPending {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO public.notifications (user_id, notification_type, title, message, channel, status)
+			VALUES ($1, $2, $3, $4, 'IN_APP', 'PENDING')`, suggester, suggestionNotifType, title, msg); err != nil {
+			return PlantSuggestion{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return PlantSuggestion{}, err
@@ -276,7 +341,8 @@ func (s *Suggestions) Review(ctx context.Context, actor ActorContext, id int64, 
 	s.plants.auditSvc.Log(ctx, auditlog.Entry{
 		UserID: actor.UserID, Module: auditlog.ModulePlants, EntityType: auditlog.EntityPlantSuggest, EntityID: id,
 		Action: auditlog.ActionUpdate, Description: fmt.Sprintf("Plant suggestion %q %s", name, strings.ToLower(action)),
-		NewValue: map[string]any{"status": action, "plant_id": in.PlantID}, IPAddress: actor.IPAddress, DeviceInfo: actor.UserAgent,
+		OldValue: map[string]any{"status": status}, NewValue: map[string]any{"status": action, "plant_id": in.PlantID, "into_suggestion_id": in.IntoSuggest},
+		IPAddress: actor.IPAddress, DeviceInfo: actor.UserAgent,
 	})
 	return s.get(ctx, id)
 }
@@ -310,7 +376,7 @@ func (h *Handler) ListSuggestions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	out, err := h.suggestions.List(r.Context(), actor, q.Get("status"), intQuery(q.Get("page")), intQuery(q.Get("per_page")))
+	out, err := h.suggestions.List(r.Context(), actor, q.Get("status"), q.Get("search"), intQuery(q.Get("page")), intQuery(q.Get("per_page")))
 	if err != nil {
 		writeSuggestionError(w, err)
 		return

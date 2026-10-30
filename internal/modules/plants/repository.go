@@ -33,6 +33,8 @@ type Repository interface {
 	ResolveBotanical(ctx context.Context, wfoID string) (plantID int64, created bool, err error)
 	ListBotanical(ctx context.Context, input ListBotanicalRequest) ([]BotanicalRow, int64, error)
 	BotanicalFamilies(ctx context.Context) ([]BotanicalFamily, error)
+	LookupCatalog(ctx context.Context, query string, limit int) ([]CatalogMatch, error)
+	LookupBotanicalFuzzy(ctx context.Context, query string, limit int) ([]BotanicalName, error)
 	GetBotanical(ctx context.Context, wfoID string) (BotanicalDetailResponse, error)
 }
 
@@ -359,6 +361,9 @@ func buildPlantWhere(input ListPlantsRequest) (string, []any) {
 			`(p.plant_code ILIKE '%%' || $%d || '%%' OR p.scientific_name ILIKE '%%' || $%d || '%%' OR p.common_name ILIKE '%%' || $%d || '%%' OR p.english_description ILIKE '%%' || $%d || '%%')`,
 			index, index, index, index,
 		))
+	}
+	if len(input.IDs) > 0 {
+		add(`p.plant_id = ANY($%d::bigint[])`, input.IDs)
 	}
 	if input.CategoryID > 0 {
 		add(`EXISTS (SELECT 1 FROM public.plant_category_mappings pcm WHERE pcm.plant_id = p.plant_id AND pcm.category_id = $%d)`, input.CategoryID)

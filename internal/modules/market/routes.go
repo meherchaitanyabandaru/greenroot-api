@@ -5,12 +5,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
+	"github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
 	"github.com/redis/go-redis/v9"
 )
 
 type Module struct {
 	handler    *Handler
 	moderation *moderationHandler
+	service    *Service
 }
 
 func NewModule(db *sql.DB, jwt *jwtplatform.Service, rdb *redis.Client) Module {
@@ -21,7 +23,15 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service, rdb *redis.Client) Module {
 	} else {
 		svc = NewService(repo)
 	}
-	return Module{handler: NewHandler(svc, jwt), moderation: &moderationHandler{db: db, jwt: jwt, service: svc}}
+	return Module{handler: NewHandler(svc, jwt), moderation: &moderationHandler{db: db, jwt: jwt, service: svc}, service: svc}
+}
+
+// WithStorage: ad photos must be GreenRoot uploads (nil storage: not checked).
+func (m Module) WithStorage(files *storage.Client) Module {
+	if files != nil { // a nil *Client in the interface would not read as nil
+		m.service.UseStorage(files)
+	}
+	return m
 }
 
 func (m Module) RegisterRoutes(r chi.Router) {
