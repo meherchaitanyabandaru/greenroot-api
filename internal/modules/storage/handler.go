@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/imagepolicy"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 	platformstorage "github.com/meherchaitanyabandaru/greenroot-api/platform/storage"
@@ -16,18 +18,11 @@ import (
 
 const presignTTL = 15 * time.Minute
 
-// Uploads clients may make directly, and what each bucket accepts. Other
-// buckets (plant and profile images, quotation and order PDFs) are written
-// by the server only. The file extension comes from the type, never the
+// Uploads clients may make directly: documents only. Photos go through POST
+// /storage/images so each is checked against its image policy; the other
+// buckets (plant and profile images, quotation and order PDFs) are written by
+// the server only. The file extension comes from the type, never the
 // client's file name.
-var imageTypes = map[string]string{
-	"image/jpeg": ".jpg",
-	"image/png":  ".png",
-	"image/webp": ".webp",
-	"image/heic": ".heic",
-	"image/heif": ".heif",
-	"image/gif":  ".gif",
-}
 
 var documentTypes = map[string]string{
 	"application/pdf":    ".pdf",
@@ -40,25 +35,11 @@ var documentTypes = map[string]string{
 	"application/octet-stream": ".bin", // private bucket: always downloaded, never rendered
 }
 
-// Upload size limits. Phone photos are resized before upload (≈1–2 MB);
-// attachments can be scanned documents.
-const (
-	maxImageBytes      = 10 << 20
-	maxAttachmentBytes = 20 << 20
-)
-
-func maxUploadBytes(bucket string) int64 {
-	if bucket == platformstorage.BucketAttachments {
-		return maxAttachmentBytes
-	}
-	return maxImageBytes
-}
+// Attachments can be scanned documents.
+const maxAttachmentBytes = 20 << 20
 
 var clientUploads = map[string][]map[string]string{
-	platformstorage.BucketAttachments:    {imageTypes, documentTypes}, // private
-	platformstorage.BucketDeliveryPhotos: {imageTypes},                // private
-	platformstorage.BucketMarketAds:      {imageTypes},                // public
-	platformstorage.BucketNurseryLogos:   {imageTypes},                // public
+	platformstorage.BucketAttachments: {documentTypes}, // private
 }
 
 // uploadExtension says whether bucket takes contentType and with which extension.
@@ -82,12 +63,14 @@ func normalizeContentType(ct string) string {
 }
 
 type Handler struct {
-	storage *platformstorage.Client
-	jwt     *jwtplatform.Service
+	storage  *platformstorage.Client
+	jwt      *jwtplatform.Service
+	policies *imagepolicy.Store
+	auditSvc *auditlog.Service
 }
 
-func NewHandler(s *platformstorage.Client, jwt *jwtplatform.Service) *Handler {
-	return &Handler{storage: s, jwt: jwt}
+func NewHandler(s *platformstorage.Client, jwt *jwtplatform.Service, policies *imagepolicy.Store, auditSvc *auditlog.Service) *Handler {
+	return &Handler{storage: s, jwt: jwt, policies: policies, auditSvc: auditSvc}
 }
 
 // Presign handles POST /api/v1/storage/presign
@@ -113,8 +96,13 @@ func (h *Handler) Presign(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, 400, "invalid_input", "bucket and file_name are required")
 		return
 	}
+	// Photos are checked by the API, so they are never presigned.
+	if strings.HasPrefix(normalizeContentType(req.ContentType), "image/") {
+		response.Error(w, 400, "use_image_upload", "photos are uploaded with POST /api/v1/storage/images (update the app)")
+		return
+	}
 	if _, ok := clientUploads[req.Bucket]; !ok {
-		response.Error(w, 400, "invalid_bucket", "bucket must be one of: attachments, delivery-photos, market-ads, nursery-logos")
+		response.Error(w, 400, "invalid_bucket", "bucket must be attachments (photos: POST /api/v1/storage/images)")
 		return
 	}
 	// Checked normalized; signed as sent, since the client uploads with its own header.
@@ -124,8 +112,8 @@ func (h *Handler) Presign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if limit := maxUploadBytes(req.Bucket); req.Size <= 0 || req.Size > limit {
-		response.Error(w, 400, "file_too_large", fmt.Sprintf("files up to %d MB can be uploaded here", limit>>20))
+	if req.Size <= 0 || req.Size > maxAttachmentBytes {
+		response.Error(w, 400, "file_too_large", fmt.Sprintf("files up to %d MB can be uploaded here", maxAttachmentBytes>>20))
 		return
 	}
 

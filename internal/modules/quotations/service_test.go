@@ -3,6 +3,7 @@ package quotations
 import (
 	"context"
 	"errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/consent"
 	"strings"
 	"testing"
 	"time"
@@ -98,7 +99,7 @@ func (m *mockRepo) Create(_ context.Context, actorID int64, input CreateQuotatio
 	return q, nil
 }
 
-func (m *mockRepo) Update(_ context.Context, id int64, input UpdateQuotationRequest) (*Quotation, error) {
+func (m *mockRepo) Update(_ context.Context, id, _ int64, input UpdateQuotationRequest) (*Quotation, error) {
 	q, ok := m.quotations[id]
 	if !ok {
 		return nil, ErrNotFound
@@ -754,7 +755,7 @@ func TestBuyerAccept_OnlyFromCustomerSent(t *testing.T) {
 			repo.addQuotation(q)
 			svc := NewService(repo, nil, nil)
 
-			_, err := svc.BuyerAccept(context.Background(), buyerActor(99), 1)
+			_, err := svc.BuyerAccept(context.Background(), buyerActor(99), 1, buyerAcceptOK)
 			if !errors.Is(err, ErrInvalidTransition) {
 				t.Errorf("status %s: expected ErrInvalidTransition, got %v", status, err)
 			}
@@ -771,7 +772,7 @@ func TestBuyerAccept_FromSentSucceeds(t *testing.T) {
 	repo.addQuotation(q)
 	svc := NewService(repo, nil, nil)
 
-	result, err := svc.BuyerAccept(context.Background(), buyerActor(99), 1)
+	result, err := svc.BuyerAccept(context.Background(), buyerActor(99), 1, buyerAcceptOK)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -789,7 +790,7 @@ func TestBuyerAccept_AuditUsesCorrectStatus(t *testing.T) {
 	repo.addQuotation(q)
 	svc := NewService(repo, nil, nil)
 
-	_, err := svc.BuyerAccept(context.Background(), buyerActor(99), 1)
+	_, err := svc.BuyerAccept(context.Background(), buyerActor(99), 1, buyerAcceptOK)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1358,7 +1359,7 @@ func TestBuyerAccept_ExpiredQuotationRejected(t *testing.T) {
 	repo.addQuotation(q)
 	svc := NewService(repo, nil, nil)
 
-	_, err := svc.BuyerAccept(context.Background(), buyerActor(99), 1)
+	_, err := svc.BuyerAccept(context.Background(), buyerActor(99), 1, buyerAcceptOK)
 	if !errors.Is(err, ErrQuotationExpired) {
 		t.Errorf("expired quotation should return ErrQuotationExpired, got %v", err)
 	}
@@ -1373,3 +1374,5 @@ func TestAcceptedMessage_DistanceAndTransport(t *testing.T) {
 		t.Errorf("no distance: got %q", got)
 	}
 }
+
+var buyerAcceptOK = &consent.Given{Version: consent.Templates[consent.BuyerQuotationAccept].Version, Accepted: true}

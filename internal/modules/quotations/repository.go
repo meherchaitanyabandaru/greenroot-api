@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/notifyqueue"
+	"strings"
 	"time"
 
 	apperrs "github.com/meherchaitanyabandaru/greenroot-api/internal/common/errors"
@@ -24,7 +25,12 @@ type Repository interface {
 	List(ctx context.Context, input ListQuotationsRequest) ([]Quotation, int64, error)
 	FindByID(ctx context.Context, id int64) (*Quotation, error)
 	Create(ctx context.Context, actorID int64, input CreateQuotationRequest, createdByName string, nurseryName *string, nurseryPhone *string) (*Quotation, error)
-	Update(ctx context.Context, id int64, input UpdateQuotationRequest) (*Quotation, error)
+	Update(ctx context.Context, id, actorID int64, input UpdateQuotationRequest) (*Quotation, error)
+	RequestTarget(ctx context.Context, nurseryID int64) (requestTarget, error)
+	CountRecentRequests(ctx context.Context, userID int64) (int, error)
+	CreateRequest(ctx context.Context, customerID int64, in CreateRequestInput, t requestTarget, fingerprint string) (*Quotation, error)
+	PriceRequest(ctx context.Context, id int64, in PriceRequestInput) (*Quotation, error)
+	CloseRequest(ctx context.Context, id int64, status string, reason *string) (*Quotation, error)
 	UpdateCustomer(ctx context.Context, id int64, input UpdateQuotationCustomerRequest) (*Quotation, error)
 	Approve(ctx context.Context, id int64, byUserID int64) (*Quotation, error)
 	Recall(ctx context.Context, id int64) (*Quotation, error)
@@ -171,7 +177,7 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 	}
 
 	for _, item := range input.Items {
-		if err := r.createItemTx(ctx, tx, id, item); err != nil {
+		if err := r.createItemTx(ctx, tx, id, actorID, item, true); err != nil {
 			return nil, err
 		}
 	}
@@ -184,7 +190,7 @@ func (r *PostgresRepository) Create(ctx context.Context, actorID int64, input Cr
 	return r.FindByID(ctx, id)
 }
 
-func (r *PostgresRepository) Update(ctx context.Context, id int64, input UpdateQuotationRequest) (*Quotation, error) {
+func (r *PostgresRepository) Update(ctx context.Context, id, actorID int64, input UpdateQuotationRequest) (*Quotation, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -222,7 +228,7 @@ func (r *PostgresRepository) Update(ctx context.Context, id int64, input UpdateQ
 		return nil, err
 	}
 	for _, item := range input.Items {
-		if err := r.createItemTx(ctx, tx, id, item); err != nil {
+		if err := r.createItemTx(ctx, tx, id, actorID, item, true); err != nil {
 			return nil, err
 		}
 	}
@@ -498,7 +504,10 @@ func (r *PostgresRepository) Approve(ctx context.Context, id int64, byUserID int
 		    rejection_reason = NULL,
 		    valid_until = COALESCE(valid_until, CURRENT_TIMESTAMP + INTERVAL '15 days'),
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE quotation_id = $1 AND status = 'CUSTOMER_DRAFT' AND deleted_at IS NULL
+		WHERE quotation_id = $1 AND deleted_at IS NULL
+		  AND (status = 'CUSTOMER_DRAFT'
+		       OR status = 'CUSTOMER_REQUESTED' AND NOT EXISTS (
+		           SELECT 1 FROM public.quotation_items qi WHERE qi.quotation_id = $1 AND qi.unit_price IS NULL))
 	`, id)
 	if err != nil {
 		return nil, err
@@ -512,7 +521,8 @@ func (r *PostgresRepository) Approve(ctx context.Context, id int64, byUserID int
 func (r *PostgresRepository) Recall(ctx context.Context, id int64) (*Quotation, error) {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE public.quotations
-		SET status = 'CUSTOMER_DRAFT', updated_at = CURRENT_TIMESTAMP
+		SET status = CASE WHEN requested_by_user_id IS NULL THEN 'CUSTOMER_DRAFT' ELSE 'CUSTOMER_REQUESTED' END,
+		    updated_at = CURRENT_TIMESTAMP
 		WHERE quotation_id = $1 AND status = 'CUSTOMER_SENT' AND deleted_at IS NULL
 	`, id)
 	if err != nil {
@@ -682,10 +692,14 @@ func (r *PostgresRepository) CreateOrderAndConvert(ctx context.Context, q *Quota
 		if item.PlantID != nil {
 			plantID = sql.NullInt64{Int64: *item.PlantID, Valid: true}
 		}
+		// A custom plant goes to the order as entered (name snapshot) with
+		// its specifications; GreenRoot's later mapping does not change it.
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO public.order_items (order_id, plant_id, quantity, unit_price, total_price, created_at)
-			VALUES ($1,$2,$3,$4,$5,CURRENT_TIMESTAMP)
-		`, orderID, plantID, item.Quantity, item.UnitPrice, item.TotalPrice); err != nil {
+			INSERT INTO public.order_items (order_id, plant_id, plant_name_snapshot, size, remarks, plant_suggestion_id,
+				quantity, unit_price, total_price, created_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,CURRENT_TIMESTAMP)
+		`, orderID, plantID, itemName(item), item.SizeDescription, itemSpecs(item), item.PlantSuggestionID,
+			item.Quantity, item.UnitPrice, item.TotalPrice); err != nil {
 			return 0, err
 		}
 	}
@@ -754,25 +768,68 @@ func (r *PostgresRepository) listItems(ctx context.Context, qID int64) ([]Quotat
 	return items, rows.Err()
 }
 
-func (r *PostgresRepository) createItemTx(ctx context.Context, tx *sql.Tx, qID int64, input QuotationItemRequest) error {
-	scientific, common, err := r.GetPlantInfo(ctx, input.PlantID)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return fmt.Errorf("plant %d not found: %w", input.PlantID, ErrPlantNotFound)
+// createItemTx adds one line. A catalog plant carries its names; a custom
+// plant keeps the name as entered and is registered with GreenRoot's list of
+// names people could not find (plant_suggestions) for admins to map later.
+// actorID is who wrote the line. Prices are NULL until the nursery prices a
+// customer's request (priced false).
+func (r *PostgresRepository) createItemTx(ctx context.Context, tx *sql.Tx, qID, actorID int64, input QuotationItemRequest, priced bool) error {
+	var plantID, suggestionID sql.NullInt64
+	var scientific, common sql.NullString
+	if input.PlantID > 0 {
+		sci, com, err := r.GetPlantInfo(ctx, input.PlantID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return fmt.Errorf("plant %d not found: %w", input.PlantID, ErrPlantNotFound)
+			}
+			return err
 		}
-		return err
+		plantID = sql.NullInt64{Int64: input.PlantID, Valid: true}
+		scientific, common = sql.NullString{String: sci, Valid: true}, sql.NullString{String: com, Valid: com != ""}
+	} else {
+		id, err := customNameTx(ctx, tx, *input.CustomPlantName, input.ScientificName, actorID)
+		if err != nil {
+			return err
+		}
+		suggestionID = sql.NullInt64{Int64: id, Valid: true}
+		if input.ScientificName != nil {
+			scientific = sql.NullString{String: *input.ScientificName, Valid: true}
+		}
 	}
-	const query = `
+	var unit, total any
+	if priced {
+		unit, total = input.UnitPrice, input.TotalPrice
+	}
+	_, err := tx.ExecContext(ctx, `
 		INSERT INTO public.quotation_items (
-			quotation_id, plant_id, scientific_name, common_name, description, quantity, unit_price, total_price, created_at
+			quotation_id, plant_id, scientific_name, common_name, description, quantity, unit_price, total_price,
+			custom_plant_name, plant_suggestion_id, variety, size_description, grade, created_at
 		)
-		VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),$6,$7,$8,CURRENT_TIMESTAMP)
-	`
-	_, err = tx.ExecContext(ctx, query,
-		qID, input.PlantID, scientific, common, stringOrEmpty(input.Description),
-		input.Quantity, input.UnitPrice, input.TotalPrice,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,CURRENT_TIMESTAMP)`,
+		qID, plantID, scientific, common, input.Description, input.Quantity, unit, total,
+		input.CustomPlantName, suggestionID, input.Variety, input.SizeDescription, input.Grade,
 	)
 	return err
+}
+
+// customNameTx returns the plant_suggestions row for a name people could not
+// find: the open (or already linked) one with the same normal form, else a
+// new PENDING one from this quotation line. Never blocks the quotation.
+func customNameTx(ctx context.Context, tx *sql.Tx, name string, scientific *string, actorID int64) (int64, error) {
+	var id int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT suggestion_id FROM public.plant_suggestions
+		WHERE search_key = public.plant_search_key($1) AND status IN ('PENDING', 'LINKED', 'APPROVED')
+		ORDER BY (status = 'PENDING') DESC, suggestion_id DESC LIMIT 1`, name).Scan(&id)
+	if err == nil || !errors.Is(err, sql.ErrNoRows) {
+		return id, err
+	}
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO public.plant_suggestions (name, scientific_name, suggested_by_user_id, source)
+		VALUES ($1, $2, $3, 'QUOTATION_ITEM')
+		ON CONFLICT (lower(name)) WHERE status = 'PENDING' DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+		RETURNING suggestion_id`, name, scientific, actorID).Scan(&id)
+	return id, err
 }
 
 func (r *PostgresRepository) refreshTotalTx(ctx context.Context, tx *sql.Tx, qID int64) error {
@@ -979,4 +1036,35 @@ func (r *PostgresRepository) CreateNotification(ctx context.Context, userID int6
 		userID, notifType, title, message, notifyqueue.DataJSON(data),
 	)
 	return err
+}
+
+// itemName is how a line names its plant: the customer's own name for a
+// custom plant, else the common name, else the scientific name.
+func itemName(it QuotationItem) string {
+	if it.CustomPlantName != nil {
+		return *it.CustomPlantName
+	}
+	if it.CommonName != nil && *it.CommonName != "" {
+		return *it.CommonName
+	}
+	return it.ScientificName
+}
+
+// itemSpecs joins variety, grade and the line note for the order's remarks.
+func itemSpecs(it QuotationItem) *string {
+	var parts []string
+	if it.Variety != nil {
+		parts = append(parts, "Variety: "+*it.Variety)
+	}
+	if it.Grade != nil {
+		parts = append(parts, "Grade: "+*it.Grade)
+	}
+	if it.Description != nil && strings.TrimSpace(*it.Description) != "" {
+		parts = append(parts, strings.TrimSpace(*it.Description))
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	s := strings.Join(parts, " · ")
+	return &s
 }

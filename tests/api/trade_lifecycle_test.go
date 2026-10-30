@@ -60,7 +60,9 @@ func TestQuotationLifecycle_AllRoles(t *testing.T) {
 		assertQuotationStatus(t, post(t, fmt.Sprintf("/api/v1/quotations/%d/send", qID), nil, managerToken), http.StatusOK, "CUSTOMER_SENT")
 		assertStatus(t, post(t, fmt.Sprintf("/api/v1/quotations/%d/buyer-accept", qID), nil, ownerToken), http.StatusForbidden)
 		assertStatus(t, post(t, fmt.Sprintf("/api/v1/quotations/%d/buyer-accept", qID), nil, secondOwnerToken), http.StatusForbidden)
-		assertQuotationStatus(t, post(t, fmt.Sprintf("/api/v1/quotations/%d/buyer-accept", qID), nil, buyerToken), http.StatusOK, "CUSTOMER_ACCEPTED")
+		// Accepting needs the buyer's acknowledgement (GET /consents/templates).
+		assertStatus(t, post(t, fmt.Sprintf("/api/v1/quotations/%d/buyer-accept", qID), nil, buyerToken), http.StatusUnprocessableEntity)
+		assertQuotationStatus(t, post(t, fmt.Sprintf("/api/v1/quotations/%d/buyer-accept", qID), map[string]any{"consent": consentGiven}, buyerToken), http.StatusOK, "CUSTOMER_ACCEPTED")
 		assertStatus(t, post(t, fmt.Sprintf("/api/v1/quotations/%d/buyer-reject", qID), map[string]any{"reason": "late"}, buyerToken), http.StatusConflict)
 		assertStatus(t, post(t, fmt.Sprintf("/api/v1/quotations/%d/convert-to-order", qID), nil, buyerToken), http.StatusForbidden)
 
@@ -132,7 +134,8 @@ func TestOrderLifecycle_AllRoles(t *testing.T) {
 		assertOrderStatus(t, post(t, fmt.Sprintf("/api/v1/orders/%d/start-loading", orderID), nil, managerToken), http.StatusOK, "LOADING")
 		assertStatus(t, putReq(t, fmt.Sprintf("/api/v1/orders/%d/items/%d/loaded-quantity", orderID, itemID), map[string]any{"loaded_quantity": 2}, buyerToken), http.StatusForbidden)
 		assertStatus(t, putReq(t, fmt.Sprintf("/api/v1/orders/%d/items/%d/loaded-quantity", orderID, itemID), map[string]any{"loaded_quantity": 2}, managerToken), http.StatusOK)
-		assertOrderStatus(t, post(t, fmt.Sprintf("/api/v1/orders/%d/complete-loading", orderID), map[string]any{"declared_no_prohibited_items": true}, managerToken), http.StatusOK, "LOADED")
+		assertStatus(t, post(t, fmt.Sprintf("/api/v1/orders/%d/complete-loading", orderID), map[string]any{"declared_no_prohibited_items": true}, managerToken), http.StatusUnprocessableEntity)
+		assertOrderStatus(t, post(t, fmt.Sprintf("/api/v1/orders/%d/complete-loading", orderID), map[string]any{"declared_no_prohibited_items": true, "consent": consentGiven}, managerToken), http.StatusOK, "LOADED")
 		assertStatus(t, post(t, fmt.Sprintf("/api/v1/orders/%d/cancel", orderID), map[string]any{"reason": "too late"}, ownerToken), http.StatusConflict)
 		assertStatus(t, putReq(t, fmt.Sprintf("/api/v1/orders/%d/status", orderID), map[string]any{"order_status": "COMPLETED"}, driverToken), http.StatusForbidden)
 		assertOrderStatus(t, putReq(t, fmt.Sprintf("/api/v1/orders/%d/status", orderID), map[string]any{"order_status": "COMPLETED"}, ownerToken), http.StatusOK, "COMPLETED")
@@ -220,3 +223,6 @@ func assertOrderStatus(t *testing.T, resp *http.Response, wantHTTP int, wantStat
 		t.Fatalf("order status: got %q, want %q", result.Order.Status, wantStatus)
 	}
 }
+
+// consentGiven confirms the current (version 1) wording of a step.
+var consentGiven = map[string]any{"consent_version": 1, "accepted": true}

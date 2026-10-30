@@ -60,10 +60,14 @@ func buildQuotationPDF(q Quotation, verifyURL string, extras PDFContactExtras) [
 
 	for _, it := range q.Items {
 		title, sub := plantNames(it.ScientificName, it.CommonName)
+		if it.IsCustom {
+			// As the customer named it; marked so nobody mistakes it for a catalog plant.
+			title, sub = itemName(it), pdfdoc.Join("  ·  ", it.ScientificName, "Not in GreenRoot's plant list")
+		}
 		doc.Rows = append(doc.Rows, pdfdoc.Row{
 			Title:    title,
 			Subtitle: sub,
-			Detail:   textOr(it.Description, ""),
+			Detail:   pdfdoc.Join("  ·  ", textOr(it.SizeDescription, ""), textOr(itemSpecs(it), "")),
 			Cells:    []string{pdfdoc.Qty(it.Quantity), FormatINR(it.UnitPrice), FormatINR(it.TotalPrice)},
 		})
 	}

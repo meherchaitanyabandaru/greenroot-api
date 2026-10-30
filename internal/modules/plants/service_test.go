@@ -3,6 +3,8 @@ package plants
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -17,6 +19,9 @@ type mockRepo struct {
 
 	botanicalQueries []string
 	botanicalNames   []BotanicalName // overrides LookupBotanical's default names
+	fuzzyNames       []BotanicalName // LookupBotanicalFuzzy's answer
+	fuzzyQueries     []string
+	aliases          map[int64][]string // plant id → other names
 	lastBrowse       ListBotanicalRequest
 
 	nextPlantID    int64
@@ -45,9 +50,42 @@ func (m *mockRepo) seedPlant(id int64, sciName string) *Plant {
 func (m *mockRepo) List(_ context.Context, req ListPlantsRequest) ([]Plant, int64, error) {
 	result := make([]Plant, 0, len(m.plants))
 	for _, p := range m.plants {
+		if len(req.IDs) > 0 && !slices.Contains(req.IDs, p.ID) {
+			continue
+		}
 		result = append(result, *p)
 	}
 	return result, int64(len(result)), nil
+}
+
+// LookupCatalog mirrors the SQL's order: names before aliases.
+func (m *mockRepo) LookupCatalog(_ context.Context, query string, limit int) ([]CatalogMatch, error) {
+	q := strings.ToLower(strings.TrimSpace(query))
+	var out []CatalogMatch
+	for id, p := range m.plants {
+		if strings.Contains(strings.ToLower(p.ScientificName), q) {
+			out = append(out, CatalogMatch{PlantID: id, MatchType: "NAME"})
+			continue
+		}
+		for _, a := range m.aliases[id] {
+			if strings.Contains(strings.ToLower(a), q) {
+				out = append(out, CatalogMatch{PlantID: id, MatchType: "ALIAS", MatchedName: &a})
+				break
+			}
+		}
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (m *mockRepo) LookupBotanicalFuzzy(_ context.Context, query string, limit int) ([]BotanicalName, error) {
+	m.fuzzyQueries = append(m.fuzzyQueries, query)
+	if len(m.fuzzyNames) > limit {
+		return m.fuzzyNames[:limit], nil
+	}
+	return m.fuzzyNames, nil
 }
 
 func (m *mockRepo) FindByID(_ context.Context, id int64) (*Plant, error) {
@@ -462,6 +500,49 @@ func TestLookup_ShortQuerySkipsBotanicalNames(t *testing.T) {
 	}
 	if len(repo.botanicalQueries) != 0 {
 		t.Fatal("2-letter query must not search 1.66 M botanical names")
+	}
+}
+
+func TestLookup_LocalNameFindsThePlant(t *testing.T) {
+	repo := newMock()
+	repo.seedPlant(7, "Mangifera indica")
+	repo.aliases = map[int64][]string{7: {"Maamidi"}}
+	results, err := svc(repo).Lookup(context.Background(), LookupRequest{Query: "maamidi", Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Plant == nil || results[0].Plant.ID != 7 || results[0].MatchType != "ALIAS" ||
+		results[0].MatchedName == nil || *results[0].MatchedName != "Maamidi" {
+		t.Fatalf("want Mangifera indica found by its local name, got %+v", results)
+	}
+}
+
+func TestLookup_NearSpellingsAreOfferedLast(t *testing.T) {
+	repo := newMock()
+	repo.botanicalNames = []BotanicalName{}
+	repo.fuzzyNames = []BotanicalName{{WfoID: "wfo-m", ScientificName: "Mangifera indica"}}
+	results, err := svc(repo).Lookup(context.Background(), LookupRequest{Query: "mangifra indca"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].MatchType != "BOTANICAL_FUZZY" || results[0].Name.WfoID != "wfo-m" {
+		t.Fatalf("want the near spelling offered, got %+v", results)
+	}
+	repo.fuzzyQueries = nil
+	if _, err := svc(repo).Lookup(context.Background(), LookupRequest{Query: "man"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.fuzzyQueries) != 0 {
+		t.Fatal("3 letters are too few to compare spellings")
+	}
+}
+
+func TestLookup_EmptyQueryFindsNothing(t *testing.T) {
+	repo := newMock()
+	repo.seedPlant(1, "Rosa indica")
+	results, err := svc(repo).Lookup(context.Background(), LookupRequest{Query: "   "})
+	if err != nil || len(results) != 0 {
+		t.Fatalf("want nothing for an empty query, got %+v %v", results, err)
 	}
 }
 

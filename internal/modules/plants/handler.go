@@ -14,6 +14,7 @@ import (
 type Handler struct {
 	service     *Service
 	suggestions *Suggestions
+	aliases     *Aliases
 	jwt         *jwtplatform.Service
 }
 

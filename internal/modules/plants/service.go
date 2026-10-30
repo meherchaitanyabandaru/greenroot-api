@@ -311,10 +311,12 @@ func (s *Service) invalidateSearch(ctx context.Context) {
 	redisutil.BumpSearchGeneration(ctx, s.redis, nil, searchModule, searchSharedScope)
 }
 
-// Lookup serves every plant picker: catalog plants first (they carry prices
-// and stock), then botanical names not in the catalog yet. It reads the
+// Lookup serves every plant picker: catalog plants first (by name, by any of
+// their aliases such as local names, then near spellings), then botanical
+// names not in the catalog yet (substring, then near spellings). It reads the
 // database directly, not the search cache, so a plant resolved a moment ago
-// shows up as a catalog plant immediately.
+// shows up as a catalog plant immediately. Results are offers: the apps
+// never pick one for the user and always allow "Other / not listed".
 func (s *Service) Lookup(ctx context.Context, input LookupRequest) ([]LookupResult, error) {
 	q := strings.Join(strings.Fields(input.Query), " ")
 	limit := input.Limit
@@ -324,34 +326,56 @@ func (s *Service) Lookup(ctx context.Context, input LookupRequest) ([]LookupResu
 	if limit > 50 {
 		limit = 50
 	}
-	plants, _, err := s.repository.List(ctx, ListPlantsRequest{Page: 1, PerPage: limit, Search: q, SortBy: "scientific_name", SortOrder: "asc"})
+	results := make([]LookupResult, 0, limit)
+	if q == "" {
+		return results, nil
+	}
+	matches, err := s.repository.LookupCatalog(ctx, q, limit)
 	if err != nil {
 		return nil, err
 	}
-	results := make([]LookupResult, 0, limit)
-	for i := range plants {
-		results = append(results, LookupResult{Plant: &plants[i]})
+	if len(matches) > 0 {
+		ids := make([]int64, len(matches))
+		for i, m := range matches {
+			ids[i] = m.PlantID
+		}
+		plants, _, err := s.repository.List(ctx, ListPlantsRequest{Page: 1, PerPage: len(ids), IDs: ids, SortBy: "id"})
+		if err != nil {
+			return nil, err
+		}
+		byID := make(map[int64]*Plant, len(plants))
+		for i := range plants {
+			byID[plants[i].ID] = &plants[i]
+		}
+		for _, m := range matches {
+			if p := byID[m.PlantID]; p != nil {
+				results = append(results, LookupResult{Plant: p, MatchType: m.MatchType, MatchedName: m.MatchedName})
+			}
+		}
 	}
 	if len([]rune(q)) < minBotanicalQuery || len(results) >= limit {
 		return results, nil
+	}
+	seen := map[string]bool{}
+	add := func(names []BotanicalName, matchType string) {
+		for i := range names {
+			if k := botanicalKey(names[i]); !seen[k] && len(results) < limit {
+				seen[k] = true
+				results = append(results, LookupResult{Name: &names[i], MatchType: matchType})
+			}
+		}
 	}
 	names, err := s.repository.LookupBotanical(ctx, q, limit-len(results))
 	if err != nil {
 		return nil, err
 	}
-	// WFO has a few duplicate records (same name and author, two IDs); the
-	// picker would show identical rows, so the first one stands for both.
-	seen := map[string]bool{}
-	for i := range names {
-		key := names[i].ScientificName
-		if a := names[i].Authorship; a != nil {
-			key += "|" + strings.TrimSpace(*a)
+	add(names, "BOTANICAL")
+	if len(results) < limit && len([]rune(q)) >= minFuzzyQuery {
+		fuzzy, err := s.repository.LookupBotanicalFuzzy(ctx, q, limit-len(results))
+		if err != nil {
+			return nil, err
 		}
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		results = append(results, LookupResult{Name: &names[i]})
+		add(fuzzy, "BOTANICAL_FUZZY")
 	}
 	return results, nil
 }

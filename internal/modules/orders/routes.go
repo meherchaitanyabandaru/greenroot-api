@@ -2,6 +2,7 @@ package orders
 
 import (
 	"database/sql"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/consent"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
@@ -31,6 +32,12 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, st
 }
 
 // WithEvents sends order events by SMS too (messaging.Notifier).
+// WithConsents stores the parties' confirmations.
+func (m Module) WithConsents(c *consent.Store) Module {
+	m.service.UseConsents(c)
+	return m
+}
+
 func (m Module) WithEvents(n EventNotifier) Module {
 	m.service.SetEvents(n)
 	return m
@@ -51,6 +58,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Post("/{id}/start-loading", m.handler.StartLoading)
 		r.Post("/{id}/complete-loading", m.handler.CompleteLoading)
 		r.Get("/{id}/loading-proof", m.handler.LoadingProof)
+		r.Get("/{id}/consents", m.handler.Consents) // confirmations given by the parties
 		r.Post("/{id}/cancel", m.handler.CancelOrder)
 		r.Post("/{id}/assign-manager", m.handler.AssignManager)
 		// Items

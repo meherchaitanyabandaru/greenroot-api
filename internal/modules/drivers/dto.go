@@ -1,6 +1,10 @@
 package drivers
 
-import "github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+import (
+	"time"
+
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
+)
 
 type ListDriversRequest struct {
 	Page    int
@@ -23,11 +27,21 @@ type DriverRequest struct {
 }
 
 // ApplyDriverRequest is used by a user to self-register as a driver (V1 flow).
+// The lorry it names becomes the driver's first lorry link; without is_owner
+// or owner_name (older apps) the driver is taken as its owner.
 type ApplyDriverRequest struct {
 	LicenceNumber   string  `json:"licence_number"`
 	LicencePhotoURL *string `json:"licence_photo_url"`
-	VehicleNumber   string  `json:"vehicle_number"`
-	VehicleType     string  `json:"vehicle_type"`
+	// LicenceExpiryDate is YYYY-MM-DD; optional for older apps, never in the past.
+	LicenceExpiryDate *string `json:"licence_expiry_date"`
+	VehicleNumber     string  `json:"vehicle_number"`
+	VehicleType       string  `json:"vehicle_type"`
+	IsOwner           bool    `json:"is_owner"`
+	OwnerName         *string `json:"owner_name"`
+	OwnerMobile       *string `json:"owner_mobile"`
+
+	expiry *time.Time // parsed LicenceExpiryDate
+	owner  ownerInput // checked owner_name/owner_mobile
 }
 
 // ApproveDriverRequest is used by admin to approve a driver profile.

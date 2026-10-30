@@ -9,6 +9,8 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/clientip"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/consent"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/imagepolicy"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
 	appmiddleware "github.com/meherchaitanyabandaru/greenroot-api/internal/middleware"
@@ -32,6 +34,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/quotations"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/ratings"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/reports"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/risk"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/search"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sms"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/sourcing"
@@ -107,15 +110,20 @@ func NewRouter(deps Dependencies) chi.Router {
 		emailModule := email.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Email)
 		emailModule.RegisterRoutes(r)
 		notifier := newNotifier(deps, smsModule, emailModule)
+		// One cache of the image upload rules for every module that takes photos.
+		imagePolicies := imagepolicy.NewStore(deps.DB)
+		// The parties' confirmations at loading, trip start, acceptance and delivery.
+		consents := consent.NewStore(deps.DB)
+		r.Get("/consents/templates", consent.TemplatesHandler)
 
 		auth.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Redis, smsModule.Service(), notifier).RegisterRoutes(r)
 		admin.NewModule(deps.DB, deps.JWT, redisClients...).RegisterRoutes(r)
 		attachments.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
 		audit.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
-		dispatches.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Config.DeliveryCodeKey(), redisClients...).WithEvents(notifier).RegisterRoutes(r)
+		dispatches.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Config.DeliveryCodeKey(), redisClients...).WithEvents(notifier).WithConsents(consents).RegisterRoutes(r)
 		drivers.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, redisClients...).RegisterRoutes(r)
 		topitems.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
-		market.NewModule(deps.DB, deps.JWT, deps.Redis).RegisterRoutes(r)
+		market.NewModule(deps.DB, deps.JWT, deps.Redis).WithStorage(deps.Storage).RegisterRoutes(r)
 		invites.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...).RegisterRoutes(r)
 		notifications.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Push).RegisterRoutes(r)
 		subModule := subscriptions.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...)
@@ -123,8 +131,8 @@ func NewRouter(deps Dependencies) chi.Router {
 			subModule.Service().SetGateway(deps.Razorpay, deps.Config.Razorpay.WebhookSecret)
 		}
 		nurseries.NewModuleWithTrial(deps.DB, deps.JWT, deps.Audit, subModule.Service(), redisClients...).WithEvents(notifier).RegisterRoutes(r)
-		orders.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, redisClients...).WithEvents(notifier).RegisterRoutes(r)
-		quotations.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, redisClients...).WithEvents(notifier).RegisterRoutes(r)
+		orders.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, redisClients...).WithEvents(notifier).WithConsents(consents).RegisterRoutes(r)
+		quotations.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Storage, redisClients...).WithEvents(notifier).WithConsents(consents).RegisterRoutes(r)
 		payments.NewModule(deps.DB, deps.JWT, deps.Audit, notifier).RegisterRoutes(r)
 		plants.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...).RegisterRoutes(r)
 		ratings.NewModule(deps.DB, deps.JWT).RegisterRoutes(r)
@@ -132,11 +140,12 @@ func NewRouter(deps Dependencies) chi.Router {
 		clientapp.NewModule(deps.DB, deps.Config.Client, deps.Redis).RegisterRoutes(r)
 		search.NewModule(deps.JWT, redisClients...).RegisterRoutes(r)
 		sourcing.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
-		storage.NewModule(deps.DB, deps.JWT, deps.Storage).RegisterRoutes(r)
+		storage.NewModule(deps.DB, deps.JWT, deps.Storage, imagePolicies, deps.Audit).RegisterRoutes(r)
 		subModule.RegisterRoutes(r)
 		tracking.NewModule(deps.DB, deps.JWT, redisClients...).RegisterRoutes(r)
-		vehicles.NewModule(deps.DB, deps.JWT, deps.Audit).RegisterRoutes(r)
-		users.NewModule(deps.DB, deps.JWT, deps.Storage, deps.Audit, deps.Redis, emailModule.Service(), smsModule.Service()).RegisterRoutes(r)
+		vehicles.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...).RegisterRoutes(r)
+		risk.NewModule(deps.DB, deps.JWT, deps.Audit, optionalCmdable(deps.Redis)).RegisterRoutes(r)
+		users.NewModule(deps.DB, deps.JWT, deps.Storage, deps.Audit, deps.Redis, emailModule.Service(), smsModule.Service()).WithImagePolicies(imagePolicies).RegisterRoutes(r)
 	})
 
 	return router
@@ -174,4 +183,12 @@ func swaggerHTML(w http.ResponseWriter, r *http.Request) {
 // background jobs (trial reminders) share it.
 func newNotifier(deps Dependencies, smsModule sms.Module, emailModule email.Module) *messaging.Notifier {
 	return messaging.NewNotifier(messaging.NewUserRecipients(deps.DB), smsModule.Service(), emailModule.Service())
+}
+
+// optionalCmdable keeps a nil *redis.Client from becoming a non-nil interface.
+func optionalCmdable(client *redis.Client) redis.Cmdable {
+	if client == nil {
+		return nil
+	}
+	return client
 }

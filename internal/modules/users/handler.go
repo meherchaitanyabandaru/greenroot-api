@@ -5,16 +5,19 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/authctx"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/imagepolicy"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/response"
 	jwtplatform "github.com/meherchaitanyabandaru/greenroot-api/platform/jwt"
 )
 
 type Handler struct {
-	service *Service
-	jwt     *jwtplatform.Service
+	service  *Service
+	jwt      *jwtplatform.Service
+	policies *imagepolicy.Store // nil: imagepolicy.Defaults
 }
 
 func NewHandler(service *Service, jwt *jwtplatform.Service) *Handler {
@@ -107,39 +110,40 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const maxSize = 5 << 20 // 5 MB
-	if err := r.ParseMultipartForm(maxSize); err != nil {
+	policy := imagepolicy.Defaults[imagepolicy.Selfie]
+	if h.policies != nil {
+		policy = h.policies.Get(r.Context(), imagepolicy.Selfie)
+	}
+	if err := r.ParseMultipartForm(policy.MaxBytes + 64<<10); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid_form", "could not parse multipart form")
 		return
 	}
 
-	file, header, err := r.FormFile("avatar")
+	file, _, err := r.FormFile("avatar")
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "missing_file", "avatar field is required")
 		return
 	}
 	defer file.Close()
 
-	if header.Size > maxSize {
-		response.Error(w, http.StatusBadRequest, "file_too_large", "avatar must be under 5 MB")
-		return
-	}
-
-	data, err := io.ReadAll(file)
+	data, err := io.ReadAll(io.LimitReader(file, policy.MaxBytes+1))
 	if err != nil {
 		response.Error(w, http.StatusInternalServerError, "read_error", "could not read uploaded file")
 		return
 	}
 
 	// The type comes from the bytes, not the client's header: the avatar is
-	// served from a public bucket.
-	exts := map[string]string{"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}
-	contentType := http.DetectContentType(data)
-	ext, ok := exts[contentType]
-	if !ok {
-		response.Error(w, http.StatusBadRequest, "invalid_image", "the profile photo must be a JPG, PNG, WebP or GIF image")
+	// served from a public bucket. Size, sides and format follow the SELFIE policy.
+	info, err := imagepolicy.Check(policy, data)
+	if err != nil {
+		code := "invalid_image"
+		if errors.Is(err, imagepolicy.ErrTooLarge) {
+			code = "file_too_large"
+		}
+		response.Error(w, http.StatusBadRequest, code, imagepolicy.Message(policy, err))
 		return
 	}
+	contentType, ext := info.ContentType, strings.TrimPrefix(info.Ext, ".")
 
 	user, err := h.service.UploadAvatar(r.Context(), actor, data, contentType, ext)
 	if err != nil {

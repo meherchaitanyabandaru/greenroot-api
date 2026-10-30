@@ -42,12 +42,19 @@ type AcceptRejectQuotationRequest struct {
 	Reason *string `json:"reason"`
 }
 
+// QuotationItemRequest is a catalog plant (plant_id) or a plant the customer
+// could not find (custom_plant_name, kept exactly as entered), never both.
 type QuotationItemRequest struct {
-	PlantID     int64   `json:"plant_id"`
-	Description *string `json:"description"`
-	Quantity    float64 `json:"quantity"`
-	UnitPrice   float64 `json:"unit_price"`
-	TotalPrice  float64 `json:"total_price"`
+	PlantID         int64   `json:"plant_id"`
+	CustomPlantName *string `json:"custom_plant_name"`
+	ScientificName  *string `json:"scientific_name"` // optional, custom plants only
+	Variety         *string `json:"variety"`
+	SizeDescription *string `json:"size_description"`
+	Grade           *string `json:"grade"`
+	Description     *string `json:"description"`
+	Quantity        float64 `json:"quantity"`
+	UnitPrice       float64 `json:"unit_price"`
+	TotalPrice      float64 `json:"total_price"`
 }
 
 type Pagination = response.Pagination

@@ -149,6 +149,55 @@ func (h *Handler) StopDriving(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, MessageResponse{Message: "You have stopped driving"})
 }
 
+// MyVehicles lists the caller's lorry links and which can take a trip now.
+func (h *Handler) MyVehicles(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	vehicles, err := h.service.MyVehicles(r.Context(), actor)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, MyVehiclesResponse{Vehicles: vehicles})
+}
+
+// AddVehicle asks GreenRoot to link the caller to a lorry (POST /drivers/me/vehicles).
+func (h *Handler) AddVehicle(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	var req AddVehicleRequest
+	if !response.DecodeJSON(w, r, &req) {
+		return
+	}
+	vehicle, err := h.service.AddVehicle(r.Context(), actor, req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusCreated, MyVehicleResponse{Vehicle: vehicle})
+}
+
+// RemoveVehicle ends one of the caller's lorry links.
+func (h *Handler) RemoveVehicle(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	linkID, ok := pathID(w, r, "linkId")
+	if !ok {
+		return
+	}
+	if err := h.service.RemoveVehicle(r.Context(), actor, linkID); err != nil {
+		writeError(w, err)
+		return
+	}
+	response.OK(w, MessageResponse{Message: "Lorry removed"})
+}
+
 // ApproveDriver approves a driver profile (admin only).
 func (h *Handler) ApproveDriver(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.actor(w, r)
@@ -237,6 +286,14 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusConflict, "active_trip", "finish or hand over your active trip before you stop driving")
 	case errors.Is(err, ErrInvalidLicencePhoto):
 		response.Error(w, http.StatusBadRequest, "invalid_licence_photo", "upload the licence photo again")
+	case errors.Is(err, ErrVehicleLinked):
+		response.Error(w, http.StatusConflict, "vehicle_already_linked", "You have already added this lorry.")
+	case errors.Is(err, ErrVehicleOnTrip):
+		response.Error(w, http.StatusConflict, "vehicle_on_active_trip", "Finish the trip with this lorry before you remove it.")
+	case errors.Is(err, ErrLicenceExpired):
+		response.Error(w, http.StatusBadRequest, "licence_expired", "Your licence has expired. Renew it before you register.")
+	case errors.Is(err, ErrInvalidOwnerPhone):
+		response.Error(w, http.StatusBadRequest, "invalid_owner_mobile", "Enter the owner's 10-digit mobile number, or leave it empty.")
 	case errors.Is(err, ErrOwnerCannotBeDriver):
 		response.Error(w, http.StatusConflict, "owner_conflict", "nursery owners cannot register as a driver")
 	default:

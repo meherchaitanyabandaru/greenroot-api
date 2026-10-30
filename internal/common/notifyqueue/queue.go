@@ -2,6 +2,7 @@ package notifyqueue
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,9 @@ const (
 	EventQuotationAccepted = "QUOTATION_ACCEPTED"
 	EventOrderDelivered    = "ORDER_DELIVERED"
 	EventDeliveryIssue     = "DELIVERY_ISSUE"
+	// GreenRoot decided on a driver's lorry link or on the lorry itself.
+	EventVehicleLinkDecided = "VEHICLE_LINK_DECIDED"
+	EventVehicleDecided     = "VEHICLE_DECIDED"
 )
 
 var ErrUnavailable = errors.New("notification queue unavailable")
@@ -102,4 +106,20 @@ func parseInt64(value any) (int64, error) {
 	default:
 		return 0, strconv.ErrSyntax
 	}
+}
+
+// EnqueueOrStore queues event for the worker (push + in-app) and, when the
+// queue is unavailable, stores it straight in notifications so the user still
+// sees it in the app.
+func EnqueueOrStore(ctx context.Context, rdb redis.Cmdable, db *sql.DB, event Event) error {
+	if err := Enqueue(ctx, rdb, event); err == nil {
+		return nil
+	} else if db == nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO public.notifications (user_id, notification_type, title, message, channel, status, data)
+		 VALUES ($1, $2, $3, $4, 'IN_APP', 'PENDING', $5::jsonb)`,
+		event.UserID, event.Type, event.Title, event.Message, DataJSON(event.Data))
+	return err
 }

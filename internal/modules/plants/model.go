@@ -80,7 +80,12 @@ type BotanicalName struct {
 }
 
 // LookupResult is one plant-picker row: exactly one of Plant or Name is set.
+// MatchType says why it matched: NAME, ALIAS (MatchedName is the other name
+// that matched, e.g. a local name), FUZZY (a near spelling: shown as a
+// suggestion, never picked for the user), BOTANICAL or BOTANICAL_FUZZY.
 type LookupResult struct {
-	Plant *Plant         `json:"plant,omitempty"`
-	Name  *BotanicalName `json:"name,omitempty"`
+	Plant       *Plant         `json:"plant,omitempty"`
+	Name        *BotanicalName `json:"name,omitempty"`
+	MatchType   string         `json:"match_type"`
+	MatchedName *string        `json:"matched_name,omitempty"`
 }

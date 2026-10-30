@@ -50,6 +50,8 @@ const (
 	ModuleNotifications Module = "NOTIFICATIONS"
 	ModuleSMS           Module = "SMS"
 	ModuleEmail         Module = "EMAIL"
+	ModuleStorage       Module = "STORAGE"
+	ModuleRisk          Module = "RISK"
 )
 
 // Action is the operation performed on an entity.

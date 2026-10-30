@@ -12,6 +12,7 @@ type ListPlantsRequest struct {
 	WaterRequirement string
 	SortBy           string
 	SortOrder        string
+	IDs              []int64 // only these plants (lookup results)
 }
 
 type CreatePlantRequest struct {

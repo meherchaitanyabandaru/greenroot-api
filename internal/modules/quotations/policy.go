@@ -14,7 +14,7 @@ func IsEditable(status string) bool {
 // converted ones are business records and stay.
 func IsDeletable(q Quotation) bool {
 	switch q.Status {
-	case "INTERNAL_DRAFT", "CUSTOMER_DRAFT", "CUSTOMER_REJECTED":
+	case "INTERNAL_DRAFT", "CUSTOMER_DRAFT", "CUSTOMER_REJECTED", "REQUEST_DECLINED", "REQUEST_CANCELLED":
 		return q.ConvertedOrderID == nil
 	case "CUSTOMER_SENT":
 		return isExpiredTime(q.ValidUntil)
@@ -25,7 +25,7 @@ func IsDeletable(q Quotation) bool {
 // IsTerminal returns true when the quotation has reached a final state.
 func IsTerminal(status string) bool {
 	switch status {
-	case "CUSTOMER_ACCEPTED", "CUSTOMER_REJECTED", "CONVERTED", "CANCELLED":
+	case "CUSTOMER_ACCEPTED", "CUSTOMER_REJECTED", "CONVERTED", "CANCELLED", "REQUEST_DECLINED", "REQUEST_CANCELLED":
 		return true
 	}
 	return false
@@ -70,7 +70,7 @@ func BuildCapabilities(actor ActorContext, q Quotation) *QuotationCapabilities {
 		CanEdit:              isSeller && editable && !assignedToOther,
 		CanUpdateCustomer:    isOwnerRole && q.QuotationType == "CUSTOMER" && q.ConvertedOrderID == nil && q.CustomerRespondedAt == nil,
 		CanDelete:            isOwnerRole && IsDeletable(q),
-		CanSend:              isSeller && status == "CUSTOMER_DRAFT",
+		CanSend:              isSeller && (status == "CUSTOMER_DRAFT" || status == "CUSTOMER_REQUESTED" && requestOpen(q) && allPriced(q.Items)),
 		CanRecall:            isSeller && status == "CUSTOMER_SENT",
 		CanAccept:            isCustomer && isCustomerSent,
 		CanReject:            isCustomer && isCustomerSent,
@@ -78,7 +78,26 @@ func BuildCapabilities(actor ActorContext, q Quotation) *QuotationCapabilities {
 		CanAssignManager:     isOwnerRole && q.ConvertedOrderID == nil,
 		CanGenerateDocument:  isSeller && q.DeletedAt == nil,
 		CanManageVerifyToken: isSeller && q.DeletedAt == nil,
+		CanPrice:             isSeller && status == "CUSTOMER_REQUESTED" && requestOpen(q) && !assignedToOther,
+		CanDecline:           isSeller && status == "CUSTOMER_REQUESTED",
+		CanCancelRequest:     isRecipient && status == "CUSTOMER_REQUESTED",
 	}
+}
+
+// requestOpen: the nursery may still answer a customer's request: it was
+// sent before (then recalled), or its response window has not passed.
+func requestOpen(q Quotation) bool {
+	return q.SentAt != nil || q.RequestExpiresAt == nil || time.Now().Before(*q.RequestExpiresAt)
+}
+
+// allPriced: every line has a price (a request is sent only when priced).
+func allPriced(items []QuotationItem) bool {
+	for _, it := range items {
+		if !it.IsPriced {
+			return false
+		}
+	}
+	return len(items) > 0
 }
 
 func isExpiredTime(validUntil *time.Time) bool {

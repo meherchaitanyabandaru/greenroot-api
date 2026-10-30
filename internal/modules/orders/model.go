@@ -177,4 +177,9 @@ type OrderItem struct {
 	TotalPrice     float64   `json:"total_price"`
 	Remarks        *string   `json:"remarks,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
+	// A plant not in the catalog (from a customer's quotation request):
+	// plant_id is 0 and the name is as the customer entered it.
+	IsCustom        bool    `json:"is_custom"`
+	CustomPlantName *string `json:"custom_plant_name,omitempty"`
+	SizeDescription *string `json:"size_description,omitempty"`
 }

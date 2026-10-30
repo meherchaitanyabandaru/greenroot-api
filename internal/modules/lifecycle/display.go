@@ -219,6 +219,10 @@ func quotationActions(status string) Actions {
 		return Actions{Operator: []string{"Edit Quotation", "Send Internally"}}
 	case "CUSTOMER_DRAFT":
 		return Actions{Operator: []string{"Edit Quotation", "Send to Customer"}}
+	case "CUSTOMER_REQUESTED":
+		return Actions{Customer: []string{"Cancel Request"}, Operator: []string{"Price Request", "Send to Customer", "Decline Request"}}
+	case "REQUEST_DECLINED", "REQUEST_CANCELLED":
+		return Actions{Customer: []string{"View Request"}, Operator: []string{"View Request"}}
 	case "CUSTOMER_SENT":
 		return Actions{Customer: []string{"Accept Quotation", "Reject Quotation"}, Operator: []string{"Recall Quotation", "View Customer Response"}}
 	case "CUSTOMER_ACCEPTED":
@@ -390,6 +394,12 @@ func quotationCustomerDisplay(status string) Display {
 		return Display{"Draft", "Quotation Draft", "This quotation is not visible to the customer yet.", "neutral"}
 	case "CUSTOMER_DRAFT":
 		return Display{"Draft", "Quotation Being Prepared", "The nursery is preparing your quotation.", "neutral"}
+	case "CUSTOMER_REQUESTED":
+		return Display{"Requested", "Waiting for Prices", "The nursery will price your request and send a quotation.", "info"}
+	case "REQUEST_DECLINED":
+		return Display{"Declined", "Request Declined", "The nursery cannot quote this request.", "error"}
+	case "REQUEST_CANCELLED":
+		return Display{"Cancelled", "Request Cancelled", "You cancelled this request.", "neutral"}
 	case "CUSTOMER_SENT":
 		return Display{"Ready for Review", "Quotation Ready", "Review the quotation and respond.", "warning"}
 	case "CUSTOMER_ACCEPTED":
@@ -412,6 +422,12 @@ func quotationOperatorDisplay(status string) Display {
 		return Display{"Internal Draft", "Internal Quotation Draft", "Complete the quotation before customer sharing.", "neutral"}
 	case "CUSTOMER_DRAFT":
 		return Display{"Customer Draft", "Customer Quotation Draft", "Send this quotation to the customer when ready.", "neutral"}
+	case "CUSTOMER_REQUESTED":
+		return Display{"Request", "Customer Request", "Price every line and send the quotation before the request expires.", "warning"}
+	case "REQUEST_DECLINED":
+		return Display{"Declined", "Request Declined", "You declined this request.", "error"}
+	case "REQUEST_CANCELLED":
+		return Display{"Cancelled", "Request Cancelled", "The customer cancelled this request.", "neutral"}
 	case "CUSTOMER_SENT":
 		return Display{"Sent", "Awaiting Customer", "Customer response is pending.", "warning"}
 	case "CUSTOMER_ACCEPTED":

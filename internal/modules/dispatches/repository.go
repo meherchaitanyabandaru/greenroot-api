@@ -26,6 +26,7 @@ type Repository interface {
 	FindByTrackingUUID(ctx context.Context, uuid string) (*Dispatch, error)
 	HasDuplicate(ctx context.Context, dispatchNumber string) (bool, error)
 	HasActiveForOrder(ctx context.Context, orderID int64) (bool, error)
+	OrderOnHold(ctx context.Context, orderID int64) (bool, error)
 	DriverHasActiveTrip(ctx context.Context, userID int64, excludeDispatchID int64) (bool, error)
 	Create(ctx context.Context, actorID int64, input CreateDispatchInput) (*Dispatch, error)
 	UpdateStatus(ctx context.Context, dispatchID int64, input UpdateStatusInput) (*Dispatch, error)
@@ -34,7 +35,8 @@ type Repository interface {
 	UseDeliveryCodeAttempt(ctx context.Context, dispatchID int64, max int) (attempts int, allowed bool, err error)
 	RecordReceipt(ctx context.Context, dispatchID, customerUserID int64, confirm bool, issue *string) error
 	AcknowledgeDeliveryUpdate(ctx context.Context, dispatchID int64, driverUserID int64) error
-	SetDriverUser(ctx context.Context, dispatchID int64, userID int64) (*Dispatch, error)
+	SetDriverUser(ctx context.Context, dispatchID int64, userID int64, vehicleID int64) (*Dispatch, error)
+	DriverVehicles(ctx context.Context, userID int64) ([]DriverVehicle, error)
 	CreateItem(ctx context.Context, dispatchID int64, input DispatchItemRequest) (*DispatchItem, error)
 	ListItems(ctx context.Context, dispatchID int64) ([]DispatchItem, error)
 	CreateTripEvent(ctx context.Context, input CreateTripEventInput) (*TripEvent, error)
@@ -77,13 +79,12 @@ type CreateDispatchInput struct {
 	RequiredVehicleType *string
 }
 
-// DriverEligibility is what decides whether a driver may take a trip:
-// admin-approved, still driving, and the lorry they registered.
+// DriverEligibility is whether the driver may take trips at all: approved by
+// GreenRoot and still driving. The lorry is checked separately (DriverVehicles).
 type DriverEligibility struct {
 	Found          bool
 	ApprovalStatus string
 	Status         string
-	VehicleType    string
 }
 
 type MarkDeliveredInput struct {
@@ -211,13 +212,15 @@ func (r *PostgresRepository) FindByTripUUID(ctx context.Context, tripUUID string
 	return &dispatch, nil
 }
 
-// SetDriverUser claims the trip for this driver. One UPDATE decides it: the
-// trip must still be PENDING with no driver, and the driver free of other
-// trips, so of two drivers accepting at once exactly one gets it.
-func (r *PostgresRepository) SetDriverUser(ctx context.Context, dispatchID int64, userID int64) (*Dispatch, error) {
+// SetDriverUser claims the trip for this driver and lorry. One UPDATE decides
+// it: the trip must still be PENDING with no driver, the driver free of other
+// trips and the lorry still eligible for them (which includes not being on
+// another trip), so of two drivers accepting at once exactly one gets it, and
+// one lorry is never on two trips.
+func (r *PostgresRepository) SetDriverUser(ctx context.Context, dispatchID int64, userID int64, vehicleID int64) (*Dispatch, error) {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE public.dispatches
-		SET driver_user_id = $1,
+		SET driver_user_id = $1, vehicle_id = $3,
 		    driver_id = (SELECT driver_id FROM public.drivers WHERE user_id = $1 ORDER BY driver_id DESC LIMIT 1),
 		    status = 'ACCEPTED', driver_accepted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 		WHERE dispatch_id = $2
@@ -228,8 +231,12 @@ func (r *PostgresRepository) SetDriverUser(ctx context.Context, dispatchID int64
 		  	WHERE active.driver_user_id = $1
 		  	  AND active.dispatch_id <> $2
 		  	  AND active.status IN ('ACCEPTED', 'DISPATCHED', 'IN_TRANSIT')
+		  )
+		  AND EXISTS (
+		  	SELECT 1 FROM public.driver_vehicle_eligibility e
+		  	WHERE e.driver_user_id = $1 AND e.vehicle_id = $3 AND e.blocked_reason IS NULL
 		  )`,
-		userID, dispatchID)
+		userID, dispatchID, vehicleID)
 	if err != nil {
 		return nil, err
 	}
@@ -244,6 +251,11 @@ func (r *PostgresRepository) SetDriverUser(ctx context.Context, dispatchID int64
 		}
 		if active {
 			return nil, ErrActiveDriverTrip
+		}
+		if busy, err := r.vehicleHasActiveTrip(ctx, vehicleID, dispatchID); err != nil {
+			return nil, err
+		} else if busy {
+			return nil, ErrVehicleOnTrip
 		}
 		return nil, ErrTripTaken
 	}
@@ -475,7 +487,7 @@ func (r *PostgresRepository) createItemTx(ctx context.Context, q interface {
 func (r *PostgresRepository) ListItems(ctx context.Context, dispatchID int64) ([]DispatchItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT di.dispatch_item_id, di.dispatch_id, di.order_item_id, oi.plant_id,
-			COALESCE(NULLIF(p.common_name,''), p.scientific_name),
+			COALESCE(NULLIF(p.common_name,''), p.scientific_name, oi.plant_name_snapshot),
 			di.quantity, di.notes, di.created_at
 		FROM public.dispatch_items di
 		LEFT JOIN public.order_items oi ON oi.order_item_id = di.order_item_id
@@ -528,9 +540,9 @@ func (r *PostgresRepository) IsNurseryMember(ctx context.Context, nurseryID int6
 func (r *PostgresRepository) DriverEligibility(ctx context.Context, userID int64) (DriverEligibility, error) {
 	var e DriverEligibility
 	err := r.db.QueryRowContext(ctx, `
-		SELECT COALESCE(approval_status::text, ''), COALESCE(status::text, ''), COALESCE(vehicle_type::text, '')
+		SELECT COALESCE(approval_status::text, ''), COALESCE(status::text, '')
 		FROM public.drivers WHERE user_id = $1
-		ORDER BY driver_id DESC LIMIT 1`, userID).Scan(&e.ApprovalStatus, &e.Status, &e.VehicleType)
+		ORDER BY driver_id DESC LIMIT 1`, userID).Scan(&e.ApprovalStatus, &e.Status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DriverEligibility{}, nil
 	}
@@ -724,7 +736,7 @@ func baseSelect() string {
 			d.delivery_confirmation, d.delivery_confirmed_by_user_id, d.delivery_confirmed_at,
 			d.delivery_override_reason, d.delivery_issue, d.delivery_issue_reported_at, d.delivery_code_attempts,
 			d.driver_accepted_at,
-			d.required_vehicle_type, d.invite_expires_at
+			d.required_vehicle_type, d.invite_expires_at, d.requires_consent
 		FROM public.dispatches d
 		JOIN public.orders o ON o.order_id = d.order_id
 		LEFT JOIN public.nurseries sn ON sn.nursery_id = o.seller_nursery_id
@@ -848,7 +860,7 @@ func scanDispatch(row interface{ Scan(dest ...any) error }) (Dispatch, error) {
 		&confirmation, &confirmedBy, &confirmedAt,
 		&overrideReason, &issue, &issueAt, &dispatch.DeliveryCodeAttempts,
 		&acceptedAt,
-		&requiredVehicle, &inviteExpiresAt,
+		&requiredVehicle, &inviteExpiresAt, &dispatch.RequiresConsent,
 	); err != nil {
 		return Dispatch{}, err
 	}
@@ -983,4 +995,12 @@ func timeOrNil(value *time.Time) any {
 		return nil
 	}
 	return *value
+}
+
+// OrderOnHold: an admin holds the order while reviewing a risk signal.
+func (r *PostgresRepository) OrderOnHold(ctx context.Context, orderID int64) (bool, error) {
+	var held bool
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM public.risk_signals
+		WHERE entity_type = 'ORDER' AND entity_id = $1 AND is_hold AND status IN ('OPEN', 'UNDER_REVIEW'))`, orderID).Scan(&held)
+	return held, err
 }

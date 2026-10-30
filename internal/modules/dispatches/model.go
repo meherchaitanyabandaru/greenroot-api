@@ -68,6 +68,12 @@ type Dispatch struct {
 	// lorry asked for (any lorry when empty) may take it until it expires.
 	RequiredVehicleType *string    `json:"required_vehicle_type,omitempty"`
 	InviteExpiresAt     *time.Time `json:"invite_expires_at,omitempty"`
+	// DriverVehicles: on a driver's QR preview only, their lorries and which
+	// can take this trip (the app asks which one when several can).
+	DriverVehicles []DriverVehicle `json:"driver_vehicles,omitempty"`
+	// RequiresConsent: the driver confirms the load (DRIVER_DISPATCH) before
+	// starting; false for trips made before confirmations existed.
+	RequiresConsent bool `json:"requires_consent"`
 	// How the customer confirmed delivery: CUSTOMER_CODE, CUSTOMER_APP or
 	// UNCONFIRMED (nursery override, with a reason).
 	DeliveryConfirmation      *string    `json:"delivery_confirmation,omitempty"`

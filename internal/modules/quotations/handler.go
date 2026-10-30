@@ -3,6 +3,7 @@ package quotations
 import (
 	"encoding/json"
 	"errors"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/consent"
 	"io"
 	"net/http"
 	"strconv"
@@ -50,9 +51,18 @@ func (h *Handler) BuyerAccept(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q, err := h.service.BuyerAccept(r.Context(), actor, id)
+	var req struct {
+		Consent *consent.Given `json:"consent"` // BUYER_QUOTATION_ACCEPT
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		response.Error(w, http.StatusBadRequest, "invalid_json", "invalid request body")
+		return
+	}
+	q, err := h.service.BuyerAccept(r.Context(), actor, id, req.Consent)
 	if err != nil {
-		writeError(w, err)
+		if !consent.WriteError(w, err, consent.BuyerQuotationAccept) {
+			writeError(w, err)
+		}
 		return
 	}
 	response.OK(w, QuotationResponse{Quotation: q})
@@ -553,6 +563,9 @@ func float64PtrQuery(v string) *float64 {
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	if requestError(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, ErrForbidden):
 		response.Error(w, http.StatusForbidden, "forbidden", "not allowed to access quotation")

@@ -12,6 +12,8 @@ type mockRepo struct {
 	vehicles   map[int64]*Vehicle
 	duplicates map[string]bool // vehicleNumber → already exists
 	nextID     int64
+	owners     map[int64]VehicleOwner
+	links      map[int64]*VehicleDriverLink
 }
 
 func newMock() *mockRepo {
@@ -19,6 +21,8 @@ func newMock() *mockRepo {
 		vehicles:   make(map[int64]*Vehicle),
 		duplicates: make(map[string]bool),
 		nextID:     100,
+		owners:     make(map[int64]VehicleOwner),
+		links:      make(map[int64]*VehicleDriverLink),
 	}
 }
 
@@ -73,6 +77,49 @@ func (m *mockRepo) Delete(_ context.Context, vehicleID int64) error {
 	}
 	delete(m.vehicles, vehicleID)
 	return nil
+}
+
+func (m *mockRepo) ListOwners(context.Context, ListOwnersRequest) ([]VehicleOwner, int64, error) {
+	return nil, 0, nil
+}
+func (m *mockRepo) FindOwner(_ context.Context, id int64) (VehicleOwner, error) {
+	if o, ok := m.owners[id]; ok {
+		return o, nil
+	}
+	return VehicleOwner{}, ErrNotFound
+}
+func (m *mockRepo) SaveOwner(_ context.Context, _, id int64, req OwnerRequest) (VehicleOwner, error) {
+	if id == 0 {
+		id = m.next()
+	}
+	o := VehicleOwner{ID: id, Name: req.Name, Mobile: req.Mobile}
+	m.owners[id] = o
+	return o, nil
+}
+func (m *mockRepo) SetApproval(_ context.Context, _, vehicleID int64, status string, _ *string) (*Vehicle, []int64, error) {
+	v, ok := m.vehicles[vehicleID]
+	if !ok {
+		return nil, nil, ErrNotFound
+	}
+	v.ApprovalStatus = status
+	return v, nil, nil
+}
+func (m *mockRepo) ListLinks(context.Context, ListLinksRequest) ([]VehicleDriverLink, int64, error) {
+	return nil, 0, nil
+}
+func (m *mockRepo) FindLink(_ context.Context, id int64) (VehicleDriverLink, error) {
+	if l, ok := m.links[id]; ok {
+		return *l, nil
+	}
+	return VehicleDriverLink{}, ErrNotFound
+}
+func (m *mockRepo) SetLinkStatus(_ context.Context, _, id int64, from, to string, _ *string) (VehicleDriverLink, error) {
+	l := m.links[id]
+	if to == "REMOVED" && l.IsOnActiveTrip {
+		return VehicleDriverLink{}, ErrVehicleOnTrip
+	}
+	l.Status = to
+	return *l, nil
 }
 
 // ─── actors ──────────────────────────────────────────────────────────────────
@@ -297,5 +344,85 @@ func TestDelete_NotFound(t *testing.T) {
 	err := svc(newMock()).Delete(context.Background(), adminActor(1), 9999)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+// ─── Owners, approval, driver links ─────────────────────────────────────────
+
+func TestSaveOwner_WithoutAccountOrMobile(t *testing.T) {
+	o, err := svc(newMock()).SaveOwner(context.Background(), adminActor(1), 0, OwnerRequest{Name: "  Ramesh Transport "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Name != "Ramesh Transport" || o.Mobile != nil {
+		t.Errorf("owner needs only a name: %+v", o)
+	}
+}
+
+func TestSaveOwner_Rules(t *testing.T) {
+	cases := []struct {
+		name  string
+		actor ActorContext
+		req   OwnerRequest
+		want  error
+	}{
+		{"not an admin", driverActor(2), OwnerRequest{Name: "X"}, ErrForbidden},
+		{"no name", adminActor(1), OwnerRequest{Name: " "}, ErrInvalidInput},
+		{"bad mobile", adminActor(1), OwnerRequest{Name: "X", Mobile: ptr("123")}, ErrInvalidMobile},
+	}
+	for _, c := range cases {
+		if _, err := svc(newMock()).SaveOwner(context.Background(), c.actor, 0, c.req); !errors.Is(err, c.want) {
+			t.Errorf("%s: want %v, got %v", c.name, c.want, err)
+		}
+	}
+}
+
+func TestSetApproval_Rules(t *testing.T) {
+	repo := newMock()
+	repo.seedVehicle(1, "TS09AB1234", "ACTIVE")
+	s := svc(repo)
+	if _, err := s.SetApproval(context.Background(), driverActor(2), 1, ApprovalRequest{Status: "APPROVED"}); !errors.Is(err, ErrForbidden) {
+		t.Errorf("driver: want ErrForbidden, got %v", err)
+	}
+	if _, err := s.SetApproval(context.Background(), adminActor(1), 1, ApprovalRequest{Status: "REJECTED"}); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("reject without a reason: want ErrInvalidInput, got %v", err)
+	}
+	if _, err := s.SetApproval(context.Background(), adminActor(1), 1, ApprovalRequest{Status: "BOGUS"}); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("unknown status: want ErrInvalidInput, got %v", err)
+	}
+	v, err := s.SetApproval(context.Background(), adminActor(1), 1, ApprovalRequest{Status: "approved"})
+	if err != nil || v.ApprovalStatus != "APPROVED" {
+		t.Errorf("approve: got %+v, %v", v, err)
+	}
+}
+
+func TestSetLinkStatus_Transitions(t *testing.T) {
+	cases := []struct {
+		from, to string
+		onTrip   bool
+		note     *string
+		want     error
+	}{
+		{"PENDING", "APPROVED", false, nil, nil},
+		{"PENDING", "REJECTED", false, ptr("RC does not match"), nil},
+		{"PENDING", "REJECTED", false, nil, ErrInvalidInput},
+		{"APPROVED", "SUSPENDED", true, ptr("complaint"), nil}, // suspension stops future trips only
+		{"APPROVED", "REMOVED", true, ptr("left the owner"), ErrVehicleOnTrip},
+		{"APPROVED", "REMOVED", false, ptr("left the owner"), nil},
+		{"SUSPENDED", "APPROVED", false, nil, nil},
+		{"REJECTED", "APPROVED", false, nil, ErrInvalidStatus},
+		{"REMOVED", "APPROVED", false, nil, ErrInvalidStatus},
+		{"APPROVED", "PENDING", false, ptr("x"), ErrInvalidStatus},
+	}
+	for _, c := range cases {
+		repo := newMock()
+		repo.links[7] = &VehicleDriverLink{ID: 7, Status: c.from, DriverUserID: 40, VehicleNumber: "TS09AB1234", IsOnActiveTrip: c.onTrip}
+		_, err := svc(repo).SetLinkStatus(context.Background(), adminActor(1), 7, LinkStatusRequest{Status: c.to, Note: c.note})
+		if !errors.Is(err, c.want) || (c.want == nil && err != nil) {
+			t.Errorf("%s → %s (trip %v): want %v, got %v", c.from, c.to, c.onTrip, c.want, err)
+		}
+	}
+	if _, err := svc(newMock()).SetLinkStatus(context.Background(), driverActor(40), 7, LinkStatusRequest{Status: "APPROVED"}); !errors.Is(err, ErrForbidden) {
+		t.Errorf("driver approving own link: want ErrForbidden, got %v", err)
 	}
 }

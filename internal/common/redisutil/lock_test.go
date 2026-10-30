@@ -78,3 +78,24 @@ func TestAcquireLockFailsClosedWhenRedisIsDown(t *testing.T) {
 		t.Fatalf("got %v, want ErrLockBusy", err)
 	}
 }
+
+func TestAcquireLockWait(t *testing.T) {
+	ctx := context.Background()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	defer client.Close()
+
+	first, err := AcquireLock(ctx, client, nil, "dispatches", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AcquireLockWait(ctx, client, nil, "dispatches", 7, 120*time.Millisecond); !errors.Is(err, ErrLockBusy) {
+		t.Fatalf("held past the wait: got %v, want ErrLockBusy", err)
+	}
+	go func() { time.Sleep(60 * time.Millisecond); first.Release(ctx) }()
+	second, err := AcquireLockWait(ctx, client, nil, "dispatches", 7, time.Second)
+	if err != nil {
+		t.Fatalf("released while waiting: got %v", err)
+	}
+	second.Release(ctx)
+}

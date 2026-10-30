@@ -160,6 +160,7 @@ func markOperands(e ast.Expr, frag map[ast.Node]bool) {
 	switch v := e.(type) {
 	case *ast.BinaryExpr:
 		if v.Op == token.ADD {
+			frag[v] = true // a constant sub-concatenation is not a statement either
 			markOperands(v.X, frag)
 			markOperands(v.Y, frag)
 		}

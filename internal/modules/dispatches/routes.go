@@ -2,6 +2,7 @@ package dispatches
 
 import (
 	"database/sql"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/consent"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/auditlog"
@@ -29,6 +30,12 @@ func NewModule(db *sql.DB, jwt *jwtplatform.Service, audit *auditlog.Service, co
 	}
 	service.SetDeliveryCodeKey(codeKey)
 	return Module{handler: NewHandler(service, jwt), service: service}
+}
+
+// WithConsents stores the parties' confirmations.
+func (m Module) WithConsents(c *consent.Store) Module {
+	m.service.UseConsents(c)
+	return m
 }
 
 // WithEvents sends delivery events by SMS/email too (messaging.Notifier).

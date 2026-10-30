@@ -45,11 +45,12 @@ func baseCount() string {
 
 func itemSelect() string {
 	return `
-		SELECT oi.order_item_id, oi.order_id, oi.plant_id, p.scientific_name, p.common_name,
+		SELECT oi.order_item_id, oi.order_id, COALESCE(oi.plant_id, 0), COALESCE(p.scientific_name, ''), p.common_name,
 			oi.size_id, ps.size_code, ps.display_name, oi.quantity, oi.unit_price, oi.total_price,
-			oi.remarks, oi.created_at, oi.loaded_quantity
+			oi.remarks, oi.created_at, oi.loaded_quantity,
+			CASE WHEN oi.plant_id IS NULL THEN oi.plant_name_snapshot END, oi.size
 		FROM public.order_items oi
-		JOIN public.plants p ON p.plant_id = oi.plant_id
+		LEFT JOIN public.plants p ON p.plant_id = oi.plant_id
 		LEFT JOIN public.plant_sizes ps ON ps.size_id = oi.size_id
 	`
 }
@@ -282,9 +283,11 @@ func scanItem(row interface{ Scan(dest ...any) error }) (OrderItem, error) {
 	var commonName, sizeCode, sizeName, remarks sql.NullString
 	var sizeID sql.NullInt16
 	var loadedQty sql.NullFloat64
-	if err := row.Scan(&item.ID, &item.OrderID, &item.PlantID, &item.ScientificName, &commonName, &sizeID, &sizeCode, &sizeName, &item.Quantity, &item.UnitPrice, &item.TotalPrice, &remarks, &item.CreatedAt, &loadedQty); err != nil {
+	if err := row.Scan(&item.ID, &item.OrderID, &item.PlantID, &item.ScientificName, &commonName, &sizeID, &sizeCode, &sizeName, &item.Quantity, &item.UnitPrice, &item.TotalPrice, &remarks, &item.CreatedAt, &loadedQty,
+		&item.CustomPlantName, &item.SizeDescription); err != nil {
 		return OrderItem{}, err
 	}
+	item.IsCustom = item.PlantID == 0
 	item.CommonName = nullableString(commonName)
 	if sizeID.Valid {
 		item.SizeID = &sizeID.Int16
