@@ -153,11 +153,17 @@ jobs:
             -c "ALTER ROLE greenroot_migrator PASSWORD 'ci-migrator'" \
             -c "ALTER ROLE greenroot_app PASSWORD 'ci-app'"
 
-      # schema.sql records the applied migrations; any new migration in this
-      # change is applied here, as the migrator role, proving it runs on a
-      # fresh-install database with production privileges.
+      # schema.sql is the full schema (migrations were folded into it on
+      # 2026-10-31). Any new migration in a change is applied here, as the
+      # migrator role, proving it runs on a fresh-install database with
+      # production privileges.
       - name: Apply migrations
         run: go run ./cmd/migrate up
+
+      - name: Seeded risk rules match the code
+        env:
+          GREENROOT_SEED_SQL: ${{ github.workspace }}/infra/db/postgresql/seed-master.sql
+        run: go test -count=1 -run TestEverySeededRuleHasACheck ./internal/modules/risk/
 
       # Every SQL statement in the code is PREPAREd against the migrated
       # schema: a wrong column or table name fails here, not in production.

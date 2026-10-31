@@ -1,20 +1,23 @@
 # Database migrations
 
 The schema's single source of truth is
-[`greenroot-infra/db/postgresql/schema.sql`](../../../../greenroot-infra/db/postgresql/schema.sql).
-The 20 migrations written up to 2026-10-19 were folded into it. Later schema
-changes are recorded as migrations here.
+[`greenroot-infra/db/postgresql/schema.sql`](../../../../greenroot-infra/db/postgresql/schema.sql),
+with reference data in `seed-master.sql`. Every migration written up to
+2026-10-31 was folded into those two files, so this folder holds no SQL.
 
-## Changing the schema
+## Changing the schema before launch
 
-1. Change your local database (psql), or edit `schema.sql` directly.
-2. If you changed the database, regenerate the file:
-   `greenroot-infra/scripts/dump-schema.sh`
-3. Rebuild your database from the file: `greenroot-infra/scripts/reset-dbs.sh`
-4. `DATABASE_URL=... go run ./cmd/sqlcheck ./internal/...` and the API tests.
+1. Change your local database (psql).
+2. Regenerate the file: `greenroot-infra/scripts/dump-schema.sh`
+3. If the change needs reference rows, add them to `seed-master.sql`.
+4. Rebuild your database from the files: `greenroot-infra/scripts/reset-dbs.sh`
+5. `DATABASE_URL=... go run ./cmd/sqlcheck ./internal/...` and the API tests.
 
-Every change becomes a migration here, applied by `cmd/migrate` (which runs in
-CI and blocks a production start while one is pending):
+## After launch: migrations
+
+Live databases cannot be rebuilt, so from then on every change is also a
+migration here, applied by `cmd/migrate` (it runs in CI and blocks a
+production start while one is pending):
 
 - **Name:** `<YYYYMMDD>_<NN>_<description>.up.sql` plus a `.down.sql`
   (manual rollback aid; the runner only runs `up`).
@@ -28,10 +31,5 @@ CI and blocks a production start while one is pending):
   constraint `NOT VALID`, then `VALIDATE CONSTRAINT`).
 - After applying, run `dump-schema.sh` so `schema.sql` stays the full picture.
 
-```bash
-go run ./cmd/migrate status   # what is applied / pending
-go run ./cmd/migrate up       # apply pending, in order
-```
-
-In production `cmd/migrate` uses `MIGRATE_DATABASE_URL` (the
-`greenroot_migrator` role from `greenroot-infra/db/postgresql/roles.sql`).
+Databases built before the fold still list the old versions in
+`schema_migrations`; the runner ignores versions it has no file for.

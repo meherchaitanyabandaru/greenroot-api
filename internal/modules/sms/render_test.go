@@ -140,7 +140,7 @@ func TestSeedTemplatesFitOneSMS(t *testing.T) {
 		{Body: "Payment of Rs.{#numeric#}.{#numeric#} received for your GreenRoot subscription. Payment ref PAY-{#numeric#}-{#numeric#}. - GreenRoot", Variables: []string{"amount_rupees", "amount_paise", "payment_date", "payment_seq"}},
 		{Body: "Your payment of Rs.{#numeric#}.{#numeric#} on GreenRoot (ref PAY-{#numeric#}-{#numeric#}) was not successful. Please try again. - GreenRoot", Variables: []string{"amount_rupees", "amount_paise", "payment_date", "payment_seq"}},
 		{Body: "GreenRoot delivery DSP-{#numeric#}-{#numeric#} was marked done by the nursery without your code. Not received? Report it in the app within 48 hours. - GreenRoot", Variables: []string{"dispatch_date", "dispatch_seq"}},
-		// 20261028_01_lifecycle_messages
+		// lifecycle messages (seed-master.sql)
 		{Body: "You have a GreenRoot quotation QUO-{#numeric#}-{#numeric#} for Rs.{#numeric#}.{#numeric#}. Sign in to the GreenRoot app with this number to view and accept it. - GreenRoot", Variables: []string{"quotation_date", "quotation_seq", "amount_rupees", "amount_paise"}},
 		{Body: "Your GreenRoot order ORD-{#numeric#}-{#numeric#} for Rs.{#numeric#}.{#numeric#} has been placed. Sign in to the GreenRoot app with this number to track it. - GreenRoot", Variables: []string{"order_date", "order_seq", "amount_rupees", "amount_paise"}},
 		{Body: "Your GreenRoot delivery DSP-{#numeric#}-{#numeric#} is on the way. Give code {#numeric#} to the driver only after you check your plants. - GreenRoot", Variables: []string{"dispatch_date", "dispatch_seq", "delivery_code"}},

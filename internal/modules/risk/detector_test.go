@@ -7,9 +7,18 @@ import (
 	"testing"
 )
 
-// Every rule the migration seeds has a check, and every check a rule.
+// Every rule seed-master.sql seeds has a check, and every check a rule. The
+// seeds live in greenroot-infra: GREENROOT_SEED_SQL (CI integration job) or
+// the sibling checkout; skipped when neither is there.
 func TestEverySeededRuleHasACheck(t *testing.T) {
-	raw, err := os.ReadFile("../../database/migrations/20261030_05_consent_and_risk.up.sql")
+	path := os.Getenv("GREENROOT_SEED_SQL")
+	if path == "" {
+		path = "../../../../greenroot-infra/db/postgresql/seed-master.sql"
+	}
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		t.Skipf("seed file not found at %s", path)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
