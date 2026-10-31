@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -226,8 +225,8 @@ func (h *Handler) Transcribe(w http.ResponseWriter, r *http.Request) {
 	if language == "auto" {
 		language = ""
 	}
-	if language != "" && language != "te" && language != "en" {
-		response.Error(w, http.StatusUnprocessableEntity, "invalid_language", "language must be te, en or auto")
+	if !validLanguage(language) {
+		response.Error(w, http.StatusUnprocessableEntity, "invalid_language", "language must be te, hi, kn, mr, ta, ur, en or auto")
 		return
 	}
 	name := "speech.m4a"
@@ -249,6 +248,9 @@ func (h *Handler) Transcribe(w http.ResponseWriter, r *http.Request) {
 type chatRequest struct {
 	Message string `json:"message"`
 	History []turn `json:"history"`
+	// The language the user chose in the app (te, hi, kn, mr, ta, ur, en);
+	// the script they wrote in still decides, so English gets English.
+	Language string `json:"language"`
 }
 
 // Chat answers one typed or corrected message.
@@ -296,7 +298,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		api: caller{api: h.api, auth: r.Header.Get("Authorization"), remoteAddr: r.RemoteAddr, userAgent: r.UserAgent(), requestID: rid},
 	}
 	started := time.Now()
-	reply, used, err := h.converse(r.Context(), env, rid, history, body.Message)
+	reply, used, err := h.converse(r.Context(), env, rid, history, body.Message, body.Language)
 	if err != nil {
 		h.refund(r.Context(), actor.UserID, day)
 		h.fail(w, "chat", rid, err)
@@ -315,15 +317,6 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, out)
 }
 
-func hasTelugu(s string) bool {
-	for _, r := range s {
-		if unicode.In(r, unicode.Telugu) {
-			return true
-		}
-	}
-	return false
-}
-
 // Speech reads a reply aloud (MP3).
 func (h *Handler) Speech(w http.ResponseWriter, r *http.Request) {
 	actor, _, ok := h.begin(w, r)
@@ -332,7 +325,8 @@ func (h *Handler) Speech(w http.ResponseWriter, r *http.Request) {
 	}
 	rid := middleware.GetReqID(r.Context())
 	var body struct {
-		Text string `json:"text"`
+		Text     string `json:"text"`
+		Language string `json:"language"` // only tells Hindi from Marathi
 	}
 	if !response.DecodeJSON(w, r, &body) {
 		return
@@ -347,10 +341,7 @@ func (h *Handler) Speech(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Same wording as the app's greeting clips (greenroot-ai scripts/make_greetings.py).
-	instructions := "Speak warmly and naturally, with a gentle Indian English accent, as a friendly nursery shop assistant."
-	if hasTelugu(text) {
-		instructions = "Speak natural, warm Telugu like a native speaker from Andhra Pradesh, as a friendly nursery shop assistant. Natural pace and intonation, not robotic. Say English words as Indian English."
-	}
+	instructions := voiceInstructions(replyLang(text, body.Language))
 	audio, usage, err := h.ai.speak(r.Context(), rid, text, instructions)
 	if err != nil {
 		h.fail(w, "speech", rid, err)

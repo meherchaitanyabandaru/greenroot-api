@@ -227,7 +227,7 @@ func TestConverseAnswersFromToolData(t *testing.T) {
 	ai := &fakeAI{}
 	h := handlerWith(ai, &fakeAPI{})
 	e := env(actor("NURSERY_OWNER"), h.api)
-	reply, used, err := h.converse(context.Background(), e, "req-1", []turn{{"user", "pending orders?"}}, "pending orders?")
+	reply, used, err := h.converse(context.Background(), e, "req-1", []turn{{"user", "pending orders?"}}, "pending orders?", "te")
 	if err != nil || !strings.Contains(reply, `"total":2`) || !slices.Equal(used, []string{"list_orders"}) {
 		t.Fatalf("reply=%q used=%v err=%v", reply, used, err)
 	}
@@ -243,8 +243,8 @@ func TestConverseAnswersFromToolData(t *testing.T) {
 func TestReplyLanguageFollowsTheQuestion(t *testing.T) {
 	ai := &fakeAI{}
 	h := handlerWith(ai, &fakeAPI{})
-	_, _, _ = h.converse(context.Background(), env(actor("BUYER"), h.api), "req-1", nil, "నా ఆర్డర్ ఎక్కడ ఉంది?")
-	if sys := ai.msgs[0][0].Content; !strings.Contains(sys, "Reply in Telugu") || !strings.Contains(sys, "You cannot change anything for this user") {
+	_, _, _ = h.converse(context.Background(), env(actor("BUYER"), h.api), "req-1", nil, "నా ఆర్డర్ ఎక్కడ ఉంది?", "te")
+	if sys := ai.msgs[0][0].Content; !strings.Contains(sys, "Reply in Telugu, written entirely in Telugu script") || !strings.Contains(sys, "You cannot change anything for this user") {
 		t.Errorf("Telugu question from a buyer, prompt: %s", sys)
 	}
 }
@@ -252,7 +252,7 @@ func TestReplyLanguageFollowsTheQuestion(t *testing.T) {
 func TestConverseStopsCallingToolsAfterTheLimit(t *testing.T) {
 	ai := &fakeAI{}
 	h := handlerWith(ai, &fakeAPI{})
-	reply, _, err := h.converse(context.Background(), env(actor("NURSERY_OWNER"), h.api), "req-1", []turn{{"user", "loop"}}, "loop")
+	reply, _, err := h.converse(context.Background(), env(actor("NURSERY_OWNER"), h.api), "req-1", []turn{{"user", "loop"}}, "loop", "")
 	if err != nil || reply != "final answer without tools" {
 		t.Fatalf("reply=%q err=%v", reply, err)
 	}
@@ -329,9 +329,43 @@ func TestCostEstimate(t *testing.T) {
 	}
 }
 
-func TestTeluguIsDetectedForReadAloud(t *testing.T) {
-	if !hasTelugu("మీకు 3 ఆర్డర్లు ఉన్నాయి") || hasTelugu("You have 3 orders") {
-		t.Error("Telugu detection")
+// The script the user wrote in decides the reply and the voice; English
+// always gets English; Devanagari is Hindi unless Marathi was chosen.
+func TestLanguageFollowsTheScript(t *testing.T) {
+	for _, c := range []struct{ text, chosen, want string }{
+		{"మీకు 3 ఆర్డర్లు ఉన్నాయి", "te", "te"},
+		{"You have 3 orders", "te", ""},
+		{"How many orders?", "ta", ""},
+		{"मेरे ऑर्डर कहाँ हैं?", "te", "hi"},
+		{"माझे ऑर्डर कुठे आहेत?", "mr", "mr"},
+		{"ನನ್ನ ಆರ್ಡರ್ ಎಲ್ಲಿದೆ?", "", "kn"},
+		{"என் ஆர்டர் எங்கே?", "", "ta"},
+		{"میرا آرڈر کہاں ہے؟", "ur", "ur"},
+		{"order ORD-1 ఎక్కడ?", "en", "te"},
+	} {
+		l, ok := replyLang(c.text, c.chosen)
+		got := ""
+		if ok {
+			got = l.Code
+		}
+		if got != c.want {
+			t.Errorf("%q (chose %s): %q, want %q", c.text, c.chosen, got, c.want)
+		}
+	}
+	te, _ := langByCode("te")
+	if want := "Speak naturally in conversational Telugu. Use a warm, friendly Indian Telugu speaking style, close to the Telangana region. Pronounce Telugu words clearly and naturally. Handle Telugu-English mixed sentences smoothly. Use natural pauses and human-like intonation. Do not sound robotic or like a news reader. Speak at a moderate pace."; voiceInstructions(te, true) != want {
+		t.Errorf("Telugu voice: %s", voiceInstructions(te, true))
+	}
+	if ta, _ := langByCode("ta"); !strings.Contains(voiceInstructions(ta, true), "conversational Tamil") || !strings.Contains(replyLanguage(ta, true), "Tamil script") {
+		t.Error("Tamil prompts")
+	}
+	for _, code := range []string{"te", "hi", "kn", "mr", "ta", "ur", "en", "auto", ""} {
+		if !validLanguage(code) {
+			t.Errorf("%q should be accepted", code)
+		}
+	}
+	if validLanguage("fr") {
+		t.Error("fr accepted")
 	}
 }
 
@@ -381,4 +415,32 @@ func TestQuotaArithmetic(t *testing.T) {
 	if quota(2, 5, time.Time{}).Left != 3 {
 		t.Error("left")
 	}
+}
+
+// An empty buying list brings the selling list along (and only once).
+func TestEmptySideBringsTheOtherSide(t *testing.T) {
+	api := &emptyBuyingAPI{}
+	out, _ := json.Marshal(runTool(context.Background(), env(actor("NURSERY_OWNER", "BUYER"), api), "list_orders", `{"side":"buying"}`))
+	got := string(out)
+	if !strings.Contains(got, `"other_side":{`) || !strings.Contains(got, `"side":"selling"`) || !strings.Contains(got, "ORD-1") {
+		t.Errorf("got %s", got)
+	}
+	if api.calls != 2 {
+		t.Errorf("API calls %d, want 2 (no loop)", api.calls)
+	}
+	one, _ := json.Marshal(runTool(context.Background(), env(actor("BUYER"), &emptyBuyingAPI{}), "list_orders", `{"side":"buying"}`))
+	if strings.Contains(string(one), "other_side") {
+		t.Errorf("a buyer has no other side: %s", one)
+	}
+}
+
+type emptyBuyingAPI struct{ calls int }
+
+func (e *emptyBuyingAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	e.calls++
+	if r.URL.Query().Get("buying") == "true" {
+		_, _ = io.WriteString(w, `{"orders": [], "pagination": {"total": 0}}`)
+		return
+	}
+	(&fakeAPI{}).ServeHTTP(w, r)
 }

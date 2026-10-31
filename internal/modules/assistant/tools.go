@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -109,6 +110,25 @@ func tripSides(a authctx.Actor) []string {
 		out = append(out, "driving")
 	}
 	return out
+}
+
+// alsoOtherSide: an owner asking "my orders" may mean either side; the model
+// often checked only the empty one (seen in Telugu). When a list is empty,
+// the other side's list comes along.
+func alsoOtherSide(ctx context.Context, env *toolEnv, tool string, args map[string]any, side string, out map[string]any) {
+	if _, done := args["checked_other_side"]; done {
+		return
+	}
+	for _, other := range sides(env.actor) {
+		if other == side {
+			continue
+		}
+		next := maps.Clone(args)
+		next["side"], next["checked_other_side"] = other, true
+		out["other_side"] = toolByName[tool].run(ctx, env, next)
+		out["note"] = "nothing on this side; other_side has the user's " + other + " " + strings.TrimPrefix(tool, "list_")
+		return
+	}
 }
 
 func toolError(code, message string) map[string]string {
@@ -405,6 +425,9 @@ var tools = []tool{
 			if today && list.Pagination.Total > len(list.Orders) {
 				out["incomplete"] = true
 			}
+			if total == 0 {
+				alsoOtherSide(ctx, env, "list_orders", args, side, out)
+			}
 			return out
 		},
 	},
@@ -467,7 +490,11 @@ var tools = []tool{
 			for _, qt := range list.Quotations[:min(len(list.Quotations), 10)] {
 				rows = append(rows, qt.brief(side, env.loc))
 			}
-			return map[string]any{"side": side, "status_filter": status, "total": list.Pagination.Total, "quotations": rows}
+			out := map[string]any{"side": side, "status_filter": status, "total": list.Pagination.Total, "quotations": rows}
+			if list.Pagination.Total == 0 {
+				alsoOtherSide(ctx, env, "list_quotations", args, side, out)
+			}
+			return out
 		},
 	},
 	{
@@ -612,6 +639,16 @@ var tools = []tool{
 }
 
 func ptr(s string) *string { return &s }
+
+// toolByName is filled in init: tools call each other through it (a direct
+// reference would be an initialization cycle).
+var toolByName = map[string]tool{}
+
+func init() {
+	for _, t := range tools {
+		toolByName[t.spec(&toolEnv{}).Name] = t
+	}
+}
 
 func toolsFor(env *toolEnv) []toolSpec {
 	var out []toolSpec
