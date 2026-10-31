@@ -56,6 +56,9 @@ type Client struct {
 	expires     time.Time
 }
 
+// ProjectID is the Firebase project the service account belongs to (not secret).
+func (c *Client) ProjectID() string { return c.projectID }
+
 // New parses a service-account JSON. An empty string returns nil, nil
 // (push disabled; the caller decides whether that is allowed).
 func New(serviceAccountJSON string) (*Client, error) {

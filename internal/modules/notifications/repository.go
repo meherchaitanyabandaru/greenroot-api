@@ -30,6 +30,7 @@ type Repository interface {
 	CreateTemplate(ctx context.Context, input TemplateRequest) (*Template, error)
 	UpdateTemplate(ctx context.Context, id int64, input TemplateRequest) (*Template, error)
 	DeleteTemplate(ctx context.Context, id int64) error
+	PushStats(ctx context.Context) (PushStats, error)
 }
 
 type CreateNotificationInput struct {
@@ -405,6 +406,7 @@ func (r *PostgresRepository) MarkDelivery(ctx context.Context, notificationID in
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE public.notifications
 		SET status = $2::varchar, sent_at = CASE WHEN $2::varchar = 'SENT' THEN CURRENT_TIMESTAMP ELSE sent_at END,
+			push_status = $2::varchar, push_attempted_at = CURRENT_TIMESTAMP,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE notification_id = $1`, notificationID, status)
 	return err

@@ -29,6 +29,7 @@ func (m Module) RegisterRoutes(router chi.Router) {
 		r.Get("/devices", m.handler.ListDevices)
 		r.Post("/devices", m.handler.UpsertDevice)
 		r.Delete("/devices/{id}", m.handler.DeleteDevice)
+		r.Get("/push-status", m.handler.PushStatus) // admin
 		r.Get("/templates", m.handler.ListTemplates)
 		r.Post("/templates", m.handler.CreateTemplate)
 		r.Put("/templates/{id}", m.handler.UpdateTemplate)

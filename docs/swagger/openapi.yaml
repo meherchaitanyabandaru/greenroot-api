@@ -1955,6 +1955,20 @@ paths:
         - BearerAuth: []
       responses:
         "200": { description: "Read notifications cleared; body {deleted: n}" }
+  /api/v1/notifications/push-status:
+    get:
+      tags: [Notifications]
+      summary: Push notification status (admin)
+      description: >-
+        Whether a Firebase service account is loaded (configured, project_id),
+        delivery health over the last 24 hours (NOT_CONFIGURED, NO_TRAFFIC, OK,
+        DEGRADED, FAILING), registered devices, and delivered / failed /
+        no-device counts for 24 hours and 7 days.
+      security:
+        - BearerAuth: []
+      responses:
+        "200": { description: Push status }
+        "403": { description: Not an admin }
   /api/v1/notifications/devices:
     get:
       tags: [Notifications]

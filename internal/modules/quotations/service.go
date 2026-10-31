@@ -358,7 +358,12 @@ func (s *Service) UpdateCustomer(ctx context.Context, actor ActorContext, id int
 	if err != nil {
 		return Quotation{}, err
 	}
-	s.audit(ctx, actor, auditlog.EntityQuotation, id, actionUpdate, map[string]any{"customer": input})
+	change := map[string]any{"customer": input}
+	if q.QuotationType == "INTERNAL" {
+		// The admin quotation page reads this to show when and by whom.
+		change["converted_from_type"], change["quotation_type"], change["status"] = "INTERNAL", updated.QuotationType, updated.Status
+	}
+	s.audit(ctx, actor, auditlog.EntityQuotation, id, actionUpdate, change)
 	return enrichQuotation(actor, *updated), nil
 }
 
