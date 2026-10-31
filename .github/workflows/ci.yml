@@ -101,6 +101,11 @@ jobs:
       REDIS_ADDR: localhost:6379
       JWT_SECRET: ci-only-secret-not-used-anywhere-else-0123456789
       LOG_DIR: /tmp/gr-logs
+      # Mango: the journeys play greenroot-ai themselves (no AI provider, no cost).
+      AI_ENABLED: "true"
+      AI_SERVICE_URL: http://127.0.0.1:18090
+      AI_SERVICE_TOKEN: ci-only-ai-service-token-0123456789abcdef
+      AI_FAKE_PORT: "18090"
     steps:
       - uses: actions/checkout@v4
 

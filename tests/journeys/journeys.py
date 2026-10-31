@@ -20,12 +20,15 @@ import base64
 import datetime
 import hashlib
 import hmac
+import http.server
 import json
 import os
 import random
 import re
 import socket
+import struct
 import sys
+import threading
 import time
 import traceback
 import urllib.error
@@ -46,7 +49,7 @@ CONSENT = {"consent_version": 1, "accepted": True}
 LOADED_OK = {"declared_no_prohibited_items": True, "consent": CONSENT}
 ADMIN_MOBILE = "9000000000"
 
-results = {"pass": 0, "fail": 0, "failures": []}
+results = {"pass": 0, "fail": 0, "skip": 0, "failures": []}
 current = {"journey": ""}
 
 
@@ -2628,6 +2631,337 @@ def journey_consent_and_risk():
     expect("admin tunes a threshold", "PUT", "/admin/risk-rules/HIGH_AMOUNT", boss.token, {"is_enabled": True, "threshold": 600000, "risk_level": "MEDIUM"})
     expect("…and sets it back", "PUT", "/admin/risk-rules/HIGH_AMOUNT", boss.token, {"is_enabled": True, "threshold": 500000, "risk_level": "MEDIUM"})
 
+# ── Mango assistant ─────────────────────────────────────────────────────────
+
+class FakeAI:
+    """Plays greenroot-ai for the journeys: no AI provider, no cost. The API
+    must run with AI_ENABLED=true, AI_SERVICE_URL=http://127.0.0.1:<AI_FAKE_PORT>
+    and the same AI_SERVICE_TOKEN. Scripted model: "CALL <tool> <json>" calls
+    that tool once and answers "RESULT <tool output>"; "LOOP <tool> <json>"
+    keeps calling it; anything else is echoed."""
+
+    def __init__(self, port, token):
+        self.token, self.requests = token, []
+        fake = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+
+            def send(self, status, body, ctype="application/json", extra=None):
+                payload = body if isinstance(body, bytes) else json.dumps(body).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", ctype)
+                for k, v in (extra or {}).items():
+                    self.send_header(k, v)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                if self.headers.get("X-Internal-Token") != fake.token:
+                    return self.send(401, {"error": {"code": "unauthorized", "message": "wrong internal token"}})
+                fake.requests.append({"path": self.path, "headers": dict(self.headers), "body": body})
+                if self.path == "/v1/chat":
+                    req = json.loads(body)
+                    if req["messages"][-1].get("content") == "FAIL":
+                        return self.send(502, {"error": {"code": "ai_provider_error", "message": "scripted failure"}})
+                    if not isinstance(req.get("messages"), list) or not isinstance(req.get("tools", []), list):
+                        return self.send(422, {"error": {"code": "invalid_request", "message": "messages and tools must be lists"}})  # as greenroot-ai
+                    return self.send(200, fake.chat(req))
+                if self.path == "/v1/transcribe":
+                    return self.send(200, {"text": "ఈరోజు పెండింగ్ ఆర్డర్లు ఎన్ని?", "usage": {"model": "fake-stt", "input_tokens": 40, "output_tokens": 8}})
+                if self.path == "/v1/speech":
+                    return self.send(200, b"ID3fake-mp3", "audio/mpeg", {"X-Usage": json.dumps({"model": "fake-tts", "characters": 20, "audio_seconds": 2.0})})
+                self.send(404, {})
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def chat(self, body):
+        msgs, tools = body["messages"], body.get("tools") or []
+        usage = {"model": "fake-llm", "input_tokens": 100, "output_tokens": 10}
+        said = next(m["content"] for m in reversed(msgs) if m["role"] == "user")
+        if not tools:
+            return {"content": "FINAL without tools", "tool_calls": [], "usage": usage}
+        if msgs[-1]["role"] == "tool" and not said.startswith("LOOP "):
+            return {"content": "RESULT " + msgs[-1]["content"], "tool_calls": [], "usage": usage}
+        if said == "EMPTY":
+            return {"content": "", "tool_calls": [], "usage": usage}
+        if said.startswith(("CALL ", "LOOP ")):
+            name, _, arguments = said[5:].partition(" ")
+            return {"content": "", "tool_calls": [{"id": f"call_{len(self.requests)}", "name": name, "arguments": arguments or "{}"}], "usage": usage}
+        return {"content": "ECHO " + said, "tool_calls": [], "usage": usage}
+
+    def chats_since(self, n):
+        return [json.loads(r["body"]) for r in self.requests[n:] if r["path"] == "/v1/chat"]
+
+
+MANGO = {"X-Mango-Notice": "1"}
+
+
+def ask(user, text, history=None):
+    body = {"message": text, "history": history or []}
+    code, out = call("POST", "/assistant/chat", user.token if user else None, body, MANGO)
+    return code, out
+
+
+def tool_result(out):
+    reply = (out or {}).get("reply", "")
+    return json.loads(reply[len("RESULT "):]) if reply.startswith("RESULT ") else {"raw": reply}
+
+
+def wav_bytes(seconds, rate=16000):
+    n = int(seconds * rate) * 2
+    return b"RIFF" + struct.pack("<I", 36 + n) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16) + b"data" + struct.pack("<I", n) + bytes(n)
+
+
+def send_audio(user, data, content_type, language="auto", notice=True):
+    body, ctype = multipart([("language", language)], "audio", data, "question.m4a", content_type)
+    req = urllib.request.Request(API + "/assistant/transcribe", data=body, method="POST")
+    req.add_header("Content-Type", ctype)
+    if notice:
+        req.add_header("X-Mango-Notice", "1")
+    if user:
+        req.add_header("Authorization", "Bearer " + user.token)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try:
+            return e.code, json.loads(raw)
+        except ValueError:
+            return e.code, {"raw": raw[:200].decode(errors="replace")}
+
+
+def journey_assistant():
+    """Mango AI: notice, roles and limits gate every call; tools read data as the user (own nursery only, no phone numbers or addresses); changes only after the user confirms; audio checked before any AI call; usage recorded."""
+    boss = admin()
+    buyer_probe = User(first="Probe", activity="CUSTOMER")
+    status = expect("the app asks whether Mango is on", "GET", "/assistant/status", buyer_probe.token)
+    if not status.get("enabled"):
+        results["skip"] += 1
+        print("    SKIPPED  the API runs without AI_ENABLED=true and AI_SERVICE_URL pointing at this journey's fake AI (see CI)")
+        return
+    check("…with the notice version to show", status.get("notice_version") == "1" and status.get("calls_left_today", 0) > 0, status)
+    port = int(os.environ.get("AI_FAKE_PORT", "18090"))
+    fake = FakeAI(port, os.environ.get("AI_SERVICE_TOKEN", ""))
+    saved = expect("admin reads Mango's settings", "GET", "/admin/assistant/settings", boss.token)["settings"]
+    try:
+        # Room for the checks below; the daily limit has its own section.
+        expect("admin raises the daily limit for this journey", "PUT", "/admin/assistant/settings", boss.token, {"enabled": True, "daily_question_limit": 50})
+        _journey_assistant(boss, fake)
+        _journey_assistant_limits(boss, fake)
+    finally:
+        call("PUT", "/admin/assistant/settings", boss.token, saved)
+        fake.server.shutdown()
+        fake.server.server_close()
+
+
+def _journey_assistant(boss, fake):
+    owner, manager, buyer, driver, plants = team(boss)
+    other = approved_owner(boss)
+    address = {"contact_name": "Ravi", "contact_mobile": buyer.mobile, "address_line1": "12 Lake Road", "city": "Hyderabad", "latitude": 17.44, "longitude": 78.38}
+
+    def new_order(qty=3):
+        return expect("owner books an order for the buyer", "POST", "/orders", owner.token, {"seller_nursery_id": owner.nursery_id, "buyer_mobile": buyer.mobile,
+                      "delivery": address, "items": [{"plant_id": plants[0], "quantity": qty, "unit_price": 120, "total_price": qty * 120}]}, status=201)["order"]
+
+    order = new_order()
+    num = order["order_number"]
+
+    # Gates: nothing reaches the AI service without them.
+    before = len(fake.requests)
+    code, out = call("POST", "/assistant/chat", None, {"message": "hi"}, MANGO)
+    check("no token: 401", code == 401, out)
+    code, out = call("POST", "/assistant/chat", boss.token, {"message": "hi"}, MANGO)
+    check("an admin account cannot use Mango (it would see every nursery)", code == 403 and err_code(out) == "assistant_not_for_admins", out)
+    code, out = call("POST", "/assistant/chat", owner.token, {"message": "hi"})
+    check("the AI notice must have been shown: 428", code == 428 and err_code(out) == "ai_notice_required", out)
+    code, out = call("POST", "/assistant/chat", owner.token, {"message": "x" * 501}, MANGO)
+    check("a question over 500 characters is refused", code == 422 and err_code(out) == "message_too_long", out)
+    code, out = call("POST", "/assistant/chat", owner.token, {"message": "   "}, MANGO)
+    check("an empty question is refused", code == 422, out)
+    check("…none of these reached the AI service", len(fake.requests) == before, fake.requests[before:])
+
+    code, out = ask(owner, "hello Mango")
+    require("the owner gets an answer", code == 200 and out.get("reply") == "ECHO hello Mango", out)
+    req = fake.requests[-1]
+    check("…the API sent its internal token and a request id, never the user's token",
+          req["headers"].get("X-Internal-Token") == fake.token and req["headers"].get("X-Request-Id") and "Authorization" not in req["headers"], req["headers"])
+    sent = json.loads(req["body"])
+    offered = {t["name"]: t for t in sent["tools"]}
+    check("…owner is offered order, quotation, trip tools and the confirm proposal", {"list_orders", "get_order", "list_quotations", "list_trips", "get_delivery_status", "propose_confirm_order"} <= set(offered), list(offered))
+    check("…the system prompt forbids inventing data and names the roles", "Never guess or invent" in sent["messages"][0]["content"] and "NURSERY_OWNER" in sent["messages"][0]["content"], sent["messages"][0]["content"][:300])
+
+    # Tools: real data, as the user.
+    n = len(fake.requests)
+    code, out = ask(owner, 'CALL list_orders {"side":"selling","status":"PENDING","placed_today":true}')
+    res = tool_result(out)
+    check("today's pending orders come from GreenRoot, with the real count", code == 200 and res.get("total", 0) >= 1 and any(o["order_number"] == num for o in res.get("orders", [])), out)
+    check("…the reply says which tool answered", out.get("used_tools") == ["list_orders"], out)
+    code, out = ask(owner, f'CALL get_order {{"order_number":"{num}"}}')
+    res = tool_result(out)
+    check("one order: status, customer and items", res.get("order_number") == num and res.get("status") == "PENDING" and res.get("items") and res.get("customer"), res)
+    leaks = [x for x in (buyer.mobile, "12 Lake Road", "17.44", owner.token, buyer.token) if any(x.encode() in r["body"] for r in fake.requests[n:])]
+    check("…no phone number, address, coordinates or token went to the AI service", not leaks, leaks)
+
+    code, out = ask(other, f'CALL get_order {{"order_number":"{num}"}}')
+    check("another nursery's owner cannot read this order through Mango", tool_result(out).get("error") == "not_found", out)
+    code, out = ask(other, 'CALL list_orders {"side":"selling"}')
+    check("…nor see it in their list", num not in json.dumps(tool_result(out)), out)
+    code, out = ask(buyer, f'CALL get_order {{"order_number":"{num}"}}')
+    res = tool_result(out)
+    check("the buyer reads their own order (nursery shown, not customer)", res.get("order_number") == num and res.get("nursery") and "customer" not in res, res)
+    code, out = ask(buyer, 'CALL list_orders {"side":"selling"}')
+    check("the model cannot give a buyer the selling view", tool_result(out).get("error") == "not_allowed", out)
+    code, out = ask(buyer, f'CALL propose_confirm_order {{"order_number":"{num}"}}')
+    check("…nor run the confirm proposal for a buyer", tool_result(out).get("error") == "not_allowed", out)
+    buyer_tools = {t["name"] for t in fake.chats_since(len(fake.requests) - 1)[0]["tools"]}
+    check("…which is not even offered to them", "propose_confirm_order" not in buyer_tools, buyer_tools)
+    n = len(fake.requests)
+    code, out = ask(driver, 'CALL list_trips {"side":"selling"}')
+    check("a driver cannot use Mango (403 assistant_role_not_allowed)", code == 403 and err_code(out) == "assistant_role_not_allowed", out)
+    code, out = call("GET", "/assistant/status", driver.token)
+    check("…nor read its status", code == 403, out)
+    check("…nothing reached the AI service", len(fake.requests) == n)
+
+    # Changes only after the user taps Confirm.
+    code, out = ask(owner, f'CALL propose_confirm_order {{"order_number":"{num}"}}')
+    prop = out.get("proposal") or {}
+    require("Mango proposes confirming the order", code == 200 and prop.get("id") and num in prop.get("summary", ""), out)
+    check("…but the order is still PENDING", expect("order", "GET", f"/orders/{order['id']}", owner.token)["order"]["order_status"] == "PENDING")
+    expect("another user cannot confirm the owner's proposal", "POST", f"/assistant/actions/{prop['id']}/confirm", manager.token, {}, status=404)
+    expect("the owner cancels it", "POST", f"/assistant/actions/{prop['id']}/cancel", owner.token, {})
+    out = expect("…a cancelled proposal cannot be confirmed", "POST", f"/assistant/actions/{prop['id']}/confirm", owner.token, {}, status=409)
+    check("…action_already_decided", err_code(out) == "action_already_decided", out)
+    code, out = ask(owner, f'CALL propose_confirm_order {{"order_number":"{num}"}}')
+    prop = out.get("proposal") or {}
+    done = expect("the owner confirms Mango's proposal", "POST", f"/assistant/actions/{prop.get('id')}/confirm", owner.token, {})
+    check("…done through the normal endpoint: the order is CONFIRMED", done.get("status") == "DONE" and expect("order", "GET", f"/orders/{order['id']}", owner.token)["order"]["order_status"] == "CONFIRMED", done)
+    expect("…a proposal runs once", "POST", f"/assistant/actions/{prop.get('id')}/confirm", owner.token, {}, status=409)
+    code, out = ask(owner, f'CALL propose_confirm_order {{"order_number":"{num}"}}')
+    check("a confirmed order cannot be proposed again", tool_result(out).get("error") == "not_possible" and not out.get("proposal"), out)
+
+    stale = new_order(2)
+    code, out = ask(manager, f'CALL propose_confirm_order {{"order_number":"{stale["order_number"]}"}}')
+    stale_prop = out.get("proposal") or {}
+    require("the manager gets a proposal too", stale_prop.get("id"), out)
+    expect("the owner cancels the order meanwhile", "POST", f"/orders/{stale['id']}/cancel", owner.token, {"reason": "customer changed plan"})
+    out = expect("…confirming the stale proposal is refused by the order rules", "POST", f"/assistant/actions/{stale_prop['id']}/confirm", manager.token, {}, status=409)
+    check("…action_failed with the API's reason; the order stays CANCELLED", err_code(out) == "action_failed" and expect("order", "GET", f"/orders/{stale['id']}", owner.token)["order"]["order_status"] == "CANCELLED", out)
+
+    n = len(fake.requests)
+    code, out = ask(manager, 'LOOP list_orders {"side":"selling"}')
+    chats = fake.chats_since(n)
+    check("a model that keeps calling tools is stopped: 2 tool rounds, then one answer without tools",
+          code == 200 and out.get("reply") == "FINAL without tools" and len(chats) == 3 and not chats[-1].get("tools"), [len(chats), out])
+
+    # Speech: checked before any AI call.
+    n = len(fake.requests)
+    code, out = send_audio(buyer, wav_bytes(2), "audio/wav", "te")
+    check("a 2-second WAV is transcribed", code == 200 and out.get("text") and abs(out.get("seconds", 0) - 2) < 0.05, out)
+    stt = fake.requests[-1]
+    check("…sent on as audio/wav with the language, without the user's token", b'name="language"' in stt["body"] and b"audio/wav" in stt["body"] and "Authorization" not in stt["headers"], stt["headers"])
+    for label, data, ctype, want, ecode in [
+        ("an empty file", b"", "audio/wav", 422, "empty_audio"),
+        ("a text file called audio", b"hello this is not audio at all", "audio/wav", 415, "unsupported_audio"),
+        ("a declared non-audio type", wav_bytes(1), "text/plain", 415, "unsupported_audio"),
+        ("an M4A with no header", b"\x00\x00\x00\x18ftypM4A " + bytes(200), "audio/mp4", 422, "corrupt_audio"),
+        ("31 seconds", wav_bytes(31), "audio/wav", 413, "audio_too_long"),
+        ("0.1 seconds", wav_bytes(0.1), "audio/wav", 422, "audio_too_short"),
+        ("over 1 MB", wav_bytes(33, rate=16000) + bytes(10), "audio/wav", 413, None),
+    ]:
+        code, out = send_audio(buyer, data, ctype)
+        check(f"{label} is refused ({want})", code == want and (ecode is None or err_code(out) == ecode), [code, out])
+    code, out = send_audio(buyer, wav_bytes(2), "audio/wav", "fr")
+    check("an unknown language is refused", code == 422 and err_code(out) == "invalid_language", out)
+    code, out = send_audio(buyer, wav_bytes(2), "audio/wav", notice=False)
+    check("speech also needs the notice", code == 428, out)
+    check("…only the one good recording reached the AI service", [r["path"] for r in fake.requests[n:]] == ["/v1/transcribe"], [r["path"] for r in fake.requests[n:]])
+
+    code, audio = call("POST", "/assistant/speech", buyer.token, {"text": "మీకు ఒక ఆర్డర్ ఉంది"}, MANGO, raw=True)
+    check("Mango reads a Telugu reply aloud (MP3)", code == 200 and audio == b"ID3fake-mp3", audio[:40])
+    check("…asked to speak Telugu", "Telugu" in json.loads(fake.requests[-1]["body"]).get("instructions", ""))
+    code, out = call("POST", "/assistant/speech", buyer.token, {"text": "  "}, MANGO)
+    check("…nothing to read: 422", code == 422 and err_code(out) == "empty_text", out)
+    code, out = call("POST", "/assistant/speech", buyer.token, {"text": "x" * 601}, MANGO)
+    check("…too long to read: 422", code == 422 and err_code(out) == "text_too_long", out)
+
+    # Limits: a burst is slowed down.
+    hasty = User(first="Hasty", activity="CUSTOMER")
+    codes = [ask(hasty, f"question {i}")[0] for i in range(16)]
+    code, out = ask(hasty, "one more")
+    check("15 calls a minute per user, then 429 ai_slow_down", codes[:15] == [200] * 15 and code == 429 and err_code(out) == "ai_slow_down", [codes, out])
+
+    # Usage and data
+    use = expect("admin sees AI usage by kind", "GET", "/admin/assistant/usage", boss.token)
+    kinds = {u["kind"]: u for u in use.get("usage", [])}
+    check("…speech to text, model and read aloud are counted separately", {"STT", "LLM", "TTS"} <= set(kinds) and kinds["LLM"]["calls_today"] > 0 and kinds["LLM"]["estimated_usd_today"] > 0, kinds)
+    expect("a customer cannot read AI usage", "GET", "/admin/assistant/usage", buyer.token, status=403)
+    gone = expect("the buyer deletes their Mango data", "DELETE", "/assistant/data", buyer.token)
+    check("…today's question count stays (it is what keeps the limit)", expect("status", "GET", "/assistant/status", buyer.token)["questions"]["questions_used"] > 0)
+    check("…their usage rows are no longer linked to them", gone.get("anonymized_usage_rows", 0) >= 1, gone)
+    after = {u["kind"]: u for u in expect("usage after", "GET", "/admin/assistant/usage", boss.token).get("usage", [])}
+    check("…the budget totals are kept", after["LLM"]["calls_month"] >= kinds["LLM"]["calls_month"], after)
+
+
+def _journey_assistant_limits(boss, fake):
+    """Daily questions: per person, voice and text alike, counted only when answered."""
+    customer = User(first="Limit", activity="CUSTOMER")
+    expect("a customer cannot read Mango's settings", "GET", "/admin/assistant/settings", customer.token, status=403)
+    expect("…nor change them", "PUT", "/admin/assistant/settings", customer.token, {"enabled": True, "daily_question_limit": 500}, status=403)
+    expect("a limit above 50 is refused", "PUT", "/admin/assistant/settings", boss.token, {"enabled": True, "daily_question_limit": 51}, status=400)
+    expect("admin sets 5 questions a day", "PUT", "/admin/assistant/settings", boss.token, {"enabled": True, "daily_question_limit": 5})
+    q = expect("status", "GET", "/assistant/status", customer.token)["questions"]
+    check("a new customer has 5 of 5 left, resetting at India midnight", q["questions_left"] == 5 and q["questions_limit"] == 5 and q["resets_at"].endswith("+05:30"), q)
+
+    n = len(fake.requests)
+    code, out = send_audio(customer, wav_bytes(2), "audio/wav")
+    check("a recording is transcribed without using a question", code == 200 and expect("status", "GET", "/assistant/status", customer.token)["questions"]["questions_used"] == 0, out)
+    code, out = ask(customer, out.get("text", "x"))
+    check("…sending its text uses one (voice and text count the same)", code == 200 and out["questions"]["questions_left"] == 4, out)
+    code, out = ask(customer, "FAIL")
+    check("a failed answer does not count", code == 502 and expect("status", "GET", "/assistant/status", customer.token)["questions"]["questions_left"] == 4, out)
+    code, out = ask(customer, "EMPTY")
+    check("an empty answer does not count", code == 200 and out["questions"]["questions_left"] == 4, out)
+    call("POST", "/assistant/speech", customer.token, {"text": "answer"}, MANGO, raw=True)
+    check("reading an answer aloud does not count", expect("status", "GET", "/assistant/status", customer.token)["questions"]["questions_left"] == 4)
+    lefts = [ask(customer, f"question {i}")[1].get("questions", {}).get("questions_left") for i in range(4)]
+    check("questions 2 to 5 count down 3, 2, 1, 0", lefts == [3, 2, 1, 0], lefts)
+    before = len(fake.requests)
+    code, out = ask(customer, "a sixth question")
+    check("the 6th question is refused: 429 ai_daily_questions_used", code == 429 and err_code(out) == "ai_daily_questions_used" and "5 questions" in out["error"]["message"], out)
+    code, out = send_audio(customer, wav_bytes(2), "audio/wav")
+    check("…and no recording is transcribed (no AI cost)", code == 429 and err_code(out) == "ai_daily_questions_used", out)
+    check("…neither reached the AI service", len(fake.requests) == before, [r["path"] for r in fake.requests[before:]])
+    code, _ = call("POST", "/assistant/speech", customer.token, {"text": "replay"}, MANGO, raw=True)
+    check("…an earlier answer can still be read aloud", code == 200)
+
+    other = User(first="Other", activity="CUSTOMER")
+    check("another customer's questions are their own", ask(other, "hello")[1].get("questions", {}).get("questions_left") == 4)
+
+    racer = User(first="Racer", activity="CUSTOMER")
+    results_ = []
+    threads = [threading.Thread(target=lambda i=i: results_.append(ask(racer, f"race {i}")[0])) for i in range(10)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    check("10 questions at the same moment: exactly 5 answered, 5 refused", sorted(results_) == [200] * 5 + [429] * 5, sorted(results_))
+    check("…and the count is exactly 5", expect("status", "GET", "/assistant/status", racer.token)["questions"]["questions_used"] == 5)
+
+    expect("admin raises the limit to 6", "PUT", "/admin/assistant/settings", boss.token, {"enabled": True, "daily_question_limit": 6})
+    check("…takes effect at once", ask(customer, "one more")[0] == 200)
+    expect("admin switches Mango off", "PUT", "/admin/assistant/settings", boss.token, {"enabled": False, "daily_question_limit": 6})
+    code, out = ask(other, "hello")
+    check("…every question is refused: 503 ai_disabled", code == 503 and err_code(out) == "ai_disabled", out)
+    check("…and the app is told", expect("status", "GET", "/assistant/status", other.token)["enabled"] is False)
+    log = expect("audit log", "GET", "/audit-logs?module=ASSISTANT&entity_type=assistant_settings", boss.token).get("audit_logs", [])
+    check("…each change is in the audit log, with who changed it", len(log) >= 3 and all(e.get("user_id") for e in log[:3]), [e.get("description") for e in log[:3]])
+
 
 JOURNEYS = [
     ("auth", journey_auth),
@@ -2639,6 +2973,7 @@ JOURNEYS = [
     ("dispatch", journey_dispatch),
     ("vehicles", journey_vehicles),
     ("consent_and_risk", journey_consent_and_risk),
+    ("assistant", journey_assistant),
     ("top_items", journey_top_items),
     ("plant_suggestions", journey_plant_suggestions),
     ("storage", journey_storage),
@@ -2673,7 +3008,7 @@ def main():
             results["fail"] += 1
             results["failures"].append(f"{name}: crashed\n{traceback.format_exc()}")
             print(traceback.format_exc())
-    print(f"\n{results['pass']} passed, {results['fail']} failed in {time.time() - started:.1f}s")
+    print(f"\n{results['pass']} passed, {results['fail']} failed, {results['skip']} skipped in {time.time() - started:.1f}s")
     for f in results["failures"]:
         print("  ✗ " + f)
     sys.exit(1 if results["fail"] else 0)

@@ -21,6 +21,41 @@ type Config struct {
 	Razorpay RazorpayConfig
 	Push     PushConfig
 	Client   ClientAppConfig
+	AI       AIConfig
+}
+
+// AIConfig: the Mango assistant. The API calls the internal greenroot-ai
+// service (which alone holds the provider key) and enforces every limit here.
+// Prices are USD from the provider's published price list (checked
+// 2026-10-30); they only feed the budget estimate.
+type AIConfig struct {
+	Enabled      bool // kill switch: false answers 503 ai_disabled, no AI call
+	ServiceURL   string
+	ServiceToken string
+	Timeout      time.Duration // per AI service call
+
+	MaxAudioBytes   int64
+	MaxAudioSeconds float64
+	MaxTextChars    int // one typed or transcribed message
+	MaxSpeechChars  int // one read-aloud request
+
+	// A call is one provider request; a spoken question is up to 5 (speech to
+	// text, up to 3 model rounds, read aloud).
+	UserMinuteCalls  int     // burst limit per user
+	UserDailyCalls   int     // AI calls per user per day
+	UserDailyUSD     float64 // estimated spend per user per day
+	GlobalDailyUSD   float64 // estimated spend, all users, per day
+	GlobalMonthlyUSD float64 // estimated spend, all users, per calendar month
+	RetentionDays    int     // usage rows older than this are deleted
+
+	PriceSTTInputPerM  float64
+	PriceSTTOutputPerM float64
+	PriceSTTPerMinute  float64 // when the provider reports seconds, not tokens
+	PriceLLMInputPerM  float64
+	PriceLLMCachedPerM float64
+	PriceLLMOutputPerM float64
+	// Estimate: the speech endpoint reports no tokens, so minutes of audio returned.
+	PriceTTSPerMinute float64
 }
 
 // ClientAppConfig is the mobile/web app version policy served at
@@ -239,6 +274,32 @@ func Load() Config {
 		Push: PushConfig{
 			FCMServiceAccountJSON: getString("FCM_SERVICE_ACCOUNT_JSON", ""),
 		},
+		AI: AIConfig{
+			Enabled:      getBool("AI_ENABLED", false),
+			ServiceURL:   getString("AI_SERVICE_URL", "http://127.0.0.1:8090"),
+			ServiceToken: getString("AI_SERVICE_TOKEN", ""),
+			Timeout:      getDuration("AI_SERVICE_TIMEOUT", 25*time.Second),
+
+			MaxAudioBytes:   int64(getInt("AI_MAX_AUDIO_BYTES", 1<<20)),
+			MaxAudioSeconds: getFloat("AI_MAX_AUDIO_SECONDS", 30),
+			MaxTextChars:    getInt("AI_MAX_TEXT_CHARS", 500),
+			MaxSpeechChars:  getInt("AI_MAX_SPEECH_CHARS", 600),
+
+			UserMinuteCalls:  getInt("AI_USER_MINUTE_CALLS", 15),
+			UserDailyCalls:   getInt("AI_USER_DAILY_CALLS", 150),
+			UserDailyUSD:     getFloat("AI_USER_DAILY_USD", 0.05),
+			GlobalDailyUSD:   getFloat("AI_GLOBAL_DAILY_USD", 0.50),
+			GlobalMonthlyUSD: getFloat("AI_GLOBAL_MONTHLY_USD", 4.00),
+			RetentionDays:    getInt("AI_USAGE_RETENTION_DAYS", 90),
+
+			PriceSTTInputPerM:  getFloat("AI_PRICE_STT_INPUT_PER_M", 1.25),
+			PriceSTTOutputPerM: getFloat("AI_PRICE_STT_OUTPUT_PER_M", 5.00),
+			PriceSTTPerMinute:  getFloat("AI_PRICE_STT_PER_MINUTE", 0.003),
+			PriceLLMInputPerM:  getFloat("AI_PRICE_LLM_INPUT_PER_M", 0.40),
+			PriceLLMCachedPerM: getFloat("AI_PRICE_LLM_CACHED_PER_M", 0.10),
+			PriceLLMOutputPerM: getFloat("AI_PRICE_LLM_OUTPUT_PER_M", 1.60),
+			PriceTTSPerMinute:  getFloat("AI_PRICE_TTS_PER_MINUTE", 0.015),
+		},
 	}
 }
 
@@ -255,6 +316,14 @@ func getInt(key string, fallback int) int {
 		return fallback
 	}
 	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func getFloat(key string, fallback float64) float64 {
+	parsed, err := strconv.ParseFloat(os.Getenv(key), 64)
 	if err != nil {
 		return fallback
 	}

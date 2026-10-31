@@ -134,6 +134,9 @@ func (c Config) productionProblems() []error {
 	if c.HTTP.MaxBodyBytes <= 0 || c.HTTP.MaxUploadBytes <= 0 {
 		add("HTTP_MAX_BODY_BYTES and HTTP_MAX_UPLOAD_BYTES must be positive")
 	}
+	if c.AI.Enabled && len(c.AI.ServiceToken) < minJWTSecretBytes {
+		add("AI_SERVICE_TOKEN must be a random value of at least %d bytes when AI_ENABLED (the AI service trusts it)", minJWTSecretBytes)
+	}
 	if !c.Storage.UseIAMRole && (c.Storage.AccessKeyID == devStorageKey || c.Storage.SecretAccessKey == devStorageSecret) {
 		add("STORAGE_ACCESS_KEY / STORAGE_SECRET_KEY are the local MinIO defaults")
 	}

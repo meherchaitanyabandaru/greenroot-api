@@ -7628,6 +7628,178 @@ paths:
           description: "{signals, total}"
         "403":
           $ref: '#/components/responses/Error'
+  /api/v1/assistant/status:
+    get:
+      tags: [Assistant]
+      summary: Whether Mango AI is on, the notice version and today's calls left
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: "{enabled, notice_version, max_audio_seconds, max_text_chars, calls_left_today, questions: {questions_used, questions_limit, questions_left, resets_at}}"
+        "403":
+          description: assistant_not_for_admins (admin accounts) or assistant_role_not_allowed (drivers); Mango is for owners, managers and customers
+  /api/v1/assistant/transcribe:
+    post:
+      tags: [Assistant]
+      summary: Speech to text for one question (M4A/AAC or WAV, up to 30 s and 1 MB; never stored)
+      description: Needs header X-Mango-Notice. Errors 413 audio_too_large/audio_too_long, 415 unsupported_audio, 422 empty_audio/corrupt_audio/audio_too_short/invalid_language, 428 ai_notice_required, 429 ai_slow_down/ai_daily_limit, 503 ai_disabled/ai_budget_reached, 504 ai_timeout.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: X-Mango-Notice
+          in: header
+          required: true
+          schema: { type: string, example: "1" }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [audio]
+              properties:
+                audio: { type: string, format: binary }
+                language: { type: string, enum: [auto, te, en] }
+      responses:
+        "200":
+          description: "{text, seconds, request_id}"
+  /api/v1/assistant/chat:
+    post:
+      tags: [Assistant]
+      summary: Ask Mango (typed or corrected transcript); tools read data as the caller
+      description: Needs header X-Mango-Notice. The app sends the last turns as history; the server stores no text. A proposal is returned when Mango prepared a change; nothing changes until the actions confirm endpoint is called.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: X-Mango-Notice
+          in: header
+          required: true
+          schema: { type: string, example: "1" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string, maxLength: 500 }
+                history:
+                  type: array
+                  maxItems: 6
+                  items:
+                    type: object
+                    properties:
+                      role: { type: string, enum: [user, assistant] }
+                      text: { type: string }
+      responses:
+        "200":
+          description: "{reply, used_tools, request_id, questions, proposal?: {id, summary, expires_at}}. One question is counted when answered; a failed or empty answer is not. 429 ai_daily_questions_used when today's questions are used (India time)."
+  /api/v1/assistant/speech:
+    post:
+      tags: [Assistant]
+      summary: Read a reply aloud (MP3)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: X-Mango-Notice
+          in: header
+          required: true
+          schema: { type: string, example: "1" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, maxLength: 600 }
+      responses:
+        "200":
+          description: MP3 audio
+          content:
+            audio/mpeg: {}
+  /api/v1/assistant/actions/{id}/confirm:
+    post:
+      tags: [Assistant]
+      summary: Run a change Mango proposed (once, by its user, within 10 minutes, through the normal endpoint)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: "{status: DONE, message}"
+        "404":
+          description: action_not_found
+        "409":
+          description: action_expired, action_already_decided or action_failed (the normal endpoint refused)
+  /api/v1/assistant/actions/{id}/cancel:
+    post:
+      tags: [Assistant]
+      summary: Drop a proposal
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: "{status: CANCELLED}"
+  /api/v1/assistant/data:
+    delete:
+      tags: [Assistant]
+      summary: Delete the caller's Mango data (proposals deleted, usage rows unlinked)
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: "{deleted_actions, anonymized_usage_rows}"
+  /api/v1/admin/assistant/usage:
+    get:
+      tags: [Assistant]
+      summary: Mango AI calls and estimated cost by kind, today and this month, with the limits (admin)
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: "{enabled, usage[], limits, note}"
+  /api/v1/admin/assistant/settings:
+    get:
+      tags: [Assistant]
+      summary: Mango on/off and the daily question limit per person (admin)
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: "{settings: {enabled, daily_question_limit}, server_ai_enabled, max_daily_question_limit}"
+    put:
+      tags: [Assistant]
+      summary: Change Mango on/off and the daily question limit (admin; audit-logged; takes effect at once)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled, daily_question_limit]
+              properties:
+                enabled: { type: boolean }
+                daily_question_limit: { type: integer, minimum: 0, maximum: 50 }
+      responses:
+        "200":
+          description: "{settings}"
+        "400":
+          description: invalid_limit
   /api/v1/admin/risk-signals/scan:
     post:
       tags: [Risk]
