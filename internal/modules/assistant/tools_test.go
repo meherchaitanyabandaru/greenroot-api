@@ -79,7 +79,7 @@ func TestToolsOfferedPerRole(t *testing.T) {
 		"owner":   {[]string{"NURSERY_OWNER", "BUYER"}, []string{"list_orders", "propose_confirm_order", "list_trips"}, nil, []string{"selling", "buying"}},
 		"manager": {[]string{"MANAGER"}, []string{"list_orders", "propose_confirm_order"}, nil, []string{"selling"}},
 		"buyer":   {[]string{"BUYER"}, []string{"list_orders", "get_delivery_status"}, []string{"propose_confirm_order"}, []string{"buying"}},
-		"driver":  {[]string{"DRIVER"}, nil, []string{"list_trips", "list_orders", "get_order", "propose_confirm_order", "list_quotations"}, nil},
+		"driver":  {[]string{"DRIVER"}, []string{"list_trips"}, []string{"list_orders", "get_order", "propose_confirm_order", "list_quotations"}, nil},
 	}
 	for name, c := range cases {
 		e := env(actor(c.roles...), &fakeAPI{})
@@ -99,8 +99,11 @@ func TestToolsOfferedPerRole(t *testing.T) {
 		}
 	}
 	// An owner who also drives keeps the nursery views only: no "driving" view.
-	if got := sides(actor("NURSERY_OWNER", "DRIVER")); !slices.Equal(got, []string{"selling", "buying"}) {
-		t.Errorf("owner+driver sides %v", got)
+	if got := tripSides(actor("NURSERY_OWNER", "DRIVER")); !slices.Equal(got, []string{"selling", "buying"}) {
+		t.Errorf("owner+driver trip sides %v", got)
+	}
+	if got := tripSides(actor("DRIVER")); !slices.Equal(got, []string{"driving"}) {
+		t.Errorf("driver trip sides %v", got)
 	}
 }
 
@@ -153,6 +156,25 @@ func TestToolsCallTheAPIAsTheUserAndPassOnlyAllowedFields(t *testing.T) {
 	q := r.URL.Query()
 	if r.Header.Get("Authorization") != "Bearer user-token" || r.RemoteAddr != "10.0.0.5:1234" || q.Get("order_status") != "PENDING" || q.Has("buying") {
 		t.Errorf("call: auth=%q addr=%q query=%v", r.Header.Get("Authorization"), r.RemoteAddr, q)
+	}
+}
+
+// A driver asking "where do I go" gets the delivery address of their own
+// trips; never the delivery code, phone numbers or coordinates.
+func TestDriverSeesWhereToDeliverOnly(t *testing.T) {
+	out, _ := json.Marshal(runTool(context.Background(), env(actor("DRIVER"), &fakeAPI{}), "list_trips", `{"side":"driving"}`))
+	got := string(out)
+	if !strings.Contains(got, `"deliver_to":"12 Lake Road"`) {
+		t.Errorf("driver trips: %s", got)
+	}
+	for _, leak := range []string{"4821", "9300000000", "9400000000", "17.4", "mobile", "latitude"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("%q reached the model: %s", leak, got)
+		}
+	}
+	sell, _ := json.Marshal(runTool(context.Background(), env(actor("NURSERY_OWNER"), &fakeAPI{}), "list_trips", `{"side":"selling"}`))
+	if strings.Contains(string(sell), "Lake Road") {
+		t.Errorf("the address is for the driver only: %s", sell)
 	}
 }
 
@@ -273,7 +295,6 @@ func TestGatesBeforeAnyAICall(t *testing.T) {
 		code    string
 	}{
 		{[]string{"ADMIN"}, NoticeVersion, true, 403, "assistant_not_for_admins"},
-		{[]string{"DRIVER"}, NoticeVersion, true, 403, "assistant_role_not_allowed"},
 		{nil, NoticeVersion, true, 403, "assistant_role_not_allowed"},
 		{[]string{"BUYER"}, "", true, 428, "ai_notice_required"},
 		{[]string{"BUYER"}, "0", true, 428, "ai_notice_required"},

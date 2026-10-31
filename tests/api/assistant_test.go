@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Mango is for owners, managers and customers; drivers and admins are refused.
+// Mango is for owners, managers, customers and drivers; admins are refused.
 func TestAssistant_OnlyOwnersManagersAndCustomers(t *testing.T) {
 	for _, c := range []struct {
 		mobile string
@@ -20,7 +20,7 @@ func TestAssistant_OnlyOwnersManagersAndCustomers(t *testing.T) {
 		{ownerPhone, 200, ""},
 		{managerPhone, 200, ""},
 		{buyerPhone, 200, ""},
-		{driverPhone, 403, "assistant_role_not_allowed"},
+		{driverPhone, 200, ""},
 		{adminPhone, 403, "assistant_not_for_admins"},
 	} {
 		resp := get(t, "/api/v1/assistant/status", login(t, c.mobile))
@@ -35,10 +35,10 @@ func TestAssistant_OnlyOwnersManagersAndCustomers(t *testing.T) {
 			t.Errorf("%s: %d %q, want %d %q", c.mobile, code, body.Error.Code, c.status, c.code)
 		}
 	}
-	// Drivers are refused before anything else, AI on or off.
-	resp := mango(t, http.MethodPost, "/api/v1/assistant/chat", `{"message":"hi"}`, login(t, driverPhone))
+	// Admins are refused before anything else, AI on or off.
+	resp := mango(t, http.MethodPost, "/api/v1/assistant/chat", `{"message":"hi"}`, login(t, adminPhone))
 	if resp.StatusCode != http.StatusForbidden {
-		t.Errorf("driver chat: %d", resp.StatusCode)
+		t.Errorf("admin chat: %d", resp.StatusCode)
 	}
 	resp.Body.Close()
 }

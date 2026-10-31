@@ -88,6 +88,9 @@ var (
 func canSell(a authctx.Actor) bool { return a.HasRole("NURSERY_OWNER", "MANAGER") }
 func canBuy(a authctx.Actor) bool  { return a.HasRole("BUYER", "NURSERY_OWNER") }
 
+// Drivers who also run a nursery see the nursery's trips at /dispatches.
+func canDrive(a authctx.Actor) bool { return a.HasRole("DRIVER") && !canSell(a) }
+
 // sides lists the views of orders/quotations this user has.
 func sides(a authctx.Actor) []string {
 	var out []string
@@ -96,6 +99,14 @@ func sides(a authctx.Actor) []string {
 	}
 	if canBuy(a) {
 		out = append(out, "buying")
+	}
+	return out
+}
+
+func tripSides(a authctx.Actor) []string {
+	out := sides(a)
+	if canDrive(a) {
+		out = append(out, "driving")
 	}
 	return out
 }
@@ -130,7 +141,7 @@ func upperArg(args map[string]any, key string) string {
 
 func sideParam(allowed []string) map[string]any {
 	return map[string]any{"type": "string", "enum": allowed,
-		"description": "selling = orders customers placed with the user's nursery; buying = orders the user placed"}
+		"description": "selling = orders customers placed with the user's nursery; buying = orders the user placed; driving = trips the user drives"}
 }
 
 func objectSchema(props map[string]any, required ...string) map[string]any {
@@ -265,12 +276,18 @@ type tripRow struct {
 	DeliveryDate   *time.Time `json:"delivery_date"`
 	TripStartedAt  *time.Time `json:"trip_started_at"`
 	CompletedAt    *time.Time `json:"completed_at"`
+	Destination    *string    `json:"destination_address"`
 }
 
-func (t tripRow) brief(loc *time.Location) map[string]any {
+// brief: the driver of a trip also gets where to deliver (as on their trip
+// screen); never the delivery code, phone numbers or coordinates.
+func (t tripRow) brief(loc *time.Location, side string) map[string]any {
 	out := map[string]any{"trip": firstOf(t.DispatchNumber, &t.DispatchCode), "order_number": deref(t.OrderNumber),
 		"status": t.Status, "nursery": deref(t.SellerNursery), "customer": deref(t.Customer),
 		"lorry": deref(t.VehicleNumber), "driver": deref(t.DriverName)}
+	if side == "driving" {
+		out["deliver_to"] = deref(t.Destination)
+	}
 	for key, at := range map[string]*time.Time{"dispatch_date": t.DispatchDate, "expected_delivery": t.DeliveryDate, "started_at": t.TripStartedAt, "completed_at": t.CompletedAt} {
 		if at != nil {
 			out[key] = at.In(loc).Format("2006-01-02 15:04")
@@ -488,16 +505,16 @@ var tools = []tool{
 	},
 	{
 		spec: func(env *toolEnv) toolSpec {
-			return toolSpec{Name: "list_trips", Description: "List delivery trips (dispatches): on the way, waiting for a driver, delivered.",
+			return toolSpec{Name: "list_trips", Description: "List delivery trips (dispatches): on the way, waiting for a driver, delivered. For a driver (side driving) it includes where to deliver.",
 				Parameters: objectSchema(map[string]any{
-					"side":   sideParam(sides(env.actor)),
+					"side":   sideParam(tripSides(env.actor)),
 					"status": map[string]any{"type": "string", "enum": tripStatuses},
 				}, "side")}
 		},
-		allowed: func(a authctx.Actor) bool { return len(sides(a)) > 0 },
+		allowed: func(a authctx.Actor) bool { return len(tripSides(a)) > 0 },
 		run: func(ctx context.Context, env *toolEnv, args map[string]any) any {
 			side, status := str(args, "side"), upperArg(args, "status")
-			if !slices.Contains(sides(env.actor), side) {
+			if !slices.Contains(tripSides(env.actor), side) {
 				return toolError("not_allowed", "this account has no "+side+" trips view")
 			}
 			q := url.Values{"per_page": {"50"}}
@@ -525,7 +542,7 @@ var tools = []tool{
 			}
 			rows := make([]map[string]any, 0, 10)
 			for _, t := range list.Dispatches[:min(len(list.Dispatches), 10)] {
-				rows = append(rows, t.brief(env.loc))
+				rows = append(rows, t.brief(env.loc, side))
 			}
 			return map[string]any{"side": side, "status_filter": status, "total": list.Pagination.Total, "trips": rows}
 		},
@@ -553,7 +570,7 @@ var tools = []tool{
 			}
 			trips := make([]map[string]any, 0, len(list.Dispatches))
 			for _, t := range list.Dispatches[:min(len(list.Dispatches), 5)] {
-				trips = append(trips, t.brief(env.loc))
+				trips = append(trips, t.brief(env.loc, side))
 			}
 			return map[string]any{"order": o.brief(side, env.loc, false), "trips": trips}
 		},
