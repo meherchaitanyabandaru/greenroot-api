@@ -2201,6 +2201,15 @@ def journey_notifications():
     out = expect("clearing again", "DELETE", "/notifications/read", u.token)
     check("…deletes nothing (unread are kept)", out.get("deleted") == 0, out)
 
+    # Push status (admin): configuration and delivery reported apart
+    expect("a customer cannot see push status", "GET", "/notifications/push-status", u.token, status=403)
+    out = expect("admin push status", "GET", "/notifications/push-status", boss.token)
+    st = out.get("stats", {})
+    check("…configuration, health and both delivery windows",
+          isinstance(out.get("configured"), bool) and out.get("health") in ("NOT_CONFIGURED", "NO_TRAFFIC", "OK", "DEGRADED", "FAILING")
+          and all(k in st.get("last_24h", {}) for k in ("sent", "failed", "no_device")) and "last_7d" in st, out)
+    check("…no service account here (tests), so not configured", out.get("configured") is False and out.get("health") == "NOT_CONFIGURED", out)
+
 
 def journey_messages():
     """Who is told what: in-app/push at each order step; SMS only for customers who never signed in (and for money)."""

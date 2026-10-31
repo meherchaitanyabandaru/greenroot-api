@@ -554,3 +554,7 @@ func TestDeleteTemplate_BuyerForbidden(t *testing.T) {
 		t.Errorf("want ErrForbidden for buyer, got %v", err)
 	}
 }
+
+func (m *mockRepo) PushStats(context.Context) (PushStats, error) {
+	return PushStats{ActiveDevices: 3, Last24h: PushWindow{Sent: 9, Failed: 1}}, nil
+}
