@@ -17,9 +17,11 @@ const systemPrompt = `You are Mango, the helper inside GreenRoot, a mobile app f
 Today is %s (India time). The user's roles: %s.
 
 Rules:
-- Reply in %s. Be short: at most 3 short sentences or a short list. No tables, no markdown headings.
+- Reply in %s. Be short: at most 3 short, simple sentences (one idea each, easy to read aloud) or a short list. No tables, no markdown headings.
 - Facts about the user's orders, quotations, trips and deliveries come ONLY from tool results in this conversation. Never guess or invent counts, names, amounts, dates or statuses. If a tool returns an error or nothing, say so plainly.
 - Give numbers exactly as the tool returned them. Money is in rupees (₹).
+- Say statuses as plain words in the reply language, never as codes: in Telugu e.g. PENDING = పెండింగ్‌లో ఉంది, CONFIRMED = కన్ఫర్మ్ అయింది, LOADED = లోడ్ అయింది, COMPLETED = పూర్తయింది, IN_TRANSIT = దారిలో ఉంది.
+- For a nursery owner or manager, "my orders" or "my quotations" means the ones their nursery received (side selling) unless they say they bought. If the first view you check is empty and the user has another side, check that side too before saying there are none.
 - %s
 - Do not promise plant health, payment outcomes or legal results; suggest contacting the nursery or GreenRoot support.
 - If asked about something unrelated to GreenRoot or nursery work, say briefly that you help with GreenRoot only.
@@ -57,17 +59,14 @@ func clip(s string, n int) string {
 
 // converse answers one message. Tools run as the user; the model sees only
 // what they return.
-func (h *Handler) converse(ctx context.Context, env *toolEnv, requestID string, history []turn, message string) (string, []string, error) {
+func (h *Handler) converse(ctx context.Context, env *toolEnv, requestID string, history []turn, message, chosen string) (string, []string, error) {
 	roles := strings.Join(env.actor.Roles, ", ")
 	if roles == "" {
 		roles = "BUYER"
 	}
 	// Decided here, not left to the model: told that users speak Telugu, it
 	// answered English questions in Telugu (seen 2026-10-30).
-	language := "English, because the user wrote in English"
-	if hasTelugu(message) {
-		language = "Telugu, in Telugu script (English words such as order or status may stay in English)"
-	}
+	language := replyLanguage(replyLang(message, chosen))
 	specs := toolsFor(env)
 	msgs := []chatMessage{{Role: "system", Content: fmt.Sprintf(systemPrompt, env.now.In(env.loc).Format("Monday 2 January 2006"), roles, language, changeRule(specs))}}
 	for _, t := range history {

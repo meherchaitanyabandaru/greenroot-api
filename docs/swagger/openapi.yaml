@@ -7660,7 +7660,7 @@ paths:
               required: [audio]
               properties:
                 audio: { type: string, format: binary }
-                language: { type: string, enum: [auto, te, en] }
+                language: { type: string, enum: [auto, te, hi, kn, mr, ta, ur, en] }
       responses:
         "200":
           description: "{text, seconds, request_id}"
@@ -7685,6 +7685,7 @@ paths:
               required: [message]
               properties:
                 message: { type: string, maxLength: 500 }
+                language: { type: string, enum: [te, hi, kn, mr, ta, ur, en], description: "The user's chosen language; the script they wrote in decides the reply (English stays English)" }
                 history:
                   type: array
                   maxItems: 6
