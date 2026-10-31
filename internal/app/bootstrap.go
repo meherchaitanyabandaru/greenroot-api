@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/assistant"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/risk"
 	"log/slog"
 	"net/http"
@@ -205,6 +206,7 @@ func (a *App) Run(ctx context.Context) error {
 	go runRedisExpiryJobs(ctx, a.deps)
 	// Unusual activity for admins to review (risk_signals).
 	go risk.StartDetector(ctx, a.deps.DB, 10*time.Minute)
+	go assistant.StartPurge(ctx, a.deps.DB, a.deps.Config.AI.RetentionDays, a.deps.Logger)
 
 	serverErrors := make(chan error, 1)
 	go func() {

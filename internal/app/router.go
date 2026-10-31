@@ -15,6 +15,7 @@ import (
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/common/rowversion"
 	appmiddleware "github.com/meherchaitanyabandaru/greenroot-api/internal/middleware"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/admin"
+	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/assistant"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/attachments"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/audit"
 	"github.com/meherchaitanyabandaru/greenroot-api/internal/modules/auth"
@@ -146,6 +147,8 @@ func NewRouter(deps Dependencies) chi.Router {
 		vehicles.NewModule(deps.DB, deps.JWT, deps.Audit, redisClients...).RegisterRoutes(r)
 		risk.NewModule(deps.DB, deps.JWT, deps.Audit, optionalCmdable(deps.Redis)).RegisterRoutes(r)
 		users.NewModule(deps.DB, deps.JWT, deps.Storage, deps.Audit, deps.Redis, emailModule.Service(), smsModule.Service()).WithImagePolicies(imagePolicies).RegisterRoutes(r)
+		// Mango: its tools call the endpoints above through this router, as the user.
+		assistant.NewModule(deps.DB, deps.JWT, deps.Audit, deps.Config.AI, deps.Config.Database.TimeZone, router, deps.Logger).RegisterRoutes(r)
 	})
 
 	return router
