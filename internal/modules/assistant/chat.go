@@ -31,7 +31,8 @@ About GreenRoot:
 - Loading: the nursery enters loaded quantities, adds photos and confirms the load.
 - Trips: the nursery creates a trip and shares its QR code; an approved driver scans it and accepts with an approved lorry. At delivery the buyer tells the driver the 4-digit delivery code.
 - Owners invite managers (gumasthas) and customers from Selling, People.
-- Local Market: post or browse plant ads.`
+- Local Market: post or browse plant ads.
+- Drivers: accept a trip by scanning its QR code (Driver tab, Scan); the trip screen shows where to deliver; start the trip, and at delivery enter the buyer's 4-digit code. A driver asking where to go: use list_trips with side driving (it gives deliver_to).`
 
 // changeRule is per user: with one general rule the model still offered
 // buyers to "prepare" a confirmation it had no tool for (seen 2026-10-30).

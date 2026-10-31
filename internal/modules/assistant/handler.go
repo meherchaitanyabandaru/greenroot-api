@@ -76,19 +76,19 @@ func (m Module) RegisterRoutes(r chi.Router) {
 
 func writeErr(w http.ResponseWriter, e *AIError) { response.Error(w, e.Status, e.Code, e.Message) }
 
-// user: a nursery owner, manager or customer. Admin tokens see every
-// nursery, which must not reach the model; drivers are not offered Mango.
+// user: a nursery owner, manager, customer or driver. Admin tokens see
+// every nursery, which must not reach the model.
 func (h *Handler) user(w http.ResponseWriter, r *http.Request) (authctx.Actor, bool) {
 	actor, ok := authctx.FromRequest(w, r, h.jwt)
 	if !ok {
 		return actor, false
 	}
 	if actor.HasRole("ADMIN", "SUPER_ADMIN") {
-		response.Error(w, http.StatusForbidden, "assistant_not_for_admins", "Mango is for nursery owners, managers and customers")
+		response.Error(w, http.StatusForbidden, "assistant_not_for_admins", "Mango is for nursery owners, managers, customers and drivers")
 		return actor, false
 	}
-	if !actor.HasRole("NURSERY_OWNER", "MANAGER", "BUYER") {
-		response.Error(w, http.StatusForbidden, "assistant_role_not_allowed", "Mango is for nursery owners, managers and customers")
+	if !actor.HasRole("NURSERY_OWNER", "MANAGER", "BUYER", "DRIVER") {
+		response.Error(w, http.StatusForbidden, "assistant_role_not_allowed", "Mango is for nursery owners, managers, customers and drivers")
 		return actor, false
 	}
 	return actor, true

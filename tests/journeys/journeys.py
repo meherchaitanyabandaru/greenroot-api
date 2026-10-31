@@ -2821,12 +2821,26 @@ def _journey_assistant(boss, fake):
     check("…nor run the confirm proposal for a buyer", tool_result(out).get("error") == "not_allowed", out)
     buyer_tools = {t["name"] for t in fake.chats_since(len(fake.requests) - 1)[0]["tools"]}
     check("…which is not even offered to them", "propose_confirm_order" not in buyer_tools, buyer_tools)
+    # Drivers: their own trips, with where to deliver.
+    trip_order = new_order(4)
+    for step in ("confirm", "start-loading"):
+        expect(step, "POST", f"/orders/{trip_order['id']}/{step}", owner.token, {})
+    expect("complete loading", "POST", f"/orders/{trip_order['id']}/complete-loading", owner.token, LOADED_OK)
+    d = expect("dispatch", "POST", "/dispatches", owner.token, {"order_id": trip_order["id"]}, status=201)["dispatch"]
+    expect("the driver takes the trip", "POST", f"/dispatches/{d['id']}/accept", driver.token, {"trip_code": d["trip_uuid"]})
     n = len(fake.requests)
-    code, out = ask(driver, 'CALL list_trips {"side":"selling"}')
-    check("a driver cannot use Mango (403 assistant_role_not_allowed)", code == 403 and err_code(out) == "assistant_role_not_allowed", out)
-    code, out = call("GET", "/assistant/status", driver.token)
-    check("…nor read its status", code == 403, out)
-    check("…nothing reached the AI service", len(fake.requests) == n)
+    code, out = ask(driver, 'CALL list_trips {"side":"driving"}')
+    trip = next((t for t in tool_result(out).get("trips", []) if t.get("order_number") == trip_order["order_number"]), None)
+    check("a driver asks where to go: their trip with the delivery address", code == 200 and trip and "Lake Road" in trip.get("deliver_to", ""), out)
+    dcode = expect("owner reads the trip", "GET", f"/dispatches/{d['id']}", owner.token)["dispatch"].get("delivery_code")
+    sent = b"".join(r["body"] for r in fake.requests[n:])
+    check("…never the delivery code or phone numbers", b"delivery_code" not in sent and (not dcode or f'"{dcode}"'.encode() not in sent)
+          and buyer.mobile.encode() not in sent and driver.mobile.encode() not in sent)
+    check("…a driver is offered trips only", {t["name"] for t in fake.chats_since(n)[0]["tools"]} == {"list_trips"})
+    code, out = ask(driver, 'CALL list_orders {"side":"selling"}')
+    check("…and no order tools", tool_result(out).get("error") == "not_allowed", out)
+    code, out = call("GET", "/assistant/status", boss.token)
+    check("admins still cannot use Mango", code == 403 and err_code(out) == "assistant_not_for_admins", out)
 
     # Changes only after the user taps Confirm.
     code, out = ask(owner, f'CALL propose_confirm_order {{"order_number":"{num}"}}')
