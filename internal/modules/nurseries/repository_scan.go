@@ -31,7 +31,10 @@ func buildNurseryWhere(input ListNurseriesRequest) (string, []any) {
 	if status == "" {
 		status = input.VerificationStatus
 	}
-	if status != "" {
+	switch {
+	case status == "APPROVED": // a reactivated nursery is ACTIVE: same live state
+		clauses = append(clauses, `n.status::text IN ('APPROVED', 'ACTIVE')`)
+	case status != "":
 		args = append(args, status)
 		clauses = append(clauses, fmt.Sprintf(`n.status::text = $%d`, len(args)))
 	}

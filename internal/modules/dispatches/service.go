@@ -1048,6 +1048,15 @@ func (s *Service) ConfirmReceipt(ctx context.Context, actor ActorContext, dispat
 			return Dispatch{}, ErrReceiptWindowClosed
 		}
 		canConfirm, canReport := receiptActions(*current, true, time.Now())
+		// Already confirmed by the customer (their code at the door, or the
+		// app): "I received" again is not an error. Their screen was often
+		// still showing the trip on its way when the driver entered the code.
+		if issuePtr == nil && !canConfirm && current.DeliveryConfirmation != nil && *current.DeliveryConfirmation != ConfirmationUnconfirmed {
+			if refreshed, err := s.repository.FindByID(ctx, dispatchID); err == nil {
+				return *refreshed, nil
+			}
+			return *current, nil
+		}
 		if !canConfirm && (issuePtr == nil || !canReport) {
 			return Dispatch{}, ErrAlreadyConfirmed
 		}

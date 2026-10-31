@@ -2977,6 +2977,26 @@ def _journey_assistant_limits(boss, fake):
     check("…each change is in the audit log, with who changed it", len(log) >= 3 and all(e.get("user_id") for e in log[:3]), [e.get("description") for e in log[:3]])
 
 
+def journey_owner_connections():
+    """Owner to owner: one scan connects both nurseries to each other (no second scan the other way), and scanning again adds no duplicate."""
+    boss = admin()
+    a, b = approved_owner(boss, name="Mango Farm"), approved_owner(boss, name="Rose Garden")
+
+    def customers(owner):
+        out = expect("customers", "GET", f"/nurseries/{owner.nursery_id}/customers", owner.token)
+        return [c["mobile"] for c in out.get("customers", []) if c.get("mobile")]
+
+    expect("owner B scans owner A's customer QR", "POST", f"/invites/{invite(a, 'CUSTOMER_INVITE', b)}/accept", b.token, {})
+    check("A's nursery now has B as a customer", b.mobile in customers(a))
+    check("…and B's nursery has A as a customer, from the same scan", a.mobile in customers(b))
+    expect("B also sends A a QR and A scans it (the old two-scan habit)", "POST", f"/invites/{invite(b, 'CUSTOMER_INVITE', a)}/accept", a.token, {})
+    check("…still one connection each way, no duplicates", customers(a).count(b.mobile) == 1 and customers(b).count(a.mobile) == 1, [customers(a), customers(b)])
+
+    buyer = User(first="Plain", activity="CUSTOMER")
+    expect("a plain customer scans A's QR", "POST", f"/invites/{invite(a, 'CUSTOMER_INVITE', buyer)}/accept", buyer.token, {})
+    check("…only becomes A's customer (no nursery to connect back)", buyer.mobile in customers(a))
+
+
 JOURNEYS = [
     ("auth", journey_auth),
     ("accounts", journey_accounts),
@@ -2988,6 +3008,7 @@ JOURNEYS = [
     ("vehicles", journey_vehicles),
     ("consent_and_risk", journey_consent_and_risk),
     ("assistant", journey_assistant),
+    ("owner_connections", journey_owner_connections),
     ("top_items", journey_top_items),
     ("plant_suggestions", journey_plant_suggestions),
     ("storage", journey_storage),

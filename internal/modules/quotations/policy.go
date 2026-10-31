@@ -68,7 +68,7 @@ func BuildCapabilities(actor ActorContext, q Quotation) *QuotationCapabilities {
 
 	return &QuotationCapabilities{
 		CanEdit:              isSeller && editable && !assignedToOther,
-		CanUpdateCustomer:    isOwnerRole && q.QuotationType == "CUSTOMER" && q.ConvertedOrderID == nil && q.CustomerRespondedAt == nil,
+		CanUpdateCustomer:    isOwnerRole && (q.QuotationType == "CUSTOMER" || status == "INTERNAL_DRAFT") && q.ConvertedOrderID == nil && q.CustomerRespondedAt == nil,
 		CanDelete:            isOwnerRole && IsDeletable(q),
 		CanSend:              isSeller && (status == "CUSTOMER_DRAFT" || status == "CUSTOMER_REQUESTED" && requestOpen(q) && allPriced(q.Items)),
 		CanRecall:            isSeller && status == "CUSTOMER_SENT",

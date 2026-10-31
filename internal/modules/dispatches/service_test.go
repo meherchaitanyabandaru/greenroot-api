@@ -1320,8 +1320,10 @@ func TestReceipt_CustomerConfirmsAndReports(t *testing.T) {
 	if !got.Capabilities.CanReportIssue || got.Capabilities.CanConfirmReceipt {
 		t.Fatalf("after confirming: report yes, confirm no: %+v", got.Capabilities)
 	}
-	if _, err := s.ConfirmReceipt(context.Background(), buyerActor(300), 10, ReceiptRequest{Consent: buyerOK}); !errors.Is(err, ErrAlreadyConfirmed) {
-		t.Fatalf("confirm twice: got %v", err)
+	// Confirming again (e.g. a stale screen) is not an error and changes nothing.
+	again, err := s.ConfirmReceipt(context.Background(), buyerActor(300), 10, ReceiptRequest{Consent: buyerOK})
+	if err != nil || again.Status != "DELIVERED" || *again.DeliveryConfirmation != ConfirmationApp {
+		t.Fatalf("confirm twice: %v %v", again.DeliveryConfirmation, err)
 	}
 	issue := "10 plants broken"
 	if got, err = s.ConfirmReceipt(context.Background(), buyerActor(300), 10, ReceiptRequest{Issue: &issue}); err != nil || *got.DeliveryIssue != issue {
@@ -1455,5 +1457,18 @@ func TestStartTrip_DriverConfirmsFirst(t *testing.T) {
 		if c.ok != (err == nil) {
 			t.Errorf("%s: got %v", c.name, err)
 		}
+	}
+}
+
+// The driver entered the customer's code; the customer then taps "I
+// received the plants" on a screen that still showed the trip on its way.
+func TestReceipt_AfterTheCodeIsAlreadyDone(t *testing.T) {
+	repo, s, _ := deliveryWorld("DELIVERED")
+	now, code := time.Now(), ConfirmationCode
+	repo.dispatches[10].DeliveryDate = &now
+	repo.dispatches[10].DeliveryConfirmation = &code
+	got, err := s.ConfirmReceipt(context.Background(), buyerActor(300), 10, ReceiptRequest{Consent: buyerOK})
+	if err != nil || got.Status != "DELIVERED" || *got.DeliveryConfirmation != ConfirmationCode {
+		t.Fatalf("got %v %v", got.DeliveryConfirmation, err)
 	}
 }
