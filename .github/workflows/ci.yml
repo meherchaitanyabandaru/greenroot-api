@@ -21,9 +21,9 @@ jobs:
     name: Unit, lint & security
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -107,15 +107,15 @@ jobs:
       AI_SERVICE_TOKEN: ci-only-ai-service-token-0123456789abcdef
       AI_FAKE_PORT: "18090"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The fresh-install schema and seeds live in greenroot-infra.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: meherchaitanyabandaru/greenroot-infra
           path: infra
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -170,7 +170,7 @@ jobs:
       # is built from source through the Go module proxy (cached by version).
       - name: Cache MinIO
         id: minio-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/minio-bin
           key: minio-${{ env.MINIO_VERSION }}-${{ runner.os }}
@@ -220,10 +220,10 @@ jobs:
     name: Secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: gitleaks (full history)
