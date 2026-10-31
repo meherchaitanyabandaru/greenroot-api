@@ -195,6 +195,14 @@ func (s *Service) Accept(ctx context.Context, actor ActorContext, uuid string) (
 		}
 	case "NURSERY_ONBOARDING_INVITE":
 		_ = s.repository.GrantNurseryOwnerRole(ctx, actor.UserID)
+	case "CUSTOMER_INVITE":
+		// Owner to owner: one scan connects both ways (see ConnectBack). The
+		// accepted invite stands even if the reverse cannot be recorded.
+		if invite.NurseryID != nil {
+			if _, err := s.repository.ConnectBack(ctx, *invite.NurseryID, actor.UserID); err != nil {
+				slog.Default().Warn("reverse nursery connection not recorded", "nursery_id", *invite.NurseryID, "error", err)
+			}
+		}
 	}
 
 	s.invalidateWorkspaces(ctx, actor.UserID, invite.InvitedByUserID)

@@ -17,6 +17,7 @@ type Repository interface {
 	ListByNursery(ctx context.Context, nurseryID int64) ([]Invite, error)
 	ListAcceptedByUser(ctx context.Context, userID int64) ([]Invite, error)
 	UserOwnsNursery(ctx context.Context, userID int64) (bool, error)
+	ConnectBack(ctx context.Context, invitingNurseryID, accepterUserID int64) (bool, error)
 	IsNurseryOwner(ctx context.Context, nurseryID int64, userID int64) (bool, error)
 	UserIsManager(ctx context.Context, userID int64) (bool, error)
 	AddNurseryMember(ctx context.Context, nurseryID int64, userID int64, role string, invitedByUserID int64) error
@@ -136,6 +137,32 @@ func (r *PostgresRepository) findByID(ctx context.Context, id int64) (*Invite, e
 		return nil, ErrNotFound
 	}
 	return &invite, err
+}
+
+// ConnectBack: when a nursery owner accepts another nursery's customer
+// invite, the reverse connection is made too (the inviting nursery's owner
+// becomes a customer of the accepter's nursery), so owners trading with each
+// other need one scan, not one each way. A connection is an accepted
+// CUSTOMER_INVITE; an existing one is not repeated.
+func (r *PostgresRepository) ConnectBack(ctx context.Context, invitingNurseryID, accepterUserID int64) (bool, error) {
+	res, err := r.db.ExecContext(ctx, `
+		INSERT INTO public.invites (invite_type, invited_by_user_id, nursery_id, status, accepted_by_user_id, accepted_at, created_at, updated_at)
+		SELECT 'CUSTOMER_INVITE', mine.owner_user_id, mine.nursery_id, 'ACCEPTED', theirs.owner_user_id,
+			CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+		FROM public.nurseries mine
+		JOIN public.nurseries theirs ON theirs.nursery_id = $1
+		WHERE mine.owner_user_id = $2 AND mine.status::text IN ('APPROVED', 'ACTIVE')
+		  AND theirs.owner_user_id IS NOT NULL AND theirs.owner_user_id <> $2
+		  AND NOT EXISTS (
+			SELECT 1 FROM public.invites i
+			WHERE i.nursery_id = mine.nursery_id AND i.accepted_by_user_id = theirs.owner_user_id
+			  AND i.invite_type = 'CUSTOMER_INVITE' AND i.status = 'ACCEPTED')`,
+		invitingNurseryID, accepterUserID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 func (r *PostgresRepository) UserOwnsNursery(ctx context.Context, userID int64) (bool, error) {

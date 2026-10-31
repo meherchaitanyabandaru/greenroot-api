@@ -247,6 +247,8 @@ func (r *PostgresRepository) UpdateCustomer(ctx context.Context, id int64, input
 		SET customer_user_id = $1,
 		    recipient_name   = NULLIF($2,''),
 		    recipient_mobile = NULLIF($3,''),
+		    quotation_type   = 'CUSTOMER',
+		    status           = CASE WHEN status = 'INTERNAL_DRAFT' THEN 'CUSTOMER_DRAFT' ELSE status END,
 		    updated_at       = CURRENT_TIMESTAMP
 		WHERE quotation_id = $4
 		  AND deleted_at IS NULL

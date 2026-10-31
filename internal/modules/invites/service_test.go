@@ -10,6 +10,7 @@ import (
 
 type mockRepo struct {
 	invites         map[string]*Invite // uuid → invite
+	connectedBack   [][2]int64         // ConnectBack(nursery, accepter) calls
 	nurseryOwners   map[int64]bool     // userID → owns nursery
 	nurseryOwnersN  map[string]bool    // "nurseryID:userID" → is owner
 	managers        map[int64]bool     // userID → is manager
@@ -88,6 +89,11 @@ func (m *mockRepo) ListAcceptedByUser(_ context.Context, userID int64) ([]Invite
 		}
 	}
 	return result, nil
+}
+
+func (m *mockRepo) ConnectBack(_ context.Context, nurseryID, userID int64) (bool, error) {
+	m.connectedBack = append(m.connectedBack, [2]int64{nurseryID, userID})
+	return true, nil
 }
 
 func (m *mockRepo) UserOwnsNursery(_ context.Context, userID int64) (bool, error) {
@@ -335,5 +341,20 @@ func TestGetByUUID_NotFound(t *testing.T) {
 	_, err := svc(newMock()).GetByUUID(context.Background(), "missing")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+// Owner to owner: accepting a nursery's customer invite also connects back
+// (ConnectBack decides in SQL whether the accepter owns an approved nursery).
+func TestAccept_CustomerInviteConnectsBack(t *testing.T) {
+	repo := newMock()
+	inv := repo.seedInvite("uuid-cb", "CUSTOMER_INVITE", 1)
+	nid := int64(7)
+	inv.NurseryID = &nid
+	if _, err := svc(repo).Accept(context.Background(), ActorContext{UserID: 42, Roles: []string{"NURSERY_OWNER"}}, "uuid-cb"); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.connectedBack) != 1 || repo.connectedBack[0] != [2]int64{7, 42} {
+		t.Errorf("ConnectBack calls %v", repo.connectedBack)
 	}
 }

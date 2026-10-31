@@ -337,7 +337,9 @@ func (s *Service) UpdateCustomer(ctx context.Context, actor ActorContext, id int
 	if err != nil {
 		return Quotation{}, err
 	}
-	if q.QuotationType == "INTERNAL" {
+	// Giving an internal draft a customer turns it into a customer draft
+	// (the repository flips type and status); later internal states stay put.
+	if q.QuotationType == "INTERNAL" && q.Status != "INTERNAL_DRAFT" {
 		return Quotation{}, ErrInvalidInput
 	}
 	if q.ConvertedOrderID != nil || q.CustomerRespondedAt != nil {

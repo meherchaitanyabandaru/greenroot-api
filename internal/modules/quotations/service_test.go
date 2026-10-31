@@ -121,6 +121,10 @@ func (m *mockRepo) UpdateCustomer(_ context.Context, id int64, input UpdateQuota
 	q.CustomerUserID = input.CustomerUserID
 	q.RecipientName = input.RecipientName
 	q.RecipientMobile = input.RecipientMobile
+	q.QuotationType = "CUSTOMER"
+	if q.Status == "INTERNAL_DRAFT" {
+		q.Status = "CUSTOMER_DRAFT"
+	}
 	q.UpdatedAt = time.Now()
 	cp := *q
 	return &cp, nil
@@ -543,6 +547,29 @@ func TestUpdateCustomer_OwnerCanChangeCustomerWhenSent(t *testing.T) {
 	}
 	if got.RecipientName == nil || *got.RecipientName != name {
 		t.Fatalf("recipient_name not saved: %+v", got.RecipientName)
+	}
+}
+
+func TestUpdateCustomer_InternalDraftBecomesCustomerDraft(t *testing.T) {
+	repo := newMockRepo()
+	repo.addNursery(10, 1)
+	q := baseQuotation(1, "INTERNAL_DRAFT")
+	q.QuotationType = "INTERNAL"
+	repo.addQuotation(q)
+	svc := NewService(repo, nil, nil)
+
+	if caps := BuildCapabilities(ownerActor(1), q); caps == nil || !caps.CanUpdateCustomer {
+		t.Fatalf("owner should be offered a customer for an internal draft: %+v", caps)
+	}
+	name, mobile := "Ravi", "9300000000"
+	got, err := svc.UpdateCustomer(context.Background(), ownerActor(1), 1, UpdateQuotationCustomerRequest{
+		RecipientName: &name, RecipientMobile: &mobile,
+	})
+	if err != nil {
+		t.Fatalf("internal draft should accept a customer: %v", err)
+	}
+	if got.QuotationType != "CUSTOMER" || got.Status != "CUSTOMER_DRAFT" {
+		t.Fatalf("want CUSTOMER / CUSTOMER_DRAFT, got %s / %s", got.QuotationType, got.Status)
 	}
 }
 
