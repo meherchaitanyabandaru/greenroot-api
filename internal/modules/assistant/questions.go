@@ -115,8 +115,11 @@ func (h *Handler) refund(ctx context.Context, userID int64, day string) {
 }
 
 func limitReached(q Quota) *AIError {
-	return &AIError{http.StatusTooManyRequests, "ai_daily_questions_used",
-		"You have asked your " + strconv.Itoa(q.Limit) + " questions for today. Mango is back after midnight."}
+	asked := "your " + strconv.Itoa(q.Limit) + " questions"
+	if q.Limit == 1 {
+		asked = "your question"
+	}
+	return &AIError{http.StatusTooManyRequests, "ai_daily_questions_used", "You have asked " + asked + " for today. Mango is back after midnight."}
 }
 
 func (h *Handler) admin(w http.ResponseWriter, r *http.Request) (authctx.Actor, bool) {
