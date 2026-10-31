@@ -11,4 +11,3 @@ const (
 	// LogoAspect is width / height (~3.871).
 	LogoAspect = float64(logoWidth) / float64(logoHeight)
 )
-

@@ -74,27 +74,32 @@ var checks = map[string]string{
 		GROUP BY d.driver_user_id HAVING COUNT(*) >= $1::numeric`,
 }
 
-// Scan runs every enabled rule once and returns how many signals it raised.
-func Scan(ctx context.Context, db *sql.DB) (int, error) {
+type rule struct {
+	code, level string
+	threshold   float64
+}
+
+func enabledRules(ctx context.Context, db *sql.DB) ([]rule, error) {
 	rows, err := db.QueryContext(ctx, `SELECT signal_code, threshold, risk_level FROM public.risk_rules WHERE is_enabled`)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	type rule struct {
-		code, level string
-		threshold   float64
-	}
+	defer rows.Close()
 	var rules []rule
 	for rows.Next() {
 		var r rule
 		if err := rows.Scan(&r.code, &r.threshold, &r.level); err != nil {
-			rows.Close()
-			return 0, err
+			return nil, err
 		}
 		rules = append(rules, r)
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	return rules, rows.Err()
+}
+
+// Scan runs every enabled rule once and returns how many signals it raised.
+func Scan(ctx context.Context, db *sql.DB) (int, error) {
+	rules, err := enabledRules(ctx, db)
+	if err != nil {
 		return 0, err
 	}
 	raised := 0

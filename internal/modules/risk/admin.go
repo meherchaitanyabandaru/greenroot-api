@@ -152,6 +152,10 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, s)
 	}
+	if rows.Err() != nil {
+		response.Error(w, http.StatusInternalServerError, "risk_error", "could not read signals")
+		return
+	}
 	response.OK(w, map[string]any{"signals": out, "total": total})
 }
 
@@ -360,6 +364,10 @@ func (h *Handler) ListRules(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out = append(out, x)
+	}
+	if rows.Err() != nil {
+		response.Error(w, http.StatusInternalServerError, "risk_error", "could not read rules")
+		return
 	}
 	response.OK(w, map[string]any{"rules": out})
 }

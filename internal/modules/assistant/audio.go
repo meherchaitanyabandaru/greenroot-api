@@ -81,27 +81,25 @@ func mp4Seconds(data []byte) (float64, error) {
 }
 
 // findBox returns the body of the first box of this type at this level.
+// Sizes stay unsigned and are compared as int64, so no conversion can wrap.
 func findBox(data []byte, kind string) ([]byte, bool) {
 	want := []byte(kind)
-	for pos := 0; pos+8 <= len(data); {
-		size := uint64(binary.BigEndian.Uint32(data[pos : pos+4]))
-		header := uint64(8)
-		switch size {
-		case 0:
-			size = uint64(len(data) - pos)
-		case 1:
-			if pos+16 > len(data) {
-				return nil, false
-			}
-			size, header = binary.BigEndian.Uint64(data[pos+8:pos+16]), 16
-		}
-		if size < header || uint64(pos)+size > uint64(len(data)) {
+	for len(data) >= 8 {
+		var box []byte
+		switch size := binary.BigEndian.Uint32(data[:4]); {
+		case size == 0: // the box runs to the end of the file
+			box = data
+		case size == 1: // 64-bit size: only files over 4 GB use it (uploads are 1 MB at most)
 			return nil, false
+		case int64(size) < 8 || int64(size) > int64(len(data)):
+			return nil, false
+		default:
+			box = data[:size]
 		}
-		if bytes.Equal(data[pos+4:pos+8], want) {
-			return data[uint64(pos)+header : uint64(pos)+size], true
+		if bytes.Equal(box[4:8], want) {
+			return box[8:], true
 		}
-		pos += int(size)
+		data = data[len(box):]
 	}
 	return nil, false
 }

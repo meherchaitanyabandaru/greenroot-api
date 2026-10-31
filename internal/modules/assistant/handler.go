@@ -511,6 +511,10 @@ func (h *Handler) AdminUsage(w http.ResponseWriter, r *http.Request) {
 		}
 		kinds = append(kinds, k)
 	}
+	if rows.Err() != nil {
+		response.Error(w, http.StatusInternalServerError, "assistant_error", "could not read usage")
+		return
+	}
 	response.OK(w, map[string]any{
 		"enabled": h.cfg.Enabled,
 		"usage":   kinds,
